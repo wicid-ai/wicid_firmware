@@ -1,4 +1,14 @@
 import time
+import board
+import digitalio
+import wifi
+import socketpool
+import ssl
+import adafruit_requests
+import json
+import storage
+import os
+from pixel_controller import PixelController
 
 def temperature_color(temp_f):
     """
@@ -38,7 +48,7 @@ def temperature_color(temp_f):
 
     return color_steps[-1][1]
 
-def blink_for_precip(pixels, color, precip_percent, button=None):
+def blink_for_precip(pixel_controller, color, precip_percent, button=None):
     """
     Blinks the NeoPixel according to the 'rounded to nearest 10%' precipitation probability.
       - Example: 27% => 30% => 3 blinks, then hold color for a few seconds.
@@ -50,7 +60,7 @@ def blink_for_precip(pixels, color, precip_percent, button=None):
 
     if precip_percent is None:
         # No data: just hold color for a short time
-        pixels.fill(color)
+        pixel_controller.set_color(color)
         for _ in range(int(1 / 0.05)):  # ~1 second, checking button
             if button and not button.value:
                 return False
@@ -64,21 +74,21 @@ def blink_for_precip(pixels, color, precip_percent, button=None):
         blink_count = 0
 
     for _ in range(blink_count):
-        pixels.fill(color)
+        pixel_controller.set_color(color)
         # Break the on/off into small increments, so we can detect button press
         for _ in range(int(fast_blink_on / 0.05)):
             if button and not button.value:
                 return False
             time.sleep(0.05)
 
-        pixels.fill((0, 0, 0))
+        pixel_controller.off()
         for _ in range(int(fast_blink_off / 0.05)):
             if button and not button.value:
                 return False
             time.sleep(0.05)
 
     # After blinking, hold color
-    pixels.fill(color)
+    pixel_controller.set_color(color)
     for _ in range(int(post_blink_pause / 0.05)):
         if button and not button.value:
             return False
@@ -86,13 +96,15 @@ def blink_for_precip(pixels, color, precip_percent, button=None):
 
     return True
 
-def run_current_weather_mode(pixels, button, weather, update_interval=600):
+def run_current_weather_mode(button, weather, update_interval=600):
     """
     The default 'current_weather_mode':
       - Periodically fetches current temperature & near-future precip chance.
       - Continuously shows blink_for_precip based on that data.
       - Returns to code.py when the user presses the button.
     """
+    pixel_controller = PixelController()  # Get singleton instance
+    
     # Ensure button is released before starting
     while not button.value:
         time.sleep(0.05)
@@ -115,7 +127,7 @@ def run_current_weather_mode(pixels, button, weather, update_interval=600):
         current_color = temperature_color(current_temp)
 
         # If blink_for_precip returns False, user pressed button
-        if not blink_for_precip(pixels, current_color, precip_chance_in_window, button):
+        if not blink_for_precip(pixel_controller, current_color, precip_chance_in_window, button):
             break
 
         # Also check for button press after each blink cycle
@@ -126,12 +138,14 @@ def run_current_weather_mode(pixels, button, weather, update_interval=600):
 
         time.sleep(0.05)
 
-def run_temp_demo_mode(pixels, button):
+def run_temp_demo_mode(button):
     """
     Continuously cycles 0°F->100°F, slower pacing,
     then goes dark 2s, repeats.
     Returns when user presses button.
     """
+    pixel_controller = PixelController()  # Get singleton instance
+    
     # Ensure button is released before starting
     while not button.value:
         time.sleep(0.05)
@@ -143,7 +157,7 @@ def run_temp_demo_mode(pixels, button):
         step_time = 0.15
         for temp_f in range(101):
             color = temperature_color(temp_f)
-            pixels.fill(color)
+            pixel_controller.set_color(color)
 
             # Check button in small increments
             for _ in range(int(step_time / 0.05)):
@@ -154,7 +168,7 @@ def run_temp_demo_mode(pixels, button):
                 time.sleep(0.05)
 
         # After 100°F, turn LED off and pause
-        pixels.fill((0, 0, 0))
+        pixel_controller.off()
         pause_time = 2.0
         for _ in range(int(pause_time / 0.05)):
             if not button.value:
@@ -164,11 +178,13 @@ def run_temp_demo_mode(pixels, button):
             time.sleep(0.05)
 
 
-def run_precip_demo_mode(pixels, button):
+def run_precip_demo_mode(button):
     """
     Forces a color corresponding to 10°F, uses blink_for_precip with 30%,
     loops continuously until the user presses button to exit.
     """
+    pixel_controller = PixelController()  # Get singleton instance
+    
     # Ensure button is released before starting
     while not button.value:
         time.sleep(0.05)
@@ -178,10 +194,57 @@ def run_precip_demo_mode(pixels, button):
 
         color_for_10f = temperature_color(10)
         # If the user presses button mid-blink, exit
-        if not blink_for_precip(pixels, color_for_10f, 30, button):
+        if not blink_for_precip(pixel_controller, color_for_10f, 30, button):
             break
 
         if not button.value:  # pressed
             while not button.value:
                 time.sleep(0.01)
             break
+
+def run_setup_mode(button):
+    """
+    Enters setup mode with setup portal for WiFi configuration.
+    Returns when setup is complete or user cancels with button press.
+    
+    Args:
+        button: The button instance to check for user input
+    """
+    from setup_portal import SetupPortal
+    
+    print("Entering setup mode...")
+    
+    # Wait for any current button press to be released
+    while not button.value:
+        time.sleep(0.1)
+    
+    # Small delay to debounce
+    time.sleep(0.5)
+    
+    # Create and run the setup portal
+    portal = SetupPortal(button)
+    
+    try:
+        # Start access point
+        portal.start_access_point()
+        
+        # Run web server
+        setup_complete = portal.run_web_server()
+        
+        if setup_complete:
+            # Blink green to indicate success
+            portal.blink_success()
+            print("Setup completed successfully")
+            return True
+        else:
+            print("Setup cancelled by user")
+            # Brief delay to prevent immediate re-entry
+            time.sleep(1)
+            return False
+            
+    except Exception as e:
+        print(f"Error in setup mode: {e}")
+        # Blink red to indicate error
+        pixel_controller = PixelController()  # Get singleton instance
+        pixel_controller.blink_error()
+        return False
