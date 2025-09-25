@@ -14,11 +14,7 @@
     <link rel="stylesheet" href="/design-tokens.css" />
     <script>
         // This will be populated by the server with current settings
-        const currentSettings = window.currentSettings || {
-            ssid: '',
-            zip_code: '02138',
-            timezone: 'America/New_York'
-        };
+        const currentSettings = window.currentSettings;
     </script>
 </head>
 <body class="hero-background">
@@ -44,6 +40,9 @@
             </div>
 
         <form id="setupForm">
+            <!-- Error Display Area -->
+            <div id="errorContainer" class="error-container hidden"></div>
+
             <div class="form-group">
                 <label for="ssid">WiFi Network (SSID)</label>
                 <div class="network-input-container">
@@ -73,7 +72,7 @@
                        pattern="\d{5}(-\d{4})?"
                        title="Please enter a valid US ZIP code"
                        class="form-control"
-                       placeholder="e.g. 12345">
+                       placeholder="e.g. 12345" value="">
             </div>
 
             <div class="form-group">
@@ -106,7 +105,7 @@
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const form = document.getElementById('setupForm');
-            const statusDiv = document.getElementById('status');
+            const errorContainer = document.getElementById('errorContainer');
             const saveButton = document.getElementById('saveButton');
             const buttonText = saveButton.querySelector('.button-text');
             const buttonLoader = saveButton.querySelector('.button-loader');
@@ -229,17 +228,37 @@
                 console.log('Could not detect timezone', e);
             }
 
+            // Start the page initialization process
+            initializePage();
+
             form.addEventListener('submit', async function(e) {
                 e.preventDefault();
 
+                // Clear previous errors
+                errorContainer.classList.add('hidden');
+                document.querySelectorAll('.form-control.error').forEach(el => el.classList.remove('error'));
+
                 const submitButton = form.querySelector('button[type="submit"]');
-                const originalButtonText = submitButton.innerHTML;
                 submitButton.disabled = true;
-                buttonText.textContent = 'Saving...';
+                buttonText.textContent = 'Validating...';
                 buttonLoader.classList.add('show');
 
+                // Determine SSID correctly when 'manual' option is selected
+                const selectedSsid = ssidSelect.value.trim();
+                const manualSsid = ssidManual.value.trim();
+                const resolvedSsid = (selectedSsid === 'manual') ? manualSsid : (selectedSsid || manualSsid);
+
+                // Client-side guard: ensure manual entry is provided when 'manual' is selected
+                if ((selectedSsid === 'manual' && !manualSsid) || !resolvedSsid) {
+                    showError({ message: 'SSID cannot be empty.', field: 'ssid' });
+                    submitButton.disabled = false;
+                    buttonText.textContent = 'Save & Connect';
+                    buttonLoader.classList.remove('show');
+                    return;
+                }
+
                 const formData = {
-                    ssid: document.getElementById('ssid').value.trim() || document.getElementById('ssid-manual').value.trim(),
+                    ssid: resolvedSsid,
                     password: document.getElementById('password').value,
                     zip_code: document.getElementById('zip_code').value.trim(),
                     timezone: document.getElementById('timezone').value
@@ -248,34 +267,85 @@
                 try {
                     const response = await fetch('/configure', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(formData)
                     });
 
-                    const result = await response.json();
+                    // Try to parse JSON, but fail gracefully if not JSON
+                    let result = {};
+                    try {
+                        result = await response.json();
+                    } catch (e) {
+                        // Non-JSON or empty body; treat as generic server error
+                        throw new Error('Server returned an invalid response.');
+                    }
 
+                    // Handle pre-flight errors by either HTTP status or explicit status field
+                    if ((response.status === 400 && result.error) || (result.status === 'error' && result.error)) {
+                        throw result.error;
+                    }
+
+                    // If pre-flight is OK, the server signals to update the UI
+                    if (result.status === 'preflight_ok') {
+                        showManagedDisconnectUI();
+                        // At this point, we don't wait for more responses.
+                        // The device is now testing the connection and will reboot or restart AP.
+                        // The browser's connection will naturally fail, which is expected.
+                        return; // End the submission process
+                    }
+
+                    // Handle any other unexpected server errors
                     if (!response.ok) {
-                        throw new Error(result.message || 'Failed to save settings');
+                        throw new Error(result.message || 'An unknown server error occurred.');
                     }
 
                     if (result.status === 'success') {
-                        showStatus('Settings saved successfully! The device will now restart...', 'success');
-                        // The device will reboot automatically after saving settings
-                        buttonText.textContent = 'Success!';
-                        buttonLoader.classList.add('show');
-
-                        // Disable form
-                        Array.from(form.elements).forEach(el => {
-                            if (el !== saveButton) el.disabled = true;
-                        });
+                        // Show success content inline instead of redirecting
+                        document.body.innerHTML = `
+                            <div class="banner">
+                                <div class="banner-content">
+                                    <div class="banner-logo">
+                                        <div class="logo-circle"></div>
+                                        <span>WICID</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="main-content">
+                                <div class="success-container">
+                                    <div class="checkmark">✓</div>
+                                    <h1>Setup Complete!</h1>
+                                    <p>Your WICID device is now ready to provide weather updates.</p>
+                                    <div class="info">
+                                        <p><strong>What's happening now?</strong></p>
+                                        <p>Your device is connecting to the network and fetching your first weather update. This may take a minute.</p>
+                                    </div>
+                                    <p>
+                                        <span class="spinner"></span>
+                                        <span>Connecting and updating...</span>
+                                    </p>
+                                    <small>Need to change settings? Press and hold the button on your WICID device for 3 seconds to re-enter setup mode.</small>
+                                </div>
+                            </div>
+                        `;
+                        document.body.className = 'success-page hero-background';
                     } else {
                         throw new Error(result.message || 'Failed to save settings');
                     }
                 } catch (error) {
-                    showStatus(`Error: ${error.message}`, 'error');
-                    console.error('Error:', error);
+                    let errorMessage = error && error.message ? error.message : 'An unknown error occurred.';
+                    // Don't show a generic network error if we are in the managed disconnect phase
+                    if (document.body.classList.contains('managed-disconnect')) return;
+
+                    if (error.name === 'TypeError' && (error.message || '').includes('fetch')) {
+                        errorMessage = 'Network error: Could not reach the device. Please ensure you are connected to the WICID-Setup WiFi network.';
+                    }
+
+                    // If we have the structured error object, prefer showError for field highlighting
+                    if (error && (error.message || error.field)) {
+                        showError({ message: errorMessage, field: error.field || null });
+                    } else {
+                        showStatus(`Error: ${errorMessage}`, 'error');
+                    }
 
                     // Reset button state
                     submitButton.disabled = false;
@@ -303,29 +373,94 @@
                 }
             }
 
-            // Populate form with current settings
-            document.getElementById('ssid').value = currentSettings.ssid || '';
-            document.getElementById('zip_code').value = currentSettings.zip_code || '02138';
-            document.getElementById('timezone').value = currentSettings.timezone || 'America/New_York';
+            // --- Page Initialization ---
+            function initializePage() {
+                const pageData = window.WICID_PAGE_DATA || { settings: {}, error: null };
+                const settings = pageData.settings || {};
+                const error = pageData.error;
 
-            const presetSsid = currentSettings.ssid || '';
-            if (presetSsid) {
-                const matchingOption = Array.from(ssidSelect.options).find(option => option.value === presetSsid);
-                if (matchingOption) {
-                    ssidSelect.value = presetSsid;
-                    toggleManualInput(false);
-                } else {
-                    ssidSelect.value = 'manual';
-                    ssidManual.value = presetSsid;
-                    toggleManualInput(true);
+                // Pre-populate the form with all settings
+                document.getElementById('password').value = settings.password || '';
+                document.getElementById('zip_code').value = settings.zip_code || '';
+                document.getElementById('timezone').value = settings.timezone || 'America/New_York';
+
+                // Handle SSID pre-population after networks have been scanned
+                const presetSsid = settings.ssid || '';
+                if (presetSsid) {
+                    // Wait for the network scan to finish before setting the SSID value
+                    const checkNetworksInterval = setInterval(() => {
+                        const matchingOption = Array.from(ssidSelect.options).find(option => option.value === presetSsid);
+                        if (matchingOption || ssidSelect.options.length > 2) { // >2 to account for default and manual options
+                            clearInterval(checkNetworksInterval);
+                            if (matchingOption) {
+                                ssidSelect.value = presetSsid;
+                                toggleManualInput(false);
+                            } else {
+                                ssidSelect.value = 'manual';
+                                ssidManual.value = presetSsid;
+                                toggleManualInput(true);
+                            }
+                        }
+                    }, 100);
                 }
-            } else {
-                toggleManualInput(false);
+
+                // Display the error from the previous attempt, if any
+                if (error) {
+                    showError(error);
+                }
+
+                // Focus on the first empty field, prioritizing password if SSID is set
+                if (!settings.ssid) {
+                    ssidSelect.focus();
+                } else if (!settings.password) {
+                    passwordInput.focus();
+                } else if (!settings.zip_code) {
+                    document.getElementById('zip_code').focus();
+                }
             }
-            
-            // Focus on password field if SSID is already set
-            if (currentSettings.ssid) {
-                document.getElementById('password').focus();
+
+            function showManagedDisconnectUI() {
+                document.body.className = 'hero-background managed-disconnect';
+                document.body.innerHTML = `
+                    <div class="banner">
+                        <div class="banner-content">
+                            <div class="banner-logo">
+                                <div class="logo-circle"></div>
+                                <span>WICID</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="main-content">
+                        <div class="success-container animate-in">
+                            <h1>Now Testing Connection...</h1>
+                            <p>You will be disconnected from the <strong>WICID-Setup</strong> network while the configuration is saved and verified. Please be patient, as this could take up to 30 seconds.</p>
+                            <div class="info">
+                                <p><strong>Look at your WICID device for feedback:</strong></p>
+                                <p>• <strong>If successful,</strong> WICID will flash <span style="color: #2dc937;">green</span> 3 times, and your device will reboot into normal mode. You're WICID awesome!</p>
+                                <p>• <strong>If it fails,</strong> WICID will flash <span style="color: #cc3232;">red</span> 3 times, followed by a pulsing white light. Please manually reconnect to the <strong>WICID-Setup</strong> WiFi network and <a href="http://192.168.4.1">click here</a> to try again.</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            function showError(error) {
+                let message = error.message || 'An unknown error occurred.';
+                let field = error.field || null;
+
+                errorContainer.innerHTML = message;
+                errorContainer.classList.remove('hidden');
+
+                // Clear previous errors
+                document.querySelectorAll('.form-control.error').forEach(el => el.classList.remove('error'));
+
+                // Highlight the specific field that failed
+                if (field === 'ssid') {
+                    ssidSelect.classList.add('error');
+                    ssidManual.classList.add('error');
+                } else if (field === 'password') {
+                    passwordInput.classList.add('error');
+                }
             }
             
             // Add animation to form elements

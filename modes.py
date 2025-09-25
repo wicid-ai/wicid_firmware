@@ -117,7 +117,7 @@ def run_current_weather_mode(button, weather, update_interval=600):
         now = time.monotonic()
 
         if last_update is None or (now - last_update) >= update_interval:
-            print("Updating weather data (current_weather_mode)")
+            print(f"Updating weather data for zip code {weather.zip_code}")
             current_temp = weather.get_current_temperature()
             precip_chance_in_window = weather.get_precip_chance_in_window(0, 4)
             last_update = now
@@ -214,6 +214,17 @@ def run_setup_mode(button):
     
     print("Entering setup mode...")
     
+    # Begin pulsing immediately to indicate setup entry
+    pixel_controller = PixelController()
+    pixel_controller.start_pulsing(
+        color=(255, 255, 255),
+        min_b=0.1,
+        max_b=0.7,
+        step=0.03,
+        interval=0.04,
+        start_brightness=0.4,
+    )
+
     # Wait for any current button press to be released
     while not button.value:
         time.sleep(0.1)
@@ -225,7 +236,7 @@ def run_setup_mode(button):
     portal = SetupPortal(button)
     
     try:
-        # Start access point
+        # LED already pulsing; start access point infrastructure
         portal.start_access_point()
         
         # Run web server

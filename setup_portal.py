@@ -8,15 +8,36 @@ import storage
 import board
 import digitalio
 import supervisor
+from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
 
 class SetupPortal:
+    # --- Centralized error strings ---
+    ERR_INVALID_REQUEST = "Invalid request data."
+    ERR_EMPTY_SSID = "SSID cannot be empty."
+    ERR_PWD_LEN = "Password must be 8-63 characters."
+    ERR_SCAN_FAIL = "Could not scan for networks. Please try again."
+
     def __init__(self, button):
         self.ap_ssid = "WICID-Setup"
         self.ap_password = None  # Open network
         self.setup_complete = False
         self.pixel = PixelController()  # Get singleton instance
         self.button = button
+        self.last_connection_error = None
+        # Defer connection testing to the main loop after preflight returns
+        self.pending_config = None
+
+    def start_setup_indicator(self):
+        """Begin pulsing white to indicate setup mode is active."""
+        self.pixel.start_pulsing(
+            color=(255, 255, 255),
+            min_b=0.1,
+            max_b=0.7,
+            step=0.03,
+            interval=0.04,
+            start_brightness=0.4,
+        )
 
     def start_access_point(self):
         """Start the access point for setup mode"""
@@ -42,7 +63,7 @@ class SetupPortal:
         print(f"Subnet: {wifi.radio.ipv4_subnet_ap}")
         
         # Begin pulsing white to indicate setup mode - more pronounced with wider range
-        self.pixel.start_pulsing(color=(255, 255, 255), min_b=0.1, max_b=0.7, step=0.03, interval=0.04, start_brightness=0.4)
+        self.start_setup_indicator()
 
     def pulse_white(self, brightness=1.0):
         """Compatibility helper; keep method but delegate to PixelController."""
@@ -51,15 +72,108 @@ class SetupPortal:
             return True
         except Exception as e:
             print(f"Error in pulse_white: {e}")
-            return False
 
     def check_setup_button(self):
         """Check if setup button is pressed"""
         return not self.button.value
 
+    # --- Logging helper ---
+    def _log(self, msg: str):
+        print(msg)
+
+    # --- Message helpers ---
+    def _net_not_found_message(self, ssid: str) -> str:
+        return f"Network '{ssid}' not found. Check for typos."
+
+    # --- Validation helpers ---
+    def _validate_config_input(self, request: Request, ssid: str, password: str):
+        """Validate SSID and password. Return a Response on error, else None."""
+        if not ssid:
+            return self._json_error(request, self.ERR_EMPTY_SSID, field="ssid")
+        try:
+            pwd_len = len(password)
+            if not (8 <= pwd_len <= 63):
+                return self._json_error(request, self.ERR_PWD_LEN, field="password")
+        except Exception as e:
+            self._log(f"DEBUG: Password length check crashed: {e}")
+            raise
+        return None
+
+    def _scan_ssids(self):
+        """Scan for WiFi networks and return a list of available SSIDs.
+        Ensures scanning is stopped. Raises on failure.
+        """
+        self._log("DEBUG: Starting network scan for SSID validation")
+        try:
+            scan_results = wifi.radio.start_scanning_networks()
+            self._log(f"DEBUG: Scan results type: {type(scan_results)}")
+            if isinstance(scan_results, int):
+                raise RuntimeError(f"Scan failed with error code {scan_results}")
+            ssids = [net.ssid for net in scan_results if getattr(net, 'ssid', None)]
+            self._log(f"DEBUG: Found SSIDs: {ssids}")
+            return ssids
+        finally:
+            # Always stop scanning
+            try:
+                wifi.radio.stop_scanning_networks()
+            except Exception as e:
+                self._log(f"DEBUG: stop_scanning_networks failed: {e}")
+
+    # --- Response helpers to keep code DRY and API-compatible ---
+    def _json_ok(self, request: Request, data: dict):
+        """Return a JSONResponse with 200 OK."""
+        return JSONResponse(request, data)
+
+    def _json_error(self, request: Request, message: str, field=None, code: int = 400, text: str = "Bad Request"):
+        """Return an error JSON response with explicit status tuple.
+
+        Using the base Response with a (code, text) tuple is compatible across library versions.
+        """
+        body = {"status": "error", "error": {"message": message, "field": field}}
+        return Response(request, json.dumps(body), content_type='application/json', status=(code, text))
+
+    def test_wifi_connection(self, ssid, password):
+        """Safely tests WiFi credentials. Critically, it ensures the AP is restarted on failure."""
+        try:
+            print(f"Testing connection to '{ssid}'...")
+            
+            # Convert to bytes to satisfy buffer protocol requirement
+            ssid_b = bytes(ssid, 'utf-8')
+            password_b = bytes(password, 'utf-8')
+
+            # This will implicitly stop the AP. We MUST restart it on failure.
+            wifi.radio.connect(ssid_b, password_b, timeout=10)
+            
+            if wifi.radio.connected and wifi.radio.ipv4_address:
+                print(f"✓ Connected successfully! IP: {wifi.radio.ipv4_address}")
+                return True, None
+            else:
+                print("✗ Connection failed - no IP address obtained")
+                return False, "Failed to obtain IP address"
+                
+        except Exception as e:
+            print(f"Connection test failed: {e}")
+            # Ensure the AP is restarted so the user can try again
+            try:
+                print("Restarting AP after failed connection test...")
+                self.start_access_point()
+            except Exception as ap_e:
+                print(f"Fatal: Could not restart AP mode: {ap_e}")
+
+            # Provide a user-friendly error message
+            error_msg = str(e).lower()
+            if "no matching" in error_msg or "not found" in error_msg:
+                return False, {"message": "Network not found. Please check the SSID for typos.", "field": "ssid"}
+            elif "authentication" in error_msg or "password" in error_msg:
+                return False, {"message": "Invalid password for this network.", "field": "password"}
+            else:
+                return False, {"message": "Connection failed. Please check credentials and network status.", "field": "ssid"}
+
+
     def save_credentials(self, ssid, password, zip_code, timezone):
         """Save WiFi credentials and settings to secrets.py"""
-        secrets_content = f'''# This file is where you keep secret settings, passwords, and tokens!
+        try:
+            secrets_content = f'''# This file is where you keep secret settings, passwords, and tokens!
 # If you put them in the code you risk committing that info or sharing it
 
 secrets = {{
@@ -70,25 +184,17 @@ secrets = {{
     'update_interval': 1200  # Default update interval in seconds (20 minutes)
 }}
 '''
-        try:
-            # If USB is connected, CircuitPython volume is mounted read-only from the device perspective
-            if getattr(supervisor.runtime, "usb_connected", False):
-                print("USB is connected; cannot write settings while mounted over USB.")
-                return False, "USB_CONNECTED"
-            # Remount FS as writable
-            try:
-                storage.remount("/", False)
-            except Exception as e:
-                print(f"remount RW failed or not needed: {e}")
-            with open("/secrets.py", "w") as f:
+            with open('/secrets.py', 'w') as f:
                 f.write(secrets_content)
-            # Flush and remount as read-only for safety
-            try:
-                storage.remount("/", True)
-            except Exception as e:
-                print(f"remount RO failed: {e}")
             print("Credentials saved successfully")
             return True, None
+        except OSError as e:
+            if e.errno == 30:  # Read-only filesystem (USB connected)
+                print("Cannot save: USB connected (read-only)")
+                return False, "USB_CONNECTED"
+            else:
+                print(f"Error saving credentials: {e}")
+                return False, str(e)
         except Exception as e:
             print(f"Error saving credentials: {e}")
             return False, str(e)
@@ -107,24 +213,44 @@ secrets = {{
         pool = socketpool.SocketPool(wifi.radio)
         server = Server(pool, "/www", debug=False)
         
-        # Serve the main page with current settings
+        # Serve the main page, pre-populating with settings and showing previous errors
         @server.route("/")
         def base(request: Request):
             try:
-                import secrets
                 current_settings = {
-                    'ssid': secrets.secrets.get('ssid', ''),
-                    'zip_code': secrets.secrets.get('weather_zip', '02138'),
-                    'timezone': secrets.secrets.get('weather_timezone', 'America/New_York')
+                    'ssid': '', 'password': '', 'zip_code': '', 'timezone': ''
                 }
-                # We'll inject these settings into the HTML
-                with open('/www/index.html') as f:
+                try:
+                    # Try to load existing secrets to pre-populate the form
+                    from secrets import secrets
+                    current_settings['ssid'] = secrets.get('ssid', '')
+                    current_settings['password'] = secrets.get('password', '')
+                    current_settings['zip_code'] = secrets.get('weather_zip', '')
+                    current_settings['timezone'] = secrets.get('weather_timezone', '')
+                except (ImportError, AttributeError):
+                    # No secrets.py, so we'll use empty values
+                    pass
+
+                # Package all data for the frontend
+                page_data = {
+                    'settings': current_settings,
+                    'error': self.last_connection_error
+                }
+                # Clear the error after displaying it once
+                self.last_connection_error = None
+
+                # Inject the data into the HTML
+                with open('/www/index.html', 'r') as f:
                     html = f.read()
-                settings_script = f'<script>window.currentSettings = {json.dumps(current_settings)};</script>'
-                html = html.replace('</head>', f'{settings_script}</head>')
+                
+                data_script = f'<script>window.WICID_PAGE_DATA = {json.dumps(page_data)};</script>'
+                html = html.replace('</head>', f'{data_script}</head>')
+                
                 return Response(request, html, content_type='text/html')
+
             except Exception as e:
-                print(f"Error serving index: {e}")
+                print(f"Error serving index page: {e}")
+                # Fallback to serving the static file if injection fails
                 return FileResponse(request, "index.html", "/www")
         
         # WiFi network scanning endpoint
@@ -154,70 +280,75 @@ secrets = {{
                 networks.sort(key=lambda x: x['rssi'], reverse=True)
                 
                 print(f"Found {len(networks)} networks")
-                return Response(
-                    request,
-                    json.dumps({"networks": networks}),
-                    content_type='application/json'
-                )
+                return self._json_ok(request, {"networks": networks})
                 
             except Exception as e:
                 print(f"Error scanning networks: {e}")
                 wifi.radio.stop_scanning_networks()  # Ensure scanning is stopped
-                return Response(
-                    request,
-                    json.dumps({"networks": [], "error": str(e)}),
-                    content_type='application/json',
-                    status=500
-                )
+                return self._json_error(request, "Could not scan for networks. Please try again.", code=500, text="Internal Server Error")
 
-        # Handle form submission
+        # Handle form submission with two-stage validation
         @server.route("/configure", "POST")
         def configure(request: Request):
             try:
-                # Parse JSON data
+                self._log("DEBUG: Starting configure function")
                 data = request.json()
-                if not data:
-                    return Response(
-                        request,
-                        json.dumps({"status": "error", "message": "No data provided"}),
-                        content_type='application/json',
-                        status=400
-                    )
+                self._log(f"DEBUG: JSON parsed successfully, type: {type(data)}")
                 
-                # Save credentials
-                ok, err = self.save_credentials(
-                    data.get('ssid', ''),
-                    data.get('password', ''),
-                    data.get('zip_code', '02138'),
-                    data.get('timezone', 'America/New_York')
-                )
-                if ok:
-                    self.setup_complete = True
-                    return Response(
-                        request,
-                        json.dumps({"status": "success"}),
-                        content_type='application/json'
-                    )
+                # Validate that JSON parsing returned a dictionary
+                if not isinstance(data, dict):
+                    self._log(f"JSON parsing failed, got: {type(data)} = {data}")
+                    return self._json_error(request, self.ERR_INVALID_REQUEST)
                 
-                # Provide a specific error if USB is connected
-                message = "Failed to save settings"
-                if err == "USB_CONNECTED":
-                    message = "Device is connected over USB in read-only mode. Unplug USB or eject CIRCUITPY, then retry."
-                return Response(
-                    request,
-                    json.dumps({"status": "error", "message": message}),
-                    content_type='application/json',
-                    status=400
-                )
-                
+                self._log("DEBUG: Extracting form data")
+                ssid = data.get('ssid', '').strip()
+                password = data.get('password', '')
+                zip_code = data.get('zip_code', '')
+                timezone = data.get('timezone', '')
+                self._log(f"DEBUG: Extracted - SSID: '{ssid}', password length: {len(password)}")
+
+                # --- Stage 1: Pre-flight Checks (AP remains active) ---
+                self._log("Stage 1: Performing pre-flight checks...")
+
+                self._log(f"DEBUG: About to check password length. Password type: {type(password)}, value: {repr(password)}")
+                resp = self._validate_config_input(request, ssid, password)
+                if resp:
+                    return resp
+                self._log("DEBUG: Password length check passed")
+
+                # Check if SSID is a real, scanned network
+                try:
+                    available_ssids = self._scan_ssids()
+                except Exception as scan_e:
+                    self._log(f"SSID validation scan failed: {scan_e}")
+                    return self._json_error(request, self.ERR_SCAN_FAIL, field="ssid", code=500, text="Internal Server Error")
+
+                if ssid not in available_ssids:
+                    return self._json_error(request, self._net_not_found_message(ssid), field="ssid")
+
+                # Pre-flight checks passed, signal frontend to update UI
+                # The frontend will now show the 'managed disconnect' message
+                self._log("✓ Pre-flight checks passed.")
+                # Defer Stage 2 to the main loop to avoid long-running work inside handler
+                self.pending_config = {
+                    "ssid": ssid,
+                    "password": password,
+                    "zip_code": zip_code,
+                    "timezone": timezone,
+                }
+                return self._json_ok(request, {"status": "preflight_ok"})
+
             except Exception as e:
-                print(f"Error in configure: {e}")
-                return Response(
-                    request,
-                    json.dumps({"status": "error", "message": str(e)}),
-                    content_type='application/json',
-                    status=500
-                )
+                self._log(f"Fatal error in /configure: {e}")
+                self.last_connection_error = {"message": "An unexpected server error occurred.", "field": None}
+                self.pixel.blink_error()
+                try:
+                    self.start_access_point()
+                except Exception as ap_e:
+                    self._log(f"Could not restart AP after fatal error: {ap_e}")
+                # Do not send a response here, as the connection is likely dead.
+                # The client will time out, which is expected in a fatal server error.
+        
         
         # Start the server
         server.start(host=str(wifi.radio.ipv4_address_ap), port=80)
@@ -240,6 +371,34 @@ secrets = {{
                 
                 # Update LED pulsing via controller
                 self.pixel.tick()
+
+                # If there is a pending configuration, process it now (Stage 2)
+                if self.pending_config:
+                    cfg = self.pending_config
+                    # Clear first to avoid re-entrancy if we crash during handling
+                    self.pending_config = None
+                    print("Stage 2: Testing connection (deferred)...")
+                    try:
+                        ok, conn_err = self.test_wifi_connection(cfg["ssid"], cfg["password"])
+                        if ok:
+                            print("✓ Connection successful. Saving credentials and rebooting.")
+                            self.save_credentials(cfg["ssid"], cfg["password"], cfg["zip_code"], cfg["timezone"])
+                            self.pixel.blink_success()
+                            time.sleep(1)
+                            supervisor.reload()
+                        else:
+                            print("✗ Connection failed. Storing error and restarting AP.")
+                            self.last_connection_error = conn_err
+                            self.pixel.blink_error()
+                            # AP restart is handled inside test_wifi_connection on failure
+                    except Exception as e:
+                        print(f"Deferred connection handling failed: {e}")
+                        self.last_connection_error = {"message": "Connection test crashed.", "field": None}
+                        self.pixel.blink_error()
+                        try:
+                            self.start_access_point()
+                        except Exception as ap_e:
+                            print(f"Could not restart AP after deferred failure: {ap_e}")
                 
                 # Check for any button press to exit
                 if not self.button.value:
