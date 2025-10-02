@@ -12,6 +12,10 @@ from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
 
 class SetupPortal:
+    # Delay before rebooting after a successful configuration (seconds)
+    REBOOT_DELAY_SECONDS = 7
+    # Delay after pre-check success before attempting STA connection (seconds)
+    PRECHECK_DELAY_SECONDS = 7
     # --- Centralized error strings ---
     ERR_INVALID_REQUEST = "Invalid request data."
     ERR_EMPTY_SSID = "SSID cannot be empty."
@@ -27,6 +31,7 @@ class SetupPortal:
         self.last_connection_error = None
         # Defer connection testing to the main loop after preflight returns
         self.pending_config = None
+        self.pending_ready_at = None  # monotonic timestamp when Stage 2 may begin
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
@@ -326,8 +331,8 @@ secrets = {{
                 if ssid not in available_ssids:
                     return self._json_error(request, self._net_not_found_message(ssid), field="ssid")
 
-                # Pre-flight checks passed, signal frontend to update UI
-                # The frontend will now show the 'managed disconnect' message
+                # Pre-checks passed, signal frontend to update UI
+                # The frontend will now show the precheck-success page
                 self._log("✓ Pre-flight checks passed.")
                 # Defer Stage 2 to the main loop to avoid long-running work inside handler
                 self.pending_config = {
@@ -336,7 +341,9 @@ secrets = {{
                     "zip_code": zip_code,
                     "timezone": timezone,
                 }
-                return self._json_ok(request, {"status": "preflight_ok"})
+                # Gate Stage 2 so the AP stays up long enough for the client to load the page
+                self.pending_ready_at = time.monotonic() + self.PRECHECK_DELAY_SECONDS
+                return self._json_ok(request, {"status": "precheck_success"})
 
             except Exception as e:
                 self._log(f"Fatal error in /configure: {e}")
@@ -372,11 +379,17 @@ secrets = {{
                 # Update LED pulsing via controller
                 self.pixel.tick()
 
-                # If there is a pending configuration, process it now (Stage 2)
+                # If there is a pending configuration, process it when the precheck delay has elapsed (Stage 2)
                 if self.pending_config:
+                    # If a readiness time is set and not yet reached, keep AP running to allow client navigation
+                    if self.pending_ready_at is not None and time.monotonic() < self.pending_ready_at:
+                        # Not ready yet; wait for next poll iteration
+                        continue
+
                     cfg = self.pending_config
                     # Clear first to avoid re-entrancy if we crash during handling
                     self.pending_config = None
+                    self.pending_ready_at = None
                     print("Stage 2: Testing connection (deferred)...")
                     try:
                         ok, conn_err = self.test_wifi_connection(cfg["ssid"], cfg["password"])
@@ -384,7 +397,8 @@ secrets = {{
                             print("✓ Connection successful. Saving credentials and rebooting.")
                             self.save_credentials(cfg["ssid"], cfg["password"], cfg["zip_code"], cfg["timezone"])
                             self.pixel.blink_success()
-                            time.sleep(1)
+                            # Allow time for the client to receive final responses/assets before reboot
+                            time.sleep(self.REBOOT_DELAY_SECONDS)
                             supervisor.reload()
                         else:
                             print("✗ Connection failed. Storing error and restarting AP.")
