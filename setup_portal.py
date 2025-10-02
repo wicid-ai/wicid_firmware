@@ -13,8 +13,6 @@ from pixel_controller import PixelController
 from wifi_manager import WiFiManager
 
 class SetupPortal:
-    # Delay before rebooting after a successful configuration (seconds)
-    REBOOT_DELAY_SECONDS = 7
     # Delay after pre-check success before attempting STA connection (seconds)
     PRECHECK_DELAY_SECONDS = 7
     # --- Centralized error strings ---
@@ -396,8 +394,6 @@ secrets = {{
                             if save_ok:
                                 print("✓ Credentials saved. Rebooting.")
                                 self.pixel.blink_success()
-                                # Allow time for the client to receive final responses/assets before reboot
-                                time.sleep(self.REBOOT_DELAY_SECONDS)
                                 supervisor.reload()
                             else:
                                 print(f"✗ Failed to save credentials: {save_err}")
