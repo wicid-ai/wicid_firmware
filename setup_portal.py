@@ -167,9 +167,8 @@ class SetupPortal:
 
 
     def save_credentials(self, ssid, password, zip_code):
-        """Save WiFi credentials and settings to secrets.py"""
-        try:
-            secrets_content = f'''# This file is where you keep secret settings, passwords, and tokens!
+        """Save WiFi credentials and settings to secrets.py atomically."""
+        secrets_content = f'''# This file is where you keep secret settings, passwords, and tokens!
 # If you put them in the code you risk committing that info or sharing it
 
 secrets = {{
@@ -179,19 +178,28 @@ secrets = {{
     'update_interval': 1200  # Default update interval in seconds (20 minutes)
 }}
 '''
-            with open('/secrets.py', 'w') as f:
+        temp_path = '/secrets.py.tmp'
+        final_path = '/secrets.py'
+
+        try:
+            # Write to a temporary file first
+            with open(temp_path, 'w') as f:
                 f.write(secrets_content)
+                f.flush()
+                os.sync()
+
+            # Atomically rename the temporary file to the final path
+            os.rename(temp_path, final_path)
+            
             print("Credentials saved successfully")
             return True, None
-        except OSError as e:
-            if e.errno == 30:  # Read-only filesystem (USB connected)
-                print("Cannot save: USB connected (read-only)")
-                return False, "USB_CONNECTED"
-            else:
-                print(f"Error saving credentials: {e}")
-                return False, str(e)
         except Exception as e:
             print(f"Error saving credentials: {e}")
+            # Clean up the temporary file if it exists
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass  # Temp file might not exist, which is fine
             return False, str(e)
 
     def blink_success(self):
@@ -381,12 +389,24 @@ secrets = {{
                     try:
                         ok, conn_err = self.test_wifi_connection(cfg["ssid"], cfg["password"])
                         if ok:
-                            print("✓ Connection successful. Saving credentials and rebooting.")
-                            self.save_credentials(cfg["ssid"], cfg["password"], cfg["zip_code"])
-                            self.pixel.blink_success()
-                            # Allow time for the client to receive final responses/assets before reboot
-                            time.sleep(self.REBOOT_DELAY_SECONDS)
-                            supervisor.reload()
+                            print("✓ Connection successful. Saving credentials...")
+                            save_ok, save_err = self.save_credentials(
+                                cfg["ssid"], cfg["password"], cfg["zip_code"]
+                            )
+                            if save_ok:
+                                print("✓ Credentials saved. Rebooting.")
+                                self.pixel.blink_success()
+                                # Allow time for the client to receive final responses/assets before reboot
+                                time.sleep(self.REBOOT_DELAY_SECONDS)
+                                supervisor.reload()
+                            else:
+                                print(f"✗ Failed to save credentials: {save_err}")
+                                self.last_connection_error = {
+                                    "message": f"Could not save settings: {save_err}. Please check device logs.",
+                                    "field": None,
+                                }
+                                self.pixel.blink_error()
+                                self.start_access_point()  # Restart AP
                         else:
                             print("✗ Connection failed. Storing error and restarting AP.")
                             self.last_connection_error = conn_err
