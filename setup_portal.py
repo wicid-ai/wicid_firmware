@@ -166,7 +166,7 @@ class SetupPortal:
             return False, {"message": "Connection test encountered an error. Please try again.", "field": "ssid"}
 
 
-    def save_credentials(self, ssid, password, zip_code, timezone):
+    def save_credentials(self, ssid, password, zip_code):
         """Save WiFi credentials and settings to secrets.py"""
         try:
             secrets_content = f'''# This file is where you keep secret settings, passwords, and tokens!
@@ -176,7 +176,6 @@ secrets = {{
     'ssid' : '{ssid}',
     'password' : '{password}',
     'weather_zip': '{zip_code}',
-    'weather_timezone': '{timezone}',
     'update_interval': 1200  # Default update interval in seconds (20 minutes)
 }}
 '''
@@ -214,7 +213,7 @@ secrets = {{
         def base(request: Request):
             try:
                 current_settings = {
-                    'ssid': '', 'password': '', 'zip_code': '', 'timezone': ''
+                    'ssid': '', 'password': '', 'zip_code': ''
                 }
                 try:
                     # Try to load existing secrets to pre-populate the form
@@ -222,7 +221,6 @@ secrets = {{
                     current_settings['ssid'] = secrets.get('ssid', '')
                     current_settings['password'] = secrets.get('password', '')
                     current_settings['zip_code'] = secrets.get('weather_zip', '')
-                    current_settings['timezone'] = secrets.get('weather_timezone', '')
                 except (ImportError, AttributeError):
                     # No secrets.py, so we'll use empty values
                     pass
@@ -300,7 +298,6 @@ secrets = {{
                 ssid = data.get('ssid', '').strip()
                 password = data.get('password', '')
                 zip_code = data.get('zip_code', '')
-                timezone = data.get('timezone', '')
                 self._log(f"DEBUG: Extracted - SSID: '{ssid}', password length: {len(password)}")
 
                 # --- Stage 1: Pre-flight Checks (AP remains active) ---
@@ -330,7 +327,6 @@ secrets = {{
                     "ssid": ssid,
                     "password": password,
                     "zip_code": zip_code,
-                    "timezone": timezone,
                 }
                 # Gate Stage 2 so the AP stays up long enough for the client to load the page
                 self.pending_ready_at = time.monotonic() + self.PRECHECK_DELAY_SECONDS
@@ -386,7 +382,7 @@ secrets = {{
                         ok, conn_err = self.test_wifi_connection(cfg["ssid"], cfg["password"])
                         if ok:
                             print("✓ Connection successful. Saving credentials and rebooting.")
-                            self.save_credentials(cfg["ssid"], cfg["password"], cfg["zip_code"], cfg["timezone"])
+                            self.save_credentials(cfg["ssid"], cfg["password"], cfg["zip_code"])
                             self.pixel.blink_success()
                             # Allow time for the client to receive final responses/assets before reboot
                             time.sleep(self.REBOOT_DELAY_SECONDS)

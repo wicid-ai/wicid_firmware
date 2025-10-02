@@ -73,7 +73,6 @@ The device fetches weather data including:
    - Configure the following:
      - Wi-Fi network credentials
      - Location (ZIP code or coordinates)
-     - Timezone
      - Weather API settings
 
 4. **Save and Reboot**:
@@ -139,10 +138,8 @@ For development purposes, you can manually configure settings by editing `secret
 secrets = {
     'ssid': 'your_wifi_ssid',
     'password': 'your_wifi_password',
-    'timezone': 'America/New_York',  # IANA timezone name
-    'location': '12345',  # ZIP code or lat,lon coordinates
-    'weather_api_key': 'your_api_key',
-    'weather_api_url': 'https://api.open-meteo.com/v1/forecast'
+    'weather_zip': '12345',  # ZIP code for weather location
+    'update_interval': 1200  # Update interval in seconds (20 minutes)
 }
 ```
 

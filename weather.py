@@ -15,13 +15,19 @@ class Weather:
             session: An active adafruit_requests.Session instance for making HTTP requests
         """
         self.session = session
-        
-        self.zip_code = secrets.secrets["weather_zip"]
-        # Pull timezone from secrets, URL-encode slash for Open-Meteo
-        raw_tz = secrets.secrets["weather_timezone"]
-        self.timezone = raw_tz.replace("/", "%2F")
 
-        self.lat, self.lon = self._get_lat_lon()
+        self.zip_code = secrets.secrets["weather_zip"]
+
+        # Get coordinates first, then detect timezone from them
+        self.lat, self.lon, raw_tz = self._get_location_data()
+
+        if raw_tz:
+            # URL-encode slash for Open-Meteo
+            self.timezone = raw_tz.replace("/", "%2F")
+        else:
+            # Fallback to default timezone if coordinates not available
+            print("Warning: Could not get location data, using default timezone")
+            self.timezone = "America%2FNew_York"
 
     def get_current_temperature(self):
         """
@@ -123,10 +129,10 @@ class Weather:
 
         return max(window_probs)
 
-    def _get_lat_lon(self):
+    def _get_location_data(self):
         """
-        Attempts to find the latitude and longitude via Open-Meteo's geocoding API,
-        using the ZIP code. Returns (None, None) if no result is found.
+        Attempts to find the latitude, longitude, and timezone via Open-Meteo's
+        geocoding API, using the ZIP code. Returns (None, None, None) if no result is found.
         """
         geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={self.zip_code}&count=1"
         response = self.session.get(geocode_url)
@@ -135,11 +141,13 @@ class Weather:
 
         if "results" not in data or len(data["results"]) == 0:
             print("No geocoding results found for ZIP code:", self.zip_code)
-            return None, None
+            return None, None, None
 
-        lat = data["results"][0]["latitude"]
-        lon = data["results"][0]["longitude"]
-        return lat, lon
+        result = data["results"][0]
+        lat = result.get("latitude")
+        lon = result.get("longitude")
+        timezone = result.get("timezone")
+        return lat, lon, timezone
 
 # Example usage (requires WiFiManager):
 # from wifi_manager import WiFiManager

@@ -110,19 +110,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Start network population
     populateNetworks();
 
-    // Set default timezone based on browser
-    try {
-        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (timezone) {
-            const timezoneSelect = document.getElementById('timezone');
-            const option = Array.from(timezoneSelect.options).find(
-                opt => opt.value === timezone
-            );
-            if (option) option.selected = true;
-        }
-    } catch (e) {
-        console.log('Could not detect timezone', e);
-    }
 
     // Start the page initialization process
     initializePage();
@@ -156,8 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const formData = {
             ssid: resolvedSsid,
             password: document.getElementById('password').value,
-            zip_code: document.getElementById('zip_code').value.trim(),
-            timezone: document.getElementById('timezone').value
+            zip_code: document.getElementById('zip_code').value.trim()
         };
 
         try {
@@ -250,7 +236,6 @@ document.addEventListener('DOMContentLoaded', function() {
         // Pre-populate the form with all settings
         document.getElementById('password').value = settings.password || '';
         document.getElementById('zip_code').value = settings.zip_code || '';
-        document.getElementById('timezone').value = settings.timezone || 'America/New_York';
 
         // Handle SSID pre-population after networks have been scanned
         const presetSsid = settings.ssid || '';

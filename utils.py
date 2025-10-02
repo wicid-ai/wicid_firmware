@@ -86,7 +86,7 @@ def check_secrets_complete():
     Returns:
         tuple: (is_complete: bool, missing_keys: list)
     """
-    required_keys = ['ssid', 'password', 'weather_zip', 'weather_timezone']
+    required_keys = ['ssid', 'password', 'weather_zip']
     
     try:
         import secrets
