@@ -10,6 +10,7 @@ import digitalio
 import supervisor
 from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
+from wifi_manager import WiFiManager
 
 class SetupPortal:
     # Delay before rebooting after a successful configuration (seconds)
@@ -32,6 +33,8 @@ class SetupPortal:
         # Defer connection testing to the main loop after preflight returns
         self.pending_config = None
         self.pending_ready_at = None  # monotonic timestamp when Stage 2 may begin
+        # WiFi manager for connection testing (without button interrupts in setup mode)
+        self.wifi_manager = WiFiManager(button=None)
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
@@ -138,41 +141,29 @@ class SetupPortal:
         return Response(request, json.dumps(body), content_type='application/json', status=(code, text))
 
     def test_wifi_connection(self, ssid, password):
-        """Safely tests WiFi credentials. Critically, it ensures the AP is restarted on failure."""
+        """Safely tests WiFi credentials using WiFiManager. Critically, it ensures the AP is restarted on failure."""
         try:
-            print(f"Testing connection to '{ssid}'...")
+            # Use WiFiManager for connection testing (without button interrupt)
+            success, error = self.wifi_manager.connect_once(ssid, password)
             
-            # Convert to bytes to satisfy buffer protocol requirement
-            ssid_b = bytes(ssid, 'utf-8')
-            password_b = bytes(password, 'utf-8')
-
-            # This will implicitly stop the AP. We MUST restart it on failure.
-            wifi.radio.connect(ssid_b, password_b, timeout=10)
-            
-            if wifi.radio.connected and wifi.radio.ipv4_address:
-                print(f"✓ Connected successfully! IP: {wifi.radio.ipv4_address}")
+            if success:
                 return True, None
             else:
-                print("✗ Connection failed - no IP address obtained")
-                return False, "Failed to obtain IP address"
+                # Connection failed, restart AP so user can try again
+                print("Restarting AP after failed connection test...")
+                self.start_access_point()
+                return False, error
                 
         except Exception as e:
-            print(f"Connection test failed: {e}")
+            print(f"Connection test failed with exception: {e}")
             # Ensure the AP is restarted so the user can try again
             try:
                 print("Restarting AP after failed connection test...")
                 self.start_access_point()
             except Exception as ap_e:
                 print(f"Fatal: Could not restart AP mode: {ap_e}")
-
-            # Provide a user-friendly error message
-            error_msg = str(e).lower()
-            if "no matching" in error_msg or "not found" in error_msg:
-                return False, {"message": "Network not found. Please check the SSID for typos.", "field": "ssid"}
-            elif "authentication" in error_msg or "password" in error_msg:
-                return False, {"message": "Invalid password for this network.", "field": "password"}
-            else:
-                return False, {"message": "Connection failed. Please check credentials and network status.", "field": "ssid"}
+            
+            return False, {"message": "Connection test encountered an error. Please try again.", "field": "ssid"}
 
 
     def save_credentials(self, ssid, password, zip_code, timezone):

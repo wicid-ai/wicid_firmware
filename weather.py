@@ -1,44 +1,21 @@
-import wifi
-import socketpool
-import ssl
-import adafruit_requests
-import json
-import time
-
 try:
     import secrets
 except ImportError:
     print("WiFi and ZIP code are kept in secrets.py, please add them there!")
     raise
 
+
 class Weather:
-    def __init__(self):
+    def __init__(self, session):
         """
-        Initializes Wi-Fi, sets up a requests session, and
-        retrieves latitude/longitude for the target ZIP code
-        using Open-Meteo's geocoding API.
+        Initialize the Weather service with an active HTTP session.
+        Retrieves latitude/longitude for the target ZIP code using Open-Meteo's geocoding API.
+        
+        Args:
+            session: An active adafruit_requests.Session instance for making HTTP requests
         """
-        max_time = 60 * 60 * 4 # 4 hours
-        attempts = 0
-        while True:
-            try:
-                attempts = attempts + 1
-                wifi.radio.connect(secrets.secrets["ssid"], secrets.secrets["password"])
-                pool = socketpool.SocketPool(wifi.radio)
-                self.session = adafruit_requests.Session(pool, ssl.create_default_context())
-            except ConnectionError as ce:
-                print(f"Connection Error #{attempts}: {ce} ")
-                wait_time = attempts**1.3
-                print("Wait (s):", wait_time)
-
-                if wait_time < max_time:
-                    time.sleep(wait_time)
-                else:
-                    raise SystemExit()
-            else:
-                break
-
-
+        self.session = session
+        
         self.zip_code = secrets.secrets["weather_zip"]
         # Pull timezone from secrets, URL-encode slash for Open-Meteo
         raw_tz = secrets.secrets["weather_timezone"]
@@ -164,8 +141,11 @@ class Weather:
         lon = data["results"][0]["longitude"]
         return lat, lon
 
-# Example usage:
-# weather = Weather()
+# Example usage (requires WiFiManager):
+# from wifi_manager import WiFiManager
+# wifi_manager = WiFiManager()
+# wifi_manager.connect_with_backoff(ssid, password)
+# weather = Weather(wifi_manager.create_session())
 # print("Current Temp (°F):", weather.get_current_temperature())
 # print("Today's High (°F):", weather.get_daily_high())
 # print("Chance of Precip (%):", weather.get_daily_precip_chance())

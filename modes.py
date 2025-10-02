@@ -132,9 +132,7 @@ def run_current_weather_mode(button, weather, update_interval=600):
 
         # Also check for button press after each blink cycle
         if not button.value:
-            while not button.value:
-                time.sleep(0.01)
-            break
+            break  # Return immediately while button still pressed
 
         time.sleep(0.05)
 
@@ -162,9 +160,7 @@ def run_temp_demo_mode(button):
             # Check button in small increments
             for _ in range(int(step_time / 0.05)):
                 if not button.value:  # pressed
-                    while not button.value:
-                        time.sleep(0.01)
-                    return  # Return to code.py
+                    return  # Return immediately while button still pressed
                 time.sleep(0.05)
 
         # After 100°F, turn LED off and pause
@@ -172,9 +168,7 @@ def run_temp_demo_mode(button):
         pause_time = 2.0
         for _ in range(int(pause_time / 0.05)):
             if not button.value:
-                while not button.value:
-                    time.sleep(0.01)
-                return
+                return  # Return immediately while button still pressed
             time.sleep(0.05)
 
 
@@ -198,9 +192,7 @@ def run_precip_demo_mode(button):
             break
 
         if not button.value:  # pressed
-            while not button.value:
-                time.sleep(0.01)
-            break
+            break  # Return immediately while button still pressed
 
 def run_setup_mode(button):
     """
