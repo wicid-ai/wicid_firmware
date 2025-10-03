@@ -11,6 +11,7 @@ import supervisor
 from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
 from wifi_manager import WiFiManager
+from utils import check_button_hold_duration, trigger_safe_mode
 
 class SetupPortal:
     # Delay after pre-check success before attempting STA connection (seconds)
@@ -417,14 +418,19 @@ secrets = {{
                         except Exception as ap_e:
                             print(f"Could not restart AP after deferred failure: {ap_e}")
                 
-                # Check for any button press to exit
+                # Check for button press: 10s hold = Safe Mode, any other press = exit setup
                 if not self.button.value:
-                    print("Button pressed, exiting setup...")
-                    # Wait for button release before exiting
-                    while not self.button.value:
-                        time.sleep(0.1)
-                    time.sleep(0.2)  # Small debounce
-                    return False
+                    hold_result = check_button_hold_duration(self.button, self.pixel)
+                    
+                    if hold_result == 'safe_mode':
+                        print("Safe Mode requested (10 second hold)")
+                        trigger_safe_mode()
+                        # This will reboot, so we never reach here
+                    else:
+                        # Short press or 3-second hold: exit setup mode
+                        print("Button pressed, exiting setup...")
+                        time.sleep(0.2)  # Small debounce
+                        return False
                 
                 time.sleep(0.01)  # Shorter sleep for more responsive button
                 

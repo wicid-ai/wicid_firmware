@@ -1,8 +1,15 @@
 import storage
 
-# Keep the filesystem writable so code.py can save configuration files
-# This is necessary because CircuitPython defaults to read-only when USB is connected
+# Production mode: disable USB mass storage, allow code to write files
+storage.disable_usb_drive()
 storage.remount("/", readonly=False)
 
-print("Filesystem mounted as writable")
+print("=" * 50)
+print("PRODUCTION MODE")
+print("Filesystem writable from code")
+print("USB mass storage disabled")
+print("")
+print("To enable USB for development:")
+print("Hold button for 10 seconds to enter Safe Mode")
+print("=" * 50)
 

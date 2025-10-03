@@ -131,6 +131,51 @@ The device includes robust error handling and will:
 - `circup` for managing CircuitPython libraries
 - (Optional) Mu Editor for code editing and serial console
 
+### Filesystem Modes
+
+The device uses `boot.py` to control filesystem access. By default, it runs in **Production Mode** which allows the setup portal to save configuration files but disables USB mass storage.
+
+**Production Mode** (default):
+- Filesystem is writable from code (setup portal can save credentials)
+- USB mass storage is disabled
+- Used for normal operation and by customers
+
+**Safe Mode** (for development):
+- USB mass storage is enabled (CIRCUITPY drive appears on your computer)
+- Filesystem is read-only from code
+- Used for development and file updates
+- Automatically triggered by special button sequence
+
+**To Access Files for Development:**
+
+1. **While the device is running** (in any mode - weather, demo, setup, etc.):
+   - Press and HOLD the mode button
+   - At 3 seconds: LED pulses white (setup mode threshold)
+   - At 10 seconds: LED changes to flashing blue/green (Safe Mode threshold)
+   - Release the button when you see blue/green flashing
+   - The device will automatically reboot into Safe Mode
+   - The CIRCUITPY drive will appear and you can edit files
+
+2. **Return to Production Mode:**
+   - Simply press RESET without holding any button
+   - Or make your changes and the device returns to production mode on next normal boot
+
+**Button Hold Durations:**
+- **Short press** (< 3 seconds): Switch to next mode
+- **3 second hold**: Enter setup mode (LED pulses white at 3s)
+- **10 second hold**: Enter Safe Mode (LED flashes blue/green at 10s)
+
+**Alternative: Force Safe Mode via Serial Console**
+
+If needed, you can also trigger Safe Mode from the REPL:
+1. Connect to serial console (115200 baud) in Mu Editor or Terminal
+2. Press RESET to get to the REPL prompt (`>>>`)
+3. Paste this command:
+   ```python
+   import microcontroller; microcontroller.on_next_reset(microcontroller.RunMode.SAFE_MODE); microcontroller.reset()
+   ```
+4. The device will boot into Safe Mode with USB access enabled
+
 ### Manual Configuration
 For development purposes, you can manually configure settings by editing `secrets.py`:
 
@@ -145,6 +190,7 @@ secrets = {
 
 ### Code Structure
 - `code.py`: Main application loop and mode switching
+- `boot.py`: Controls filesystem access modes (production vs development)
 - `modes.py`: LED behavior and display modes
 - `weather.py`: Weather data fetching and processing
 - `setup_portal.py`: Handles the web-based setup interface

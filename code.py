@@ -9,7 +9,7 @@ import wifi
 import socketpool
 import ssl
 from pixel_controller import PixelController
-from utils import check_secrets_complete
+from utils import check_secrets_complete, trigger_safe_mode, check_button_hold_duration
 
 # Initialize hardware
 pixel_controller = PixelController()  # Singleton handles NeoPixel initialization
@@ -62,8 +62,14 @@ def main():
             # User pressed button during connection attempts
             print("Connection attempt interrupted by button press.")
             
-            # Check if user is holding button for setup mode (3 seconds from now)
-            if check_button_held(button, hold_duration=3.0):
+            # Check button hold duration: 10s = Safe Mode, 3s = Setup mode, short = skip WiFi
+            hold_result = check_button_hold_duration(button, pixel_controller)
+            
+            if hold_result == 'safe_mode':
+                print("Safe Mode requested (10 second hold)")
+                trigger_safe_mode()
+                # This will reboot, so we never reach here
+            elif hold_result == 'setup':
                 print("Setup mode requested during WiFi connection")
                 if modes.run_setup_mode(button):
                     # Setup completed, reboot to apply new settings
@@ -73,7 +79,7 @@ def main():
                     print("Setup cancelled. Rebooting to retry connection...")
                     time.sleep(1)
                     supervisor.reload()
-            else:
+            else:  # 'short'
                 # Short press - user wants to skip WiFi for now
                 # Continue to main loop without WiFi (only demo modes will work)
                 print("Skipping WiFi connection. Only demo modes available.")
@@ -125,9 +131,18 @@ def main():
                 mode_index = (mode_index + 1) % len(modes_list)
                 continue
 
-            # Mode exited due to button press - check if it's a setup mode request
-            # User must continue holding for 3 seconds to enter setup mode
-            if check_button_held(button, hold_duration=3.0):
+            # Mode exited due to button press - check button hold duration
+            # 10+ seconds = Safe Mode (for development)
+            # 3+ seconds = Setup mode
+            # Short press = next mode
+            
+            hold_result = check_button_hold_duration(button, pixel_controller)
+            
+            if hold_result == 'safe_mode':
+                print("Safe Mode requested (10 second hold)")
+                trigger_safe_mode()
+                # This will reboot, so we never reach here
+            elif hold_result == 'setup':
                 print("Setup mode requested via button hold")
                 if modes.run_setup_mode(button):
                     # If setup was successful, reboot to apply new settings
@@ -136,9 +151,9 @@ def main():
                     # If setup was cancelled, continue with normal operation
                     time.sleep(0.5)  # Debounce
                     continue
-            
-            # Short press: move to next mode
-            mode_index = (mode_index + 1) % len(modes_list)
+            else:  # 'short'
+                # Short press: move to next mode
+                mode_index = (mode_index + 1) % len(modes_list)
 
             # Brief delay so we don't bounce immediately into next mode
             time.sleep(0.2)
