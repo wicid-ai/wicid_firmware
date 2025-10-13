@@ -4,6 +4,8 @@ except ImportError:
     print("WiFi and ZIP code are kept in secrets.py, please add them there!")
     raise
 
+from utils import get_location_data_from_zip
+
 
 class Weather:
     def __init__(self, session):
@@ -19,7 +21,7 @@ class Weather:
         self.zip_code = secrets.secrets["weather_zip"]
 
         # Get coordinates first, then detect timezone from them
-        self.lat, self.lon, raw_tz = self._get_location_data()
+        self.lat, self.lon, raw_tz = get_location_data_from_zip(self.session, self.zip_code)
 
         if raw_tz:
             # URL-encode slash for Open-Meteo
@@ -128,26 +130,6 @@ class Weather:
             return 0
 
         return max(window_probs)
-
-    def _get_location_data(self):
-        """
-        Attempts to find the latitude, longitude, and timezone via Open-Meteo's
-        geocoding API, using the ZIP code. Returns (None, None, None) if no result is found.
-        """
-        geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={self.zip_code}&count=1"
-        response = self.session.get(geocode_url)
-        data = response.json()
-        response.close()
-
-        if "results" not in data or len(data["results"]) == 0:
-            print("No geocoding results found for ZIP code:", self.zip_code)
-            return None, None, None
-
-        result = data["results"][0]
-        lat = result.get("latitude")
-        lon = result.get("longitude")
-        timezone = result.get("timezone")
-        return lat, lon, timezone
 
 # Example usage (requires WiFiManager):
 # from wifi_manager import WiFiManager

@@ -198,11 +198,37 @@ secrets = {
 - `www/`: Web interface files for the setup portal
 - `requirements.txt`: Python dependencies for development
 
-### Building and Flashing
-1. Install required dependencies:
+### Flashing and Building
+
+#### Initial Board Setup (for new Adafruit Feather ESP32-S3 boards)
+
+Before flashing the application, new boards must be initialized with CircuitPython. This process updates the bootloader and installs CircuitPython:
+
+1. **Enter Bootloader Mode**:
+   - Connect the Feather to your development computer using a data-enabled USB-C cable
+   - Press and HOLD the BOOT button
+   - While holding BOOT, press and release the RESET button
+   - Release the BOOT button once the board enters bootloader mode (LED should not be flashing)
+
+2. **Update Bootloader**:
+   - Visit: https://circuitpython.org/board/adafruit_feather_esp32s3_4mbflash_2mbpsram/
+   - Click "OPEN INSTALLER"
+   - Select "Install Bootloader Only" and follow the prompts
+   - After installation completes, you should see an updated `FTHRS3BOOT` drive
+
+3. **Install CircuitPython**:
+   - From the same CircuitPython page, download the latest `.UF2` file
+   - Drag the downloaded `.UF2` file to the `FTHRS3BOOT` drive
+   - The board will reboot automatically and you should now see a `CIRCUITPY` drive
+
+The board is now ready for library installation and application deployment.
+
+#### Installing Dependencies and Flashing Application
+
+1. Install required dependencies from the wicid_firmware directory on your development machine:
    ```bash
    pip install circup
-   circup install
+   circup install -r requirements.txt
    ```
 
 2. Copy all files to your device's CIRCUITPY drive

@@ -43,6 +43,7 @@ import modes
 def main():
     try:
         # Initialize WiFi Manager and connect with interruptible backoff
+        from wifi_manager import AuthenticationError
         wifi_manager = WiFiManager(button)
         
         try:
@@ -51,11 +52,42 @@ def main():
                 secrets.secrets["password"]
             )
             if not success:
-                # If connection fails after retries, reboot to allow re-entry into setup
+                # If connection fails after retries, enter setup mode to fix
                 print(f"Could not connect to WiFi: {error_msg}")
-                print("Rebooting...")
+                print("Entering setup mode...")
                 pixel_controller.blink_error()
-                time.sleep(5)
+                time.sleep(2)
+                wifi_error = {
+                    "message": error_msg,
+                    "field": "ssid"
+                }
+                if modes.run_setup_mode(button, error=wifi_error):
+                    # Setup completed, reboot to apply new settings
+                    supervisor.reload()
+                else:
+                    # Setup cancelled, reboot to retry
+                    print("Setup cancelled. Rebooting to retry...")
+                    time.sleep(2)
+                    supervisor.reload()
+            # Connection successful - continue to full validation before indicating success
+        
+        except AuthenticationError as e:
+            # Invalid credentials - enter setup mode to fix them
+            print(f"Authentication failed: {e}")
+            print("Entering setup mode to update credentials...")
+            pixel_controller.blink_error()
+            time.sleep(2)
+            auth_error = {
+                "message": "WiFi authentication failure. Please check your password.",
+                "field": "password"
+            }
+            if modes.run_setup_mode(button, error=auth_error):
+                # Setup completed, reboot to apply new settings
+                supervisor.reload()
+            else:
+                # Setup cancelled, reboot anyway since credentials are invalid
+                print("Setup cancelled but credentials are invalid. Rebooting...")
+                time.sleep(2)
                 supervisor.reload()
                 
         except KeyboardInterrupt:
@@ -90,7 +122,34 @@ def main():
         # Initialize weather service with an active session (if WiFi connected)
         weather = None
         if wifi_manager and wifi_manager.is_connected():
-            weather = Weather(wifi_manager.create_session())
+            try:
+                weather = Weather(wifi_manager.create_session())
+                
+                # Check if ZIP code validation failed
+                if weather.lat is None or weather.lon is None:
+                    print("✗ ZIP code validation failed")
+                    print("Entering setup mode to update ZIP code...")
+                    pixel_controller.blink_error()
+                    time.sleep(2)
+                    zip_error = {
+                        "message": "Could not find location data for ZIP code. Please verify and try again.",
+                        "field": "zip_code"
+                    }
+                    if modes.run_setup_mode(button, error=zip_error):
+                        # Setup completed, reboot to apply new settings
+                        supervisor.reload()
+                    else:
+                        # Setup cancelled, continue without weather
+                        print("Setup cancelled. Continuing without weather service.")
+                        weather = None
+                else:
+                    # All checks passed - WiFi connected and ZIP validated
+                    print("✓ Boot successful - all checks passed")
+                    pixel_controller.blink_success()
+            except Exception as e:
+                print(f"Error initializing weather service: {e}")
+                print("Continuing without weather service")
+                weather = None
         else:
             print("Weather service unavailable (no WiFi connection)")
 

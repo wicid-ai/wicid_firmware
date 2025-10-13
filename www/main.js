@@ -167,23 +167,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw result.error;
             }
 
-            // If pre-check is OK, navigate to the precheck-success page
-            if (result.status === 'precheck_success') {
-                // Navigate immediately so the static page is loaded before AP drops
-                window.location.href = '/precheck_success.html';
-                return; // End the submission process
-            }
-
             // Handle any other unexpected server errors
             if (!response.ok) {
                 throw new Error(result.message || 'An unknown server error occurred.');
             }
 
+            // If we get a 200 OK response, show success state
+            if (response.status === 200 && result.status === 'precheck_success') {
+                // Hide the form, show success message
+                document.getElementById('setupState').style.display = 'none';
+                document.getElementById('successState').style.display = 'block';
+                // Device will reboot shortly (server handles timing)
+                return;
+            }
+
+            // Unexpected success format
             if (result.status === 'success') {
-                // No separate success page; keep behavior unchanged for embedded flow
-                // Intentionally do nothing here.
-            } else {
-                throw new Error(result.message || 'Failed to save settings');
+                document.getElementById('setupState').style.display = 'none';
+                document.getElementById('successState').style.display = 'block';
+                return;
             }
         } catch (error) {
             let errorMessage = error && error.message ? error.message : 'An unknown error occurred.';
@@ -280,17 +282,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
         errorContainer.innerHTML = message;
         errorContainer.classList.remove('hidden');
+        errorContainer.setAttribute('role', 'alert');
+        errorContainer.setAttribute('aria-live', 'assertive');
 
         // Clear previous errors
-        document.querySelectorAll('.form-control.error').forEach(el => el.classList.remove('error'));
+        document.querySelectorAll('.form-control.error').forEach(el => {
+            el.classList.remove('error');
+            el.removeAttribute('aria-invalid');
+            el.removeAttribute('aria-describedby');
+        });
 
         // Highlight the specific field that failed
         if (field === 'ssid') {
             ssidSelect.classList.add('error');
             ssidManual.classList.add('error');
+            ssidSelect.setAttribute('aria-invalid', 'true');
+            ssidSelect.setAttribute('aria-describedby', 'errorContainer');
+            ssidManual.setAttribute('aria-invalid', 'true');
+            ssidManual.setAttribute('aria-describedby', 'errorContainer');
         } else if (field === 'password') {
             passwordInput.classList.add('error');
+            passwordInput.setAttribute('aria-invalid', 'true');
+            passwordInput.setAttribute('aria-describedby', 'errorContainer');
+        } else if (field === 'zip_code') {
+            document.getElementById('zip_code').classList.add('error');
+            document.getElementById('zip_code').setAttribute('aria-invalid', 'true');
+            document.getElementById('zip_code').setAttribute('aria-describedby', 'errorContainer');
         }
+
+        // Scroll error into view
+        errorContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
     
     // Add animation to form elements

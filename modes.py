@@ -194,13 +194,14 @@ def run_precip_demo_mode(button):
         if not button.value:  # pressed
             break  # Return immediately while button still pressed
 
-def run_setup_mode(button):
+def run_setup_mode(button, error=None):
     """
     Enters setup mode with setup portal for WiFi configuration.
     Returns when setup is complete or user cancels with button press.
     
     Args:
         button: The button instance to check for user input
+        error: Optional error dict to display in the portal (with 'message' and 'field')
     """
     from setup_portal import SetupPortal
     
@@ -226,6 +227,10 @@ def run_setup_mode(button):
     
     # Create and run the setup portal
     portal = SetupPortal(button)
+    
+    # Set error message if provided
+    if error:
+        portal.last_connection_error = error
     
     try:
         # LED already pulsing; start access point infrastructure

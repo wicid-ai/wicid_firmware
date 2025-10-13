@@ -221,3 +221,61 @@ def trigger_safe_mode():
     print("Device will reboot with USB enabled")
     microcontroller.on_next_reset(microcontroller.RunMode.SAFE_MODE)
     microcontroller.reset()
+
+
+# Cache for geocoding results to avoid redundant API calls
+_location_cache = {}
+
+
+def get_location_data_from_zip(session, zip_code):
+    """
+    Retrieve latitude, longitude, and timezone from ZIP code using Open-Meteo's geocoding API.
+    
+    Uses fallback behavior: tries full 5-digit ZIP, then 4 digits, then 3 digits.
+    Results are cached per ZIP code to avoid redundant API calls during a session.
+    
+    Args:
+        session: An active adafruit_requests.Session instance for making HTTP requests
+        zip_code: The ZIP code to look up (should be 5 digits)
+    
+    Returns:
+        tuple: (latitude, longitude, timezone) or (None, None, None) if all attempts fail
+    """
+    # Check cache first
+    if zip_code in _location_cache:
+        print(f"Using cached location data for ZIP: {zip_code}")
+        return _location_cache[zip_code]
+    
+    zip_attempts = [
+        zip_code,  # Full 5-digit ZIP
+        zip_code[:4],  # First 4 digits
+        zip_code[:3],  # First 3 digits
+    ]
+    
+    for zip_attempt in zip_attempts:
+        if not zip_attempt:  # Skip if truncated to empty string
+            continue
+            
+        geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={zip_attempt}&count=1&language=en&format=json&countryCode=US"
+        response = session.get(geocode_url)
+        data = response.json()
+        response.close()
+
+        if "results" in data and len(data["results"]) > 0:
+            result = data["results"][0]
+            lat = result.get("latitude")
+            lon = result.get("longitude")
+            timezone = result.get("timezone")
+            location_data = (lat, lon, timezone)
+            
+            # Cache the result
+            _location_cache[zip_code] = location_data
+            
+            if zip_attempt != zip_code:
+                print(f"Location found using {len(zip_attempt)}-digit prefix: {zip_attempt}")
+            return location_data
+    
+    # Cache the failure result too to avoid repeated failed lookups
+    print("No geocoding results found for ZIP code:", zip_code)
+    _location_cache[zip_code] = (None, None, None)
+    return None, None, None

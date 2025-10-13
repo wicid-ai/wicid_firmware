@@ -10,17 +10,17 @@ import digitalio
 import supervisor
 from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
-from wifi_manager import WiFiManager
 from utils import check_button_hold_duration, trigger_safe_mode
 
 class SetupPortal:
-    # Delay after pre-check success before attempting STA connection (seconds)
-    PRECHECK_DELAY_SECONDS = 7
+    # Delay after pre-check success to ensure response is transmitted before reboot (seconds)
+    PRECHECK_DELAY_SECONDS = 2
     # --- Centralized error strings ---
     ERR_INVALID_REQUEST = "Invalid request data."
     ERR_EMPTY_SSID = "SSID cannot be empty."
     ERR_PWD_LEN = "Password must be 8-63 characters."
     ERR_SCAN_FAIL = "Could not scan for networks. Please try again."
+    ERR_INVALID_ZIP = "ZIP code must be 5 digits."
 
     def __init__(self, button):
         self.ap_ssid = "WICID-Setup"
@@ -29,11 +29,7 @@ class SetupPortal:
         self.pixel = PixelController()  # Get singleton instance
         self.button = button
         self.last_connection_error = None
-        # Defer connection testing to the main loop after preflight returns
-        self.pending_config = None
-        self.pending_ready_at = None  # monotonic timestamp when Stage 2 may begin
-        # WiFi manager for connection testing (without button interrupts in setup mode)
-        self.wifi_manager = WiFiManager(button=None)
+        self.pending_ready_at = None  # monotonic timestamp for scheduled reboot
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
@@ -93,8 +89,8 @@ class SetupPortal:
         return f"Network '{ssid}' not found. Check for typos."
 
     # --- Validation helpers ---
-    def _validate_config_input(self, request: Request, ssid: str, password: str):
-        """Validate SSID and password. Return a Response on error, else None."""
+    def _validate_config_input(self, request: Request, ssid: str, password: str, zip_code: str):
+        """Validate SSID, password, and ZIP code format. Return a Response on error, else None."""
         if not ssid:
             return self._json_error(request, self.ERR_EMPTY_SSID, field="ssid")
         try:
@@ -104,6 +100,11 @@ class SetupPortal:
         except Exception as e:
             self._log(f"DEBUG: Password length check crashed: {e}")
             raise
+        
+        # Validate ZIP code format (5 digits)
+        if not zip_code or len(zip_code) != 5 or not zip_code.isdigit():
+            return self._json_error(request, self.ERR_INVALID_ZIP, field="zip_code")
+        
         return None
 
     def _scan_ssids(self):
@@ -138,32 +139,6 @@ class SetupPortal:
         """
         body = {"status": "error", "error": {"message": message, "field": field}}
         return Response(request, json.dumps(body), content_type='application/json', status=(code, text))
-
-    def test_wifi_connection(self, ssid, password):
-        """Safely tests WiFi credentials using WiFiManager. Critically, it ensures the AP is restarted on failure."""
-        try:
-            # Use WiFiManager for connection testing (without button interrupt)
-            success, error = self.wifi_manager.connect_once(ssid, password)
-            
-            if success:
-                return True, None
-            else:
-                # Connection failed, restart AP so user can try again
-                print("Restarting AP after failed connection test...")
-                self.start_access_point()
-                return False, error
-                
-        except Exception as e:
-            print(f"Connection test failed with exception: {e}")
-            # Ensure the AP is restarted so the user can try again
-            try:
-                print("Restarting AP after failed connection test...")
-                self.start_access_point()
-            except Exception as ap_e:
-                print(f"Fatal: Could not restart AP mode: {ap_e}")
-            
-            return False, {"message": "Connection test encountered an error. Please try again.", "field": "ssid"}
-
 
     def save_credentials(self, ssid, password, zip_code):
         """Save WiFi credentials and settings to secrets.py atomically."""
@@ -223,7 +198,7 @@ secrets = {{
                     'ssid': '', 'password': '', 'zip_code': ''
                 }
                 try:
-                    # Try to load existing secrets to pre-populate the form
+                    # Load from saved secrets to pre-populate the form
                     from secrets import secrets
                     current_settings['ssid'] = secrets.get('ssid', '')
                     current_settings['password'] = secrets.get('password', '')
@@ -237,7 +212,7 @@ secrets = {{
                     'settings': current_settings,
                     'error': self.last_connection_error
                 }
-                # Clear the error after displaying it once
+                # Clear the error after displaying once
                 self.last_connection_error = None
 
                 # Inject the data into the HTML
@@ -311,10 +286,10 @@ secrets = {{
                 self._log("Stage 1: Performing pre-flight checks...")
 
                 self._log(f"DEBUG: About to check password length. Password type: {type(password)}, value: {repr(password)}")
-                resp = self._validate_config_input(request, ssid, password)
+                resp = self._validate_config_input(request, ssid, password, zip_code)
                 if resp:
                     return resp
-                self._log("DEBUG: Password length check passed")
+                self._log("DEBUG: Input validation passed")
 
                 # Check if SSID is a real, scanned network
                 try:
@@ -326,16 +301,15 @@ secrets = {{
                 if ssid not in available_ssids:
                     return self._json_error(request, self._net_not_found_message(ssid), field="ssid")
 
-                # Pre-checks passed, signal frontend to update UI
-                # The frontend will now show the precheck-success page
-                self._log("✓ Pre-flight checks passed.")
-                # Defer Stage 2 to the main loop to avoid long-running work inside handler
-                self.pending_config = {
-                    "ssid": ssid,
-                    "password": password,
-                    "zip_code": zip_code,
-                }
-                # Gate Stage 2 so the AP stays up long enough for the client to load the page
+                # Pre-checks passed - save credentials and schedule reboot
+                self._log("✓ Pre-flight checks passed. Saving credentials...")
+                save_ok, save_err = self.save_credentials(ssid, password, zip_code)
+                if not save_ok:
+                    self._log(f"✗ Failed to save credentials: {save_err}")
+                    return self._json_error(request, f"Could not save settings: {save_err}", code=500, text="Internal Server Error")
+                
+                self._log("✓ Credentials saved. Scheduling reboot...")
+                # Schedule reboot to allow client to receive response and show success
                 self.pending_ready_at = time.monotonic() + self.PRECHECK_DELAY_SECONDS
                 return self._json_ok(request, {"status": "precheck_success"})
 
@@ -373,50 +347,11 @@ secrets = {{
                 # Update LED pulsing via controller
                 self.pixel.tick()
 
-                # If there is a pending configuration, process it when the precheck delay has elapsed (Stage 2)
-                if self.pending_config:
-                    # If a readiness time is set and not yet reached, keep AP running to allow client navigation
-                    if self.pending_ready_at is not None and time.monotonic() < self.pending_ready_at:
-                        # Not ready yet; wait for next poll iteration
-                        continue
-
-                    cfg = self.pending_config
-                    # Clear first to avoid re-entrancy if we crash during handling
-                    self.pending_config = None
-                    self.pending_ready_at = None
-                    print("Stage 2: Testing connection (deferred)...")
-                    try:
-                        ok, conn_err = self.test_wifi_connection(cfg["ssid"], cfg["password"])
-                        if ok:
-                            print("✓ Connection successful. Saving credentials...")
-                            save_ok, save_err = self.save_credentials(
-                                cfg["ssid"], cfg["password"], cfg["zip_code"]
-                            )
-                            if save_ok:
-                                print("✓ Credentials saved. Rebooting.")
-                                self.pixel.blink_success()
-                                supervisor.reload()
-                            else:
-                                print(f"✗ Failed to save credentials: {save_err}")
-                                self.last_connection_error = {
-                                    "message": f"Could not save settings: {save_err}. Please check device logs.",
-                                    "field": None,
-                                }
-                                self.pixel.blink_error()
-                                self.start_access_point()  # Restart AP
-                        else:
-                            print("✗ Connection failed. Storing error and restarting AP.")
-                            self.last_connection_error = conn_err
-                            self.pixel.blink_error()
-                            # AP restart is handled inside test_wifi_connection on failure
-                    except Exception as e:
-                        print(f"Deferred connection handling failed: {e}")
-                        self.last_connection_error = {"message": "Connection test crashed.", "field": None}
-                        self.pixel.blink_error()
-                        try:
-                            self.start_access_point()
-                        except Exception as ap_e:
-                            print(f"Could not restart AP after deferred failure: {ap_e}")
+                # If credentials were saved, wait for delay then reboot
+                if self.pending_ready_at is not None and time.monotonic() >= self.pending_ready_at:
+                    print("Setup complete. Rebooting to apply new settings...")
+                    # Don't flash success yet - validation happens on next boot
+                    supervisor.reload()
                 
                 # Check for button press: 10s hold = Safe Mode, any other press = exit setup
                 if not self.button.value:

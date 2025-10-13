@@ -27,7 +27,8 @@
 
     <!-- Main Content -->
     <div class="main-content">
-        <div class="form-container animate-in">
+        <!-- Setup Form State -->
+        <div id="setupState" class="form-container animate-in">
             <div class="form-heading">
                 <h1>WICID Simple Configuration</h1>
             </div>
@@ -85,6 +86,22 @@
         </form>
 
         <div id="status" class="status hidden"></div>
+        </div>
+
+        <!-- Success State -->
+        <div id="successState" class="form-container animate-in" style="display: none;">
+            <div class="form-heading">
+                <h1>Now Testing Connection...</h1>
+            </div>
+
+            <p>You will be disconnected from the <strong>WICID-Setup</strong> network while the configuration is saved and verified. Please be patient, as this could take up to 30 seconds.</p>
+            
+            <div class="info">
+                <p><strong>Look at your WICID device for feedback:</strong></p>
+                <p>• <strong>If successful,</strong> WICID will flash <span style="color: #2dc937;">green</span> 3 times, and your device will startup in normal mode. You're WICID awesome!</p>
+                <p>• <strong>If it fails,</strong> WICID will flash <span style="color: #cc3232;">red</span> 3 times, followed by a pulsing white light. Please manually reconnect to the <strong>WICID-Setup</strong> WiFi network and <a href="http://192.168.4.1">click here</a> to try again.</p>
+            </div>
+        </div>
     </div>
 
     
