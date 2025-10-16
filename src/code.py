@@ -9,23 +9,34 @@ import wifi
 import socketpool
 import ssl
 from pixel_controller import PixelController
-from utils import check_secrets_complete, trigger_safe_mode, check_button_hold_duration
+from utils import trigger_safe_mode, check_button_hold_duration
 
 # Initialize hardware
 pixel_controller = PixelController()  # Singleton handles NeoPixel initialization
 button = digitalio.DigitalInOut(board.BUTTON)
 button.switch_to_input(pull=digitalio.Pull.UP)
 
-# Check if we should enter setup mode (button pressed on boot or no valid config)
+# Load secrets from secrets.json
+try:
+    with open("/secrets.json", "r") as f:
+        secrets = json.load(f)
+except (OSError, ValueError):
+    secrets = {}
+
+# Check if we should enter setup mode (button pressed on boot or no valid secrets)
 enter_setup = False
-is_complete, missing_keys = check_secrets_complete()
 
 if not button.value:  # Button is pressed
     print("Button pressed on boot, entering setup mode...")
     enter_setup = True
-elif not is_complete:
-    print(f"Configuration incomplete (missing: {missing_keys}), entering setup mode...")
-    enter_setup = True
+else:
+    # Check if required secrets exist
+    required_secrets = ["ssid", "password", "weather_zip"]
+    missing_secrets = [key for key in required_secrets if not secrets.get(key)]
+    
+    if missing_secrets:
+        print(f"Configuration incomplete (missing: {missing_secrets}), entering setup mode...")
+        enter_setup = True
 
 if enter_setup:
     import modes
@@ -34,10 +45,10 @@ if enter_setup:
     supervisor.reload()  # Reboot to apply new settings
 
 # If we get here, we have valid settings
-import secrets
 from weather import Weather
 from wifi_manager import WiFiManager
 from utils import check_button_held
+from update_manager import UpdateManager
 import modes
 
 def main():
@@ -48,8 +59,8 @@ def main():
         
         try:
             success, error_msg = wifi_manager.connect_with_backoff(
-                secrets.secrets["ssid"],
-                secrets.secrets["password"]
+                secrets["ssid"],
+                secrets["password"]
             )
             if not success:
                 # If connection fails after retries, enter setup mode to fix
@@ -119,11 +130,14 @@ def main():
                 time.sleep(2)
                 wifi_manager = None  # Signal that WiFi is not available
 
-        # Initialize weather service with an active session (if WiFi connected)
+        # Initialize weather service and update manager with an active session (if WiFi connected)
         weather = None
+        update_manager = None
+        
         if wifi_manager and wifi_manager.is_connected():
             try:
-                weather = Weather(wifi_manager.create_session())
+                session = wifi_manager.create_session()
+                weather = Weather(session, secrets["weather_zip"])
                 
                 # Check if ZIP code validation failed
                 if weather.lat is None or weather.lon is None:
@@ -146,8 +160,39 @@ def main():
                     # All checks passed - WiFi connected and ZIP validated
                     print("✓ Boot successful - all checks passed")
                     pixel_controller.blink_success()
+                
+                # Initialize update manager and check for updates on boot
+                try:
+                    print("Initializing update manager...")
+                    update_manager = UpdateManager(session)
+                    
+                    print("Checking for firmware updates...")
+                    update_info = update_manager.check_for_updates()
+                    
+                    if update_info:
+                        print(f"Update available: {update_info['version']}")
+                        print(f"Release notes: {update_info['release_notes']}")
+                        print("Downloading update...")
+                        
+                        if update_manager.download_update(update_info['zip_url']):
+                            print("Update downloaded successfully")
+                            print("Restarting to install update...")
+                            time.sleep(2)
+                            supervisor.reload()
+                        else:
+                            print("Update download failed, continuing with current version")
+                    else:
+                        print("No updates available")
+                    
+                    # Schedule next update check
+                    update_manager.next_update_check = update_manager.schedule_next_update_check()
+                    
+                except Exception as e:
+                    print(f"Error with update manager: {e}")
+                    print("Continuing without update checks")
+                    
             except Exception as e:
-                print(f"Error initializing weather service: {e}")
+                print(f"Error initializing services: {e}")
                 print("Continuing without weather service")
                 weather = None
         else:
@@ -161,14 +206,32 @@ def main():
         ]
         mode_index = 0
 
-        # Get update interval with a default of 20 minutes if not set
-        try:
-            UPDATE_INTERVAL = secrets.secrets.get("update_interval", 1200)
-        except (AttributeError, KeyError):
-            UPDATE_INTERVAL = 1200  # Default to 20 minutes
-
+        # Get weather update interval from settings
+        UPDATE_INTERVAL = int(os.getenv("WEATHER_UPDATE_INTERVAL", "1200"))
 
         while True:
+            # Check if it's time for a scheduled firmware update check
+            if update_manager and update_manager.should_check_now():
+                print("Scheduled update check triggered")
+                try:
+                    update_info = update_manager.check_for_updates()
+                    
+                    if update_info:
+                        print(f"Update available: {update_info['version']}")
+                        print("Downloading update...")
+                        
+                        if update_manager.download_update(update_info['zip_url']):
+                            print("Update downloaded, restarting...")
+                            time.sleep(1)
+                            supervisor.reload()
+                    
+                    # Reschedule next check
+                    update_manager.next_update_check = update_manager.schedule_next_update_check()
+                    
+                except Exception as e:
+                    print(f"Error during scheduled update check: {e}")
+            
+
             # Call the selected mode function (runs until user presses button)
             current_mode = modes_list[mode_index]
             try:

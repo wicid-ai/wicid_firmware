@@ -5,7 +5,295 @@ This module contains common utility functions used throughout the codebase,
 including button handling, configuration validation, and other shared logic.
 """
 
+import os
+import sys
 import time
+import board
+import microcontroller
+import json
+
+try:
+    import wifi
+    WIFI_AVAILABLE = True
+except ImportError:
+    WIFI_AVAILABLE = False
+
+def get_os_name():
+    """
+    Get the OS name.
+    
+    Returns:
+        str: Operating system name
+    """
+    return sys.implementation.name
+
+def get_os_version():
+    """
+    Get the OS version.
+    
+    Returns:
+        tuple: OS version tuple (major, minor, micro, releaselevel, serial)
+    """
+    return sys.implementation.version
+
+
+def get_board_id():
+    """
+    Get the board identifier.
+    
+    Returns:
+        str: Board ID string
+    """
+    return board.board_id
+
+
+def get_os_port_name():
+    """
+    Get the OS/Port name.
+    
+    Returns:
+        str: Operating system port name
+    """
+    return os.uname().sysname
+
+
+def get_machine_type():
+    """
+    Get the machine type.
+    
+    Returns:
+        str: Machine type string
+    """
+    return os.uname().machine
+
+
+def get_cpu_uid():
+    """
+    Get the CPU's unique identifier.
+    
+    Returns:
+        str: Hexadecimal string representation of the CPU unique ID
+    """
+    chip_uid_binary = microcontroller.cpu.uid
+    return ''.join('{:02x}'.format(b) for b in chip_uid_binary)
+
+
+def get_mac_address():
+    """
+    Get the MAC address if Wi-Fi is available.
+    
+    Returns:
+        str: MAC address in colon-separated hex format, or None if Wi-Fi unavailable
+    """
+    if WIFI_AVAILABLE:
+        mac_binary = wifi.radio.mac_address
+        return mac_binary.hex(':')
+    return None
+
+
+def get_os_version_string():
+    """
+    Get the OS version in a standardized format for compatibility checks.
+    
+    Returns:
+        str: OS version string in format 'os_major_minor' (e.g., 'circuitpython_10_1')
+    """
+    name = get_os_name()
+    version = get_os_version()
+    return f"{name}_{version[0]}_{version[1]}"
+
+
+def os_matches_target(device_os_string, target_os_array):
+    """
+    Check if device OS matches any target OS in array using semantic versioning.
+    
+    A device OS is compatible if its major.minor version is >= the target major.minor.
+    For example, circuitpython 10.1.4 matches target 'circuitpython_10_1' and
+    'circuitpython_10_0', but not 'circuitpython_11_0'.
+    
+    Args:
+        device_os_string: Device OS version string (e.g., 'circuitpython_10_1')
+        target_os_array: Array of target OS strings (e.g., ['circuitpython_9_3', 'circuitpython_10_1'])
+    
+    Returns:
+        bool: True if device OS matches any target OS
+    """
+    device_parts = device_os_string.split('_')
+    device_name = device_parts[0]
+    device_major = int(device_parts[1])
+    device_minor = int(device_parts[2]) if len(device_parts) > 2 else 0
+    
+    for target_os_string in target_os_array:
+        parts = target_os_string.split('_')
+        target_name = parts[0]
+        target_major = int(parts[1])
+        target_minor = int(parts[2]) if len(parts) > 2 else 0
+        
+        if device_name == target_name:
+            if device_major > target_major:
+                return True
+            if device_major == target_major and device_minor >= target_minor:
+                return True
+    
+    return False
+
+
+def compare_versions(version1, version2):
+    """
+    Compare two semantic version strings.
+    
+    Args:
+        version1: First version string (e.g., '1.2.3' or '1.2.3-beta')
+        version2: Second version string
+    
+    Returns:
+        int: 1 if version1 > version2, -1 if version1 < version2, 0 if equal
+    """
+    def parse_version(version_str):
+        # Split on '-' to separate prerelease
+        if '-' in version_str:
+            main_ver, prerelease = version_str.split('-', 1)
+        else:
+            main_ver = version_str
+            prerelease = None
+        
+        # Parse main version numbers
+        parts = main_ver.split('.')
+        major = int(parts[0]) if len(parts) > 0 else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
+        
+        return (major, minor, patch, prerelease)
+    
+    v1_parsed = parse_version(version1)
+    v2_parsed = parse_version(version2)
+    
+    # Compare major, minor, patch
+    for i in range(3):
+        if v1_parsed[i] > v2_parsed[i]:
+            return 1
+        elif v1_parsed[i] < v2_parsed[i]:
+            return -1
+    
+    # If versions are equal, check prerelease
+    # Release versions (no prerelease) are > prerelease versions
+    if v1_parsed[3] is None and v2_parsed[3] is not None:
+        return 1
+    elif v1_parsed[3] is not None and v2_parsed[3] is None:
+        return -1
+    elif v1_parsed[3] is not None and v2_parsed[3] is not None:
+        # Both have prerelease, compare as strings
+        if v1_parsed[3] > v2_parsed[3]:
+            return 1
+        elif v1_parsed[3] < v2_parsed[3]:
+            return -1
+    
+    return 0
+
+
+def mark_incompatible_release(version):
+    """
+    Mark a release version as incompatible to prevent retry loops.
+    
+    Args:
+        version: Release version string to mark as incompatible
+    """
+    try:
+        try:
+            with open("/incompatible_releases.json", "r") as f:
+                incompatible = json.load(f)
+        except (OSError, ValueError):
+            incompatible = {"versions": []}
+        
+        if version not in incompatible["versions"]:
+            incompatible["versions"].append(version)
+            
+            # Keep only last 10 to prevent file growth
+            if len(incompatible["versions"]) > 10:
+                incompatible["versions"] = incompatible["versions"][-10:]
+            
+            with open("/incompatible_releases.json", "w") as f:
+                json.dump(incompatible, f)
+            os.sync()
+            
+            print(f"Marked {version} as incompatible")
+    except Exception as e:
+        print(f"Warning: Could not mark incompatible release: {e}")
+
+
+def is_release_incompatible(version):
+    """
+    Check if a release version is marked as incompatible.
+    
+    Args:
+        version: Release version string to check
+    
+    Returns:
+        bool: True if version is marked as incompatible
+    """
+    try:
+        with open("/incompatible_releases.json", "r") as f:
+            incompatible = json.load(f)
+            return version in incompatible.get("versions", [])
+    except (OSError, ValueError):
+        return False
+
+
+def check_release_compatibility(release_data, current_version):
+    """
+    DRY compatibility check used by both update_manager and boot.
+    
+    Checks:
+    1. Machine type compatibility
+    2. OS version compatibility (semantic versioning)
+    3. Version is newer than current
+    4. Not previously marked as incompatible
+    
+    Args:
+        release_data: Dict with target_machine_types, target_operating_systems, version
+        current_version: Current installed version string
+    
+    Returns:
+        tuple: (is_compatible: bool, error_message: str or None)
+    """
+    device_machine = get_machine_type()
+    device_os = get_os_version_string()
+    
+    # Check machine type
+    if device_machine not in release_data.get("target_machine_types", []):
+        return (False, f"Incompatible hardware: {device_machine} not in {release_data.get('target_machine_types', [])}")
+    
+    # Check OS compatibility
+    if not os_matches_target(device_os, release_data.get("target_operating_systems", [])):
+        return (False, f"Incompatible OS: {device_os} not compatible with {release_data.get('target_operating_systems', [])}")
+    
+    # Check version is newer
+    if compare_versions(release_data["version"], current_version) <= 0:
+        return (False, f"Version not newer: {release_data['version']} <= {current_version}")
+    
+    # Check if previously marked incompatible
+    if is_release_incompatible(release_data["version"]):
+        return (False, f"Previously marked incompatible: {release_data['version']}")
+    
+    return (True, None)
+
+
+def get_system_info():
+    """
+    Get comprehensive system information.
+    
+    Returns:
+        dict: Dictionary containing all system attributes
+    """
+    return {
+        'os_version': get_os_version(),
+        'os_version_string': get_os_version_string(),
+        'board_id': get_board_id(),
+        'os_name': get_os_name(),
+        'machine_type': get_machine_type(),
+        'cpu_uid': get_cpu_uid(),
+        'mac_address': get_mac_address(),
+    }
 
 
 def wait_for_button_release(button, debounce_delay=0.1):
@@ -79,29 +367,6 @@ def validate_config_values(config_dict, required_keys):
     return len(missing_keys) == 0, missing_keys
 
 
-def check_secrets_complete():
-    """
-    Check if secrets.py exists and contains all required configuration values.
-    
-    Returns:
-        tuple: (is_complete: bool, missing_keys: list)
-    """
-    required_keys = ['ssid', 'password', 'weather_zip']
-    
-    try:
-        import secrets
-        
-        # Check if secrets module has the 'secrets' dictionary
-        if not hasattr(secrets, 'secrets'):
-            return False, required_keys
-        
-        config = secrets.secrets
-        
-        # Validate all required keys exist and have non-empty values
-        return validate_config_values(config, required_keys)
-        
-    except (ImportError, AttributeError):
-        return False, required_keys
 
 
 def interruptible_sleep(duration, button=None, check_interval=0.05):
@@ -216,7 +481,6 @@ def trigger_safe_mode():
     Trigger Safe Mode on next reboot.
     This enables USB mass storage for development.
     """
-    import microcontroller
     print("Triggering Safe Mode for development access...")
     print("Device will reboot with USB enabled")
     microcontroller.on_next_reset(microcontroller.RunMode.SAFE_MODE)

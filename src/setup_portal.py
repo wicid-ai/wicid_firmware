@@ -141,39 +141,24 @@ class SetupPortal:
         return Response(request, json.dumps(body), content_type='application/json', status=(code, text))
 
     def save_credentials(self, ssid, password, zip_code):
-        """Save WiFi credentials and settings to secrets.py atomically."""
-        secrets_content = f'''# This file is where you keep secret settings, passwords, and tokens!
-# If you put them in the code you risk committing that info or sharing it
-
-secrets = {{
-    'ssid' : '{ssid}',
-    'password' : '{password}',
-    'weather_zip': '{zip_code}',
-    'update_interval': 1200  # Default update interval in seconds (20 minutes)
-}}
-'''
-        temp_path = '/secrets.py.tmp'
-        final_path = '/secrets.py'
-
+        """Save WiFi credentials and weather ZIP to secrets.json."""
         try:
-            # Write to a temporary file first
-            with open(temp_path, 'w') as f:
-                f.write(secrets_content)
-                f.flush()
-                os.sync()
-
-            # Atomically rename the temporary file to the final path
-            os.rename(temp_path, final_path)
+            # Save all user settings to secrets.json (no config.json anymore)
+            secrets = {
+                "ssid": ssid,
+                "password": password,
+                "weather_zip": zip_code
+            }
             
-            print("Credentials saved successfully")
+            with open("/secrets.json", "w") as f:
+                json.dump(secrets, f)
+            os.sync()
+            
+            print("Credentials saved successfully to secrets.json")
             return True, None
+            
         except Exception as e:
             print(f"Error saving credentials: {e}")
-            # Clean up the temporary file if it exists
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass  # Temp file might not exist, which is fine
             return False, str(e)
 
     def blink_success(self):
@@ -198,13 +183,16 @@ secrets = {{
                     'ssid': '', 'password': '', 'zip_code': ''
                 }
                 try:
-                    # Load from saved secrets to pre-populate the form
-                    from secrets import secrets
+                    # Load from secrets.json to pre-populate the form
+                    with open("/secrets.json", "r") as f:
+                        secrets = json.load(f)
+                    
                     current_settings['ssid'] = secrets.get('ssid', '')
                     current_settings['password'] = secrets.get('password', '')
                     current_settings['zip_code'] = secrets.get('weather_zip', '')
-                except (ImportError, AttributeError):
-                    # No secrets.py, so we'll use empty values
+                except Exception as load_err:
+                    print(f"Could not load existing secrets: {load_err}")
+                    # Use empty values if secrets can't be loaded
                     pass
 
                 # Package all data for the frontend

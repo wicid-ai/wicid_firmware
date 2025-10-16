@@ -1,37 +1,12 @@
 # Required CircuitPython libraries for WICID
 # Install using:
-# circup install
+# circup install -r requirements.txt
 
-# Core functionality
-adafruit_requests
-adafruit_httpserver
-adafruit_wsgi
-adafruit_ntp
-adafruit_datetime
-
-# Hardware interfaces
-neopixel
-
-# Optional MQTT functionality (uncomment if using MQTT)
-# adafruit_minimqtt
-# adafruit_io
-
-# Built-in modules (no need to install, listed for reference)
-# - board
-# - digitalio
-# - time
-# - json
-# - os
-# - rtc
-
-# Networking (built-in)
-# - wifi
-# - socketpool
-# - ssl
-# - ssl (for HTTPS)
-
-# Storage (built-in)
-# - storage
-
-# System (built-in)
-# - supervisor
+adafruit_pixelbuf==2.0.9
+adafruit_connection_manager==3.1.5
+adafruit_requests==4.1.13
+adafruit_datetime==1.4.3
+neopixel==6.3.17
+adafruit_ntp==3.3.4
+adafruit_wsgi==3.0.2
+adafruit_httpserver==4.7.0

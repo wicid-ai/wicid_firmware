@@ -1,3 +1,6 @@
+# Build artifacts
+src/manifest.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -194,4 +197,13 @@ cython_debug/
 .cursorindexingignore
 
 # SpecStory is a tool for caputuring AI-powered instructions for software development.
-.specstory/** 
+.specstory/**
+
+# WICID-specific files
+secrets.json
+pending_update/
+releases/
+boot_out.txt
+
+# Keep the on-device library files
+!src/lib/

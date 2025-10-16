@@ -1,0 +1,8 @@
+# WICID System Configuration
+# These settings are deployed with each firmware update
+
+VERSION = "0.2.0"
+SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
+SYSTEM_UPDATE_CHECK_HOUR = 2
+WEATHER_UPDATE_INTERVAL = 1200
+

@@ -3,6 +3,8 @@
 ## Overview
 WICID (Weather Indicator and Climate Information Device) is an intelligent weather indicator that provides at-a-glance weather information through colored LED feedback. The device is designed to be simple, intuitive, and visually appealing, providing weather updates without requiring a screen. It features an easy Wi-Fi setup through a captive portal for seamless network configuration.
 
+See the product website at: https://www.wicid.ai
+
 ## Features
 
 - **Temperature Display**: Shows current temperature through LED color gradients
@@ -11,6 +13,10 @@ WICID (Weather Indicator and Climate Information Device) is an intelligent weath
 - **WiFi Connectivity**: Fetches real-time weather data using WiFi
 - **Setup Portal**: Easy Wi-Fi network setup through a web interface
 - **Button Control**: Simple button interface to cycle through different modes and access setup
+- **Over-the-Air (OTA) Updates**: Automatic firmware updates from remote server
+  - Updates check on every restart and daily at 2am (configurable)
+  - Support for production and development release channels
+  - Automatic download and installation with device restart
 
 ## How It Works
 
@@ -111,9 +117,10 @@ The device fetches weather data including:
 - **Troubleshooting**:
   - Navigate directly to http://192.168.4.1/
   - Ensure you type "http://192.168.4.1/" exactly (include http:// and trailing slash)
+  - If using a mobile device, you may need to disable mobile data, i.e., go into *Airplane Mode* (leaving WiFi enabled) to prevent your phone from bypassing the IP address provided
   - Desktop browsers may default to search or HTTPS if you don't include the full URL
 
-- **Saving settings**: If you see a read‑only filesystem error while saving, unplug USB or eject the CIRCUITPY drive and try again.
+- **Saving settings**: If you see a read‑only filesystem error while saving, try plugging the WICID into a power-only USB cable (when connected to a computer with a data-enabled USB cable, the WICID may behave like a thumbdrive and prevent config updates through the setup interface)
 
 ## Error Handling
 
@@ -127,7 +134,7 @@ The device includes robust error handling and will:
 ## Developer Setup
 
 ### Prerequisites
-- CircuitPython installed on your device
+- Python version 3.13+
 - `circup` for managing CircuitPython libraries
 - (Optional) Mu Editor for code editing and serial console
 
@@ -153,7 +160,7 @@ The device uses `boot.py` to control filesystem access. By default, it runs in *
    - At 3 seconds: LED pulses white (setup mode threshold)
    - At 10 seconds: LED changes to flashing blue/green (Safe Mode threshold)
    - Release the button when you see blue/green flashing
-   - The device will automatically reboot into Safe Mode
+   - The device will automatically reboot into **Safe Mode**
    - The CIRCUITPY drive will appear and you can edit files
 
 2. **Return to Production Mode:**
@@ -176,27 +183,50 @@ If needed, you can also trigger Safe Mode from the REPL:
    ```
 4. The device will boot into Safe Mode with USB access enabled
 
-### Manual Configuration
-For development purposes, you can manually configure settings by editing `secrets.py`:
+### Configuration Files
 
-```python
-secrets = {
-    'ssid': 'your_wifi_ssid',
-    'password': 'your_wifi_password',
-    'weather_zip': '12345',  # ZIP code for weather location
-    'update_interval': 1200  # Update interval in seconds (20 minutes)
+WICID uses two configuration files:
+
+#### `settings.toml` - System Configuration
+System-level settings deployed with firmware updates:
+```toml
+VERSION = "0.1.0"
+SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
+SYSTEM_UPDATE_CHECK_HOUR = 2
+WEATHER_UPDATE_INTERVAL = 1200
+```
+
+Read via `os.getenv()` in device code. Managed by build system.
+
+#### `secrets.json` - User Data
+User-specific credentials, preserved across firmware updates:
+```json
+{
+  "ssid": "your_wifi_ssid",
+  "password": "your_wifi_password",
+  "weather_zip": "12345"
 }
 ```
 
+**Note**: `secrets.json` is created by Setup Mode and preserved during OTA updates.
+
 ### Code Structure
 - `code.py`: Main application loop and mode switching
-- `boot.py`: Controls filesystem access modes (production vs development)
+- `boot.py`: Bootloader with compatibility checks and full-reset installation
+- `update_manager.py`: OTA update logic with device self-identification
+- `zipfile_lite.py`: Custom ZIP extraction using zlib
 - `modes.py`: LED behavior and display modes
 - `weather.py`: Weather data fetching and processing
-- `setup_portal.py`: Handles the web-based setup interface
-- `secrets.py`: Configuration (sensitive data)
+- `wifi_manager.py`: WiFi connection management with retry logic
+- `setup_portal.py`: Web-based setup interface
+- `pixel_controller.py`: LED control and animations
+- `utils.py`: Device detection, compatibility checks, and shared utilities
+- `settings.toml`: System configuration (version controlled)
+- `secrets.json`: User credentials (device-specific, preserved during updates)
+- `lib/`: CircuitPython libraries
 - `www/`: Web interface files for the setup portal
-- `requirements.txt`: Python dependencies for development
+- `docs/`: Documentation including build and update server specifications
+- `requirements.txt`: CircuitPython library dependencies
 
 ### Flashing and Building
 
@@ -223,22 +253,177 @@ Before flashing the application, new boards must be initialized with CircuitPyth
 
 The board is now ready for library installation and application deployment.
 
-#### Installing Dependencies and Flashing Application
+#### Managing CircuitPython Libraries in /src/lib/
 
-1. Install required dependencies from the wicid_firmware directory on your development machine:
+The `/src/lib/` directory is maintained in source control to facilitate OTA updates. Unlike the typical CircuitPython workflow where libraries are installed directly on the microcontroller, this project requires managing libraries from your development machine.
+
+**Adding or Removing Libraries:**
+
+1. **Install circup** (if not already installed):
    ```bash
    pip install circup
-   circup install -r requirements.txt
    ```
 
-2. Copy all files to your device's CIRCUITPY drive
-3. The device will automatically restart and run the new code
+2. **Update requirements.txt** to reflect the library changes you need
 
-### Dependencies
+3. **Delete the existing /src/lib/ directory** to regenerate it cleanly:
+   ```bash
+   rm -rf src/lib
+   ```
 
-- CircuitPython
-- Adafruit CircuitPython libraries
-- Open-Meteo API (or compatible weather service)
+4. **Create a boot_out.txt file** in the `src/` directory. Because circup needs to determine the target OS version, and we're not running directly on the device, we reference a local boot_out.txt file:
+   ```bash
+   echo "Adafruit CircuitPython 10.0.1 on 2025-10-09;" > src/boot_out.txt
+   ```
+   
+   Note: This file is gitignored, so once created you can leave it in place. Update the version string if you change CircuitPython versions.
+
+5. **Install libraries** using circup from the project root:
+   ```bash
+   circup --path src install -r requirements.txt
+   ```
+
+6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package
+
+
+
+## Over-the-Air (OTA) Updates
+
+WICID devices support automatic firmware updates with a full-reset strategy for guaranteed consistency.
+
+### How It Works
+
+1. **Automatic Checking**: Device checks for updates on every boot and daily at 2am (configurable)
+2. **Device Identification**: Device determines its own hardware type and OS version at runtime
+3. **Compatibility Check**: Compares available releases against device capabilities using semantic versioning
+4. **Download**: If compatible newer version found, downloads complete firmware package
+5. **Verification**: On next boot, bootloader verifies compatibility before installation, marks incompatible releases to prevent retry loops
+6. **Full Reset Installation**: If verification passes, device replaces all firmware files (preserves user data) and reboots
+
+### Update Strategy
+
+WICID uses **full reset** updates:
+- Every update completely replaces all firmware files
+- User data (`secrets.json`) is always preserved
+- No partial updates or migrations needed
+- Guarantees consistent device state
+
+### Release Channels
+
+- **Production** (default): Stable releases
+- **Development**: Beta/experimental releases
+
+To switch to development channel, create an empty `/development` file on the device:
+```python
+with open("/development", "w") as f:
+    f.write("")
+```
+
+### Configuration
+
+Update behavior is configured in `settings.toml`:
+- `SYSTEM_UPDATE_MANIFEST_URL`: URL of update manifest (default: `https://www.wicid.ai/releases.json`)
+- `SYSTEM_UPDATE_CHECK_HOUR`: Hour of day for scheduled check (default: 2 for 2am)
+- `VERSION`: Current firmware version
+
+Devices self-identify their hardware type and OS version at runtime - no hardcoded platform IDs needed.
+
+### Server Setup
+
+To host firmware updates, you need:
+1. A JSON manifest listing available versions
+2. ZIP files containing firmware releases
+3. HTTPS hosting (GitHub Releases, static hosting, etc.)
+
+
+### Creating Update Packages
+
+Use the automated build tool:
+
+```bash
+# Interactive build - prompts for all options
+./build.py
+
+# Non-interactive build (for GitHub Actions)
+python build.py --build
+```
+
+The build tool:
+- Compiles Python to bytecode (`.mpy`) for faster loading
+- Generates `manifest.json` with version and installation instructions
+- Updates `releases.json` for device discovery
+- Creates GitHub tag for automated deployment
+- Packages everything into a ZIP file
+
+See [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md) for complete build guide.
+
+### Monitoring Updates
+
+Device logs show update activity:
+```
+Checking for firmware updates...
+Update available: 1.2.3
+Release notes: Stability improvements
+Downloading update...
+Update downloaded successfully
+Restarting to install update...
+```
+
+After restart:
+```
+FIRMWARE UPDATE DETECTED
+Installing update from: firmware-1.2.3.zip
+Update installation complete
+```
+
+### Current Implementation Status
+
+The OTA update system is **fully functional**:
+- ✅ Device self-identification (hardware type and OS version)
+- ✅ Multi-platform release support
+- ✅ Compatibility verification before installation
+- ✅ Full reset installation strategy
+- ✅ Incompatible release tracking
+- ✅ Checking for updates on boot and scheduled times
+- ✅ ZIP extraction and installation (custom implementation using `zlib`)
+- ✅ Automatic cleanup after installation
+- ✅ GitHub Actions automated build and deployment
+- ✅ Cross-repository manifest synchronization
+
+
+
+### Repository Structure
+Note this structure is subject to frequent changes. See the actual source for the most up-to-date information.
+
+```
+wicid_firmware/
+├── src/                    # Device firmware
+│   ├── settings.toml      # System configuration
+│   ├── manifest.json      # Build defaults (gitignored)
+│   ├── boot.py            # Bootloader with compatibility checks
+│   ├── code.py            # Main application loop
+│   ├── update_manager.py  # OTA update logic
+│   ├── zipfile_lite.py    # Custom ZIP extraction
+│   ├── weather.py         # Weather API integration
+│   ├── wifi_manager.py    # WiFi connectivity
+│   ├── modes.py           # Display modes
+│   ├── utils.py           # Device detection and utilities
+│   ├── pixel_controller.py # LED control
+│   ├── setup_portal.py    # Setup portal
+│   ├── lib/               # Device libraries
+│   └── www/               # Setup portal web UI
+├── build.py               # Build tool (interactive + CI)
+├── releases.json          # Master update manifest
+├── releases/              # Build artifacts (gitignored)
+├── .github/
+│   ├── workflows/
+│   │   └── release.yml    # Automated build pipeline
+│   └── files-sync-config.yml # Cross-repo sync config
+└── docs/
+    └── BUILD_PROCESS.md   # Build guide
+```
+
+
 
 ## License
 

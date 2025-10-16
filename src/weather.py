@@ -1,24 +1,18 @@
-try:
-    import secrets
-except ImportError:
-    print("WiFi and ZIP code are kept in secrets.py, please add them there!")
-    raise
-
 from utils import get_location_data_from_zip
 
 
 class Weather:
-    def __init__(self, session):
+    def __init__(self, session, weather_zip):
         """
         Initialize the Weather service with an active HTTP session.
         Retrieves latitude/longitude for the target ZIP code using Open-Meteo's geocoding API.
         
         Args:
             session: An active adafruit_requests.Session instance for making HTTP requests
+            weather_zip: ZIP code string for weather location
         """
         self.session = session
-
-        self.zip_code = secrets.secrets["weather_zip"]
+        self.zip_code = weather_zip
 
         # Get coordinates first, then detect timezone from them
         self.lat, self.lon, raw_tz = get_location_data_from_zip(self.session, self.zip_code)

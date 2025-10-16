@@ -1,0 +1,47 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    tags:
+      - 'release_*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install mpy-cross
+      
+      - name: Build release package
+        run: |
+          # Use same build.py logic as local builds (DRY)
+          python build.py --build
+      
+      - name: Generate release notes
+        run: |
+          # Extract release_notes from src/manifest.json to RELEASE_NOTES.md
+          python -c "import json; manifest = json.load(open('src/manifest.json')); open('RELEASE_NOTES.md', 'w').write(manifest.get('release_notes', 'No release notes provided.'))"
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: releases/*.zip
+          body_path: RELEASE_NOTES.md
+          tag_name: ${{ github.ref_name }}
+      
+      - name: Sync releases.json to wicid_web
+        uses: wadackel/files-sync-action@v3
+        with:
+          github_token: ${{ secrets.WICID_WEB_TOKEN }}
+          config_file: .github/files-sync-config.yml
+
