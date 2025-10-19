@@ -23,14 +23,18 @@ class AuthenticationError(Exception):
 class WiFiManager:
     """Manages WiFi connections with progressive backoff and interrupt support."""
     
-    # Maximum wait time between retries (4 hours)
-    MAX_BACKOFF_TIME = 60 * 60 * 4
-    # Base delay for exponential backoff (seconds)
-    BASE_BACKOFF_DELAY = 1.5
-    # Backoff multiplier for exponential retry delays
-    BACKOFF_MULTIPLIER = 2
-    # Connection timeout in seconds
+    # Connection timeout for a single attempt (seconds)
     CONNECTION_TIMEOUT = 10
+    
+    # Exponential backoff configuration
+    BASE_BACKOFF_DELAY = 1.5      # Initial delay (seconds): 1.5s
+    BACKOFF_MULTIPLIER = 2         # Doubles each retry: 1.5s, 3s, 6s, 12s, 24s, 48s...
+    MAX_BACKOFF_TIME = 60 * 30     # Cap at 30 minutes between retries
+    
+    # Maximum total retry duration before giving up (5 days)
+    # After 5 days of failed connection attempts, enter setup mode
+    # This prevents creating zombie IoT devices that retry forever
+    MAX_RETRY_DURATION = 60 * 60 * 24 * 5  # 5 days in seconds
     
     def __init__(self, button=None):
         """
@@ -48,7 +52,10 @@ class WiFiManager:
         Connect to WiFi with progressive exponential backoff retry logic.
         Can be interrupted by button press if button is provided.
         
-        Hard failures (authentication errors) will not be retried.
+        Retries with exponential backoff capped at MAX_BACKOFF_TIME (30 minutes).
+        After MAX_RETRY_DURATION (5 days) of failed attempts, gives up and returns failure.
+        All connection failures are treated as transient and will be retried.
+        User can manually trigger setup mode via button press if credentials are wrong.
         
         Args:
             ssid: WiFi network SSID
@@ -62,6 +69,7 @@ class WiFiManager:
             KeyboardInterrupt: If button is pressed during connection attempt
         """
         attempts = 0
+        start_time = time.monotonic()  # Track when we started trying
         
         while True:
             attempts += 1
@@ -102,14 +110,10 @@ class WiFiManager:
                 error_msg = str(e).lower()
                 print(f"Connection attempt #{attempts} failed: RuntimeError - {e}")
                 
-                # Check for hard failures that should not be retried
-                if "auth" in error_msg or "password" in error_msg:
-                    print("✗ Authentication failure detected - triggering setup mode")
-                    raise AuthenticationError(f"Invalid WiFi credentials: {str(e)}")
-                
-                # Soft failures can be retried
-                result = self._handle_retry_or_fail(attempts, str(e), on_retry)
-                if result:  # Max retries exceeded
+                # All RuntimeErrors are treated as soft failures that can be retried
+                # User can manually trigger setup mode via button press if credentials are wrong
+                result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
+                if result:  # Max retry duration exceeded
                     return result
                 # Continue loop for retry
             
@@ -119,41 +123,50 @@ class WiFiManager:
                 print(f"Connection attempt #{attempts} failed: ConnectionError - {e}")
                 print(f"Error errno: {errno_code}")
                 
-                # Check for authentication failure by errno code or message content
-                if errno_code in (-3, 7, 15, 202) or "auth" in error_msg or "password" in error_msg:
-                    print("✗ Authentication failure detected - triggering setup mode")
-                    raise AuthenticationError(f"Invalid WiFi credentials: {str(e)}")
-                
-                # Soft failures can be retried
-                result = self._handle_retry_or_fail(attempts, str(e), on_retry)
-                if result:  # Max retries exceeded
+                # All ConnectionErrors are treated as soft failures that can be retried
+                # User can manually trigger setup mode via button press if credentials are wrong
+                result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
+                if result:  # Max retry duration exceeded
                     return result
                 # Continue loop for retry
                 
             except Exception as e:
                 error_msg = str(e)
                 print(f"Connection attempt #{attempts} failed: {error_msg}")
-                result = self._handle_retry_or_fail(attempts, error_msg, on_retry)
-                if result:  # Max retries exceeded
+                result = self._handle_retry_or_fail(attempts, error_msg, start_time, on_retry)
+                if result:  # Max retry duration exceeded
                     return result
                 # Continue loop for retry
     
-    def _handle_retry_or_fail(self, attempts, error_msg, on_retry=None):
+    def _handle_retry_or_fail(self, attempts, error_msg, start_time, on_retry=None):
         """
         Handle retry logic for soft failures.
         
+        Args:
+            attempts: Current attempt number
+            error_msg: Error message from the failed attempt
+            start_time: Monotonic timestamp when connection attempts started
+            on_retry: Optional callback for retry events
+        
         Returns:
-            tuple: (False, error_message) if max retries exceeded
+            tuple: (False, error_message) if max retry duration exceeded
             None: if should continue retrying
         """
+        # Check if we've exceeded the maximum retry duration (5 days)
+        elapsed_time = time.monotonic() - start_time
+        if elapsed_time >= self.MAX_RETRY_DURATION:
+            days_elapsed = elapsed_time / (60 * 60 * 24)
+            print(f"Max retry duration exceeded ({days_elapsed:.1f} days). Giving up.")
+            return False, f"Unable to connect to WiFi after {attempts} attempts over {days_elapsed:.1f} days. Please verify your network is operational and credentials are correct."
+        
         # Calculate exponential backoff time: base * (2^(attempts-1))
         # Attempt 1: 1.5s, 2: 3s, 3: 6s, 4: 12s, 5: 24s, 6: 48s, 7: 96s...
         wait_time = self.BASE_BACKOFF_DELAY * (self.BACKOFF_MULTIPLIER ** (attempts - 1))
         
-        # Check if we've exceeded max backoff time
-        if wait_time >= self.MAX_BACKOFF_TIME:
-            print(f"Max backoff time reached ({self.MAX_BACKOFF_TIME}s). Giving up.")
-            return False, f"Connection failed after {attempts} attempts: {error_msg}"
+        # Cap wait time at maximum backoff (30 minutes)
+        if wait_time > self.MAX_BACKOFF_TIME:
+            wait_time = self.MAX_BACKOFF_TIME
+            print(f"Backoff capped at {self.MAX_BACKOFF_TIME}s ({self.MAX_BACKOFF_TIME/60:.0f} minutes)")
         
         # Call retry callback if provided
         if on_retry:

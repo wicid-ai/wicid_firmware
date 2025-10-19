@@ -54,22 +54,24 @@ import modes
 def main():
     try:
         # Initialize WiFi Manager and connect with interruptible backoff
-        from wifi_manager import AuthenticationError
         wifi_manager = WiFiManager(button)
         
         try:
+            # Connect with exponential backoff (retries for up to 5 days, capped at 30 min intervals)
+            # User can interrupt by pressing button at any time
             success, error_msg = wifi_manager.connect_with_backoff(
                 secrets["ssid"],
                 secrets["password"]
             )
+            
             if not success:
-                # If connection fails after retries, enter setup mode to fix
+                # If connection fails after 5 days of retries, enter setup mode
                 print(f"Could not connect to WiFi: {error_msg}")
                 print("Entering setup mode...")
                 pixel_controller.blink_error()
                 time.sleep(2)
                 wifi_error = {
-                    "message": error_msg,
+                    "message": "Unable to connect to WiFi after multiple days of trying. Please verify your network is operational and credentials are correct.",
                     "field": "ssid"
                 }
                 if modes.run_setup_mode(button, error=wifi_error):
@@ -81,25 +83,6 @@ def main():
                     time.sleep(2)
                     supervisor.reload()
             # Connection successful - continue to full validation before indicating success
-        
-        except AuthenticationError as e:
-            # Invalid credentials - enter setup mode to fix them
-            print(f"Authentication failed: {e}")
-            print("Entering setup mode to update credentials...")
-            pixel_controller.blink_error()
-            time.sleep(2)
-            auth_error = {
-                "message": "WiFi authentication failure. Please check your password.",
-                "field": "password"
-            }
-            if modes.run_setup_mode(button, error=auth_error):
-                # Setup completed, reboot to apply new settings
-                supervisor.reload()
-            else:
-                # Setup cancelled, reboot anyway since credentials are invalid
-                print("Setup cancelled but credentials are invalid. Rebooting...")
-                time.sleep(2)
-                supervisor.reload()
                 
         except KeyboardInterrupt:
             # User pressed button during connection attempts
