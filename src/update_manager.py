@@ -8,6 +8,7 @@ extracting them to /pending_update/root/, and managing the update process.
 import os
 import time
 import json
+import traceback
 from utils import (
     get_machine_type,
     get_os_version_string,
@@ -88,7 +89,21 @@ class UpdateManager:
             
             # Fetch the releases manifest
             response = self.session.get(manifest_url, headers=headers)
-            manifest = response.json()
+            
+            # Check if response is successful
+            if response.status_code != 200:
+                print(f"Update check failed: HTTP {response.status_code}")
+                response.close()
+                return None
+            
+            # Try to parse JSON
+            try:
+                manifest = response.json()
+            except (ValueError, AttributeError) as json_err:
+                print(f"Invalid JSON response from manifest URL")
+                response.close()
+                return None
+            
             response.close()
             
             # Determine which release channel to use
@@ -132,8 +147,7 @@ class UpdateManager:
                 
         except Exception as e:
             print(f"Error checking for updates: {e}")
-            import sys
-            sys.print_exception(e)
+            traceback.print_exception(e)
             return None
     
     def download_update(self, zip_url):
@@ -214,8 +228,7 @@ class UpdateManager:
                 
             except Exception as e:
                 print(f"Error extracting update: {e}")
-                import sys
-                sys.print_exception(e)
+                traceback.print_exception(e)
                 
                 # Clean up on error
                 try:
@@ -227,8 +240,7 @@ class UpdateManager:
             
         except Exception as e:
             print(f"Error downloading update: {e}")
-            import sys
-            sys.print_exception(e)
+            traceback.print_exception(e)
             
             # Clean up partial download
             try:

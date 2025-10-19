@@ -13,6 +13,7 @@ import os
 import json
 import storage
 import microcontroller
+import traceback
 
 # Import compatibility checking utilities
 try:
@@ -285,8 +286,7 @@ def process_pending_update():
         pass
     except Exception as e:
         print(f"Error checking for updates: {e}")
-        import sys
-        sys.print_exception(e)
+        traceback.print_exception(e)
 
 def main():
     """
