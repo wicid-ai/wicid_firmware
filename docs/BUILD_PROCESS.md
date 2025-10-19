@@ -42,7 +42,7 @@ Devices determine their own characteristics:
 ```
 Developer
     ↓
-./build.py (interactive)
+./builder.py (interactive)
     ├─► Updates VERSION in settings.toml
     ├─► Generates src/manifest.json
     ├─► Updates releases.json
@@ -67,14 +67,64 @@ Devices poll for updates
 
 - Python 3.11+
 - Git access to repository
-- `mpy-cross` installed: `pip install mpy-cross`
+- `mpy-cross` compiler matching your CircuitPython version
+
+#### Installing mpy-cross
+
+The `mpy-cross` compiler **must** match the CircuitPython version running on your target device. Installing via `pip install mpy-cross` will not work because that version targets MicroPython, not CircuitPython.
+
+**Version Selection Strategy:**
+
+Use semantic versioning to select the latest stable patch version that matches your target major.minor version:
+- Target `circuitpython_10` → Use latest `10.x.y` (e.g., `10.0.3`)
+- Target `circuitpython_9_3` → Use latest `9.3.y` (e.g., `9.3.2`)
+
+Always prefer `.static` builds and avoid pre-release versions (those with `-` suffixes like `10.0.0-beta.1`).
+
+**Download Steps:**
+
+1. Visit the Adafruit mpy-cross binary repository:
+   - **macOS**: https://adafruit-circuit-python.s3.amazonaws.com/index.html?prefix=bin/mpy-cross/macos/
+   - **Linux x64**: https://adafruit-circuit-python.s3.amazonaws.com/index.html?prefix=bin/mpy-cross/linux-amd64/
+   - **Linux ARM64**: https://adafruit-circuit-python.s3.amazonaws.com/index.html?prefix=bin/mpy-cross/linux-arm64/
+   - **Windows**: https://adafruit-circuit-python.s3.amazonaws.com/index.html?prefix=bin/mpy-cross/windows/
+
+2. Find the latest stable version matching your target CircuitPython version:
+   - Look for files like `mpy-cross-[OS]-[VERSION].static`
+   - Example for macOS targeting CircuitPython 10.x: `mpy-cross-macos-10.0.3-universal.static`
+   - Example for Linux targeting CircuitPython 9.3.x: `mpy-cross-linux-amd64-9.3.2.static`
+
+3. Download and move to your project root directory
+
+4. Rename it to `mpy-cross` (or `mpy-cross.exe` on Windows):
+   ```bash
+   # macOS example
+   mv mpy-cross-macos-10.0.3-universal.static mpy-cross
+   
+   # Linux example
+   mv mpy-cross-linux-amd64-10.0.3.static mpy-cross
+   ```
+
+5. Make it executable (macOS/Linux):
+   ```bash
+   chmod +x mpy-cross
+   ```
+
+6. Verify the version:
+   ```bash
+   ./mpy-cross --version
+   ```
+
+The build script will use this local `mpy-cross` binary to compile firmware.
+
+**Note:** The GitHub Actions workflow automatically downloads the latest matching version from the [linux-amd64 repository](https://adafruit-circuit-python.s3.amazonaws.com/index.html?prefix=bin/mpy-cross/linux-amd64/) based on the `target_operating_systems` field in your manifest.
 
 ### Interactive Build
 
 Run the build tool:
 
 ```bash
-./build.py
+./builder.py
 ```
 
 ### Build Prompts
@@ -146,6 +196,69 @@ git push && git push --tags
 
 The tag push triggers automated building and deployment.
 
+## Installing Firmware Manually (Optional)
+
+After building a release package locally, you can install it directly to a device using the installer script:
+
+```bash
+python installer.py
+```
+
+### When to Use the Installer
+
+The installer is useful for:
+- **Development**: Testing firmware changes on physical devices
+- **Initial setup**: Flashing new devices before they're configured for OTA
+- **Troubleshooting**: Clean installations when a device has issues
+- **Manual updates**: Installing specific versions without waiting for OTA
+
+### Installation Modes
+
+**SOFT Update**
+- Mimics OTA update behavior
+- Extracts firmware to `/pending_update/root/` on CIRCUITPY
+- Device's `boot.py` handles installation on next reboot
+- Safer option with automatic compatibility verification
+- Preserves all existing files until reboot
+
+**HARD Update**
+- Immediate full replacement
+- Deletes all existing firmware files (preserves `secrets.json`)
+- Copies new firmware directly to device root
+- Lists files to be deleted and requires explicit confirmation
+- Useful for clean slate installations
+
+### Requirements
+
+- CIRCUITPY device connected via USB in Safe Mode
+- Built firmware package at `releases/wicid_install.zip`
+- Python 3.11+ on host machine
+
+### What the Installer Does
+
+1. **Auto-detects** CIRCUITPY drive across macOS, Linux, and Windows
+2. **Verifies** firmware package exists
+3. **Extracts** package to temporary directory
+4. **Filters** hidden files (.DS_Store, ._ files, etc.)
+5. **Copies** firmware with proper directory structure
+6. **Cleans up** system artifacts and temporary files
+7. **Guides** user through device reboot process
+
+### Platform Support
+
+The installer works across:
+- **macOS**: Detects `/Volumes/CIRCUITPY`
+- **Linux**: Checks `/media/*/CIRCUITPY` and `/mnt/CIRCUITPY`
+- **Windows**: Scans drive letters for CIRCUITPY volume
+
+### FAT Filesystem Handling
+
+The installer is optimized for the FAT12 filesystem used by CIRCUITPY:
+- Uses `shutil.copy()` instead of `copy2()` to avoid metadata errors
+- Skips all hidden files (`.DS_Store`, `._*` files)
+- Handles system folders (`.Trashes`, `.fseventsd`, etc.)
+- Cleans up macOS artifacts after installation
+
 ## GitHub Actions Automation
 
 ### Trigger
@@ -154,13 +267,15 @@ Tags matching `v*` pattern (e.g., `v0.2.0`, `v1.0.0-beta.1`)
 
 ### Automated Steps
 
-1. **Setup**: Install Python and mpy-cross
-2. **Build**: Run `build.py --build` (non-interactive mode)
-   - Compiles all `.py` files to `.mpy` bytecode
+1. **Setup**: Install Python
+2. **Version Detection**: Parse `target_operating_systems` from manifest and query [Adafruit's S3 bucket](https://adafruit-circuit-python.s3.amazonaws.com/index.html?prefix=bin/mpy-cross/linux-amd64/) to find the latest stable mpy-cross version matching the semantic version requirement
+3. **Download mpy-cross**: Fetch the version-matched `mpy-cross` binary for Linux AMD64
+4. **Build**: Run `builder.py --build` (non-interactive mode)
+   - Compiles all `.py` files to `.mpy` bytecode using version-matched compiler
    - Creates `wicid_install.zip` package
-3. **Release**: Create GitHub Release with ZIP attached
-4. **Sync**: Push `releases.json` to wicid_web repository
-5. **Deploy**: Netlify automatically deploys updated manifest
+5. **Release**: Create GitHub Release with ZIP attached
+6. **Sync**: Push `releases.json` to wicid_web repository
+7. **Deploy**: Netlify automatically deploys updated manifest
 
 ### Authentication
 
@@ -203,7 +318,6 @@ Simplified manifest for compatibility verification:
   "release_type": "production",
   "release_notes": "Added OTA updates",
   "release_date": "2025-10-15T12:00:00Z",
-  "git_commit": "abc123"
 }
 ```
 
@@ -225,8 +339,7 @@ Multi-platform master manifest:
         "version": "0.2.0",
         "release_notes": "Added OTA updates",
         "zip_url": "https://github.com/.../v0.2.0/wicid_install.zip",
-        "release_date": "2025-10-15T12:00:00Z",
-        "git_commit": "abc123"
+        "release_date": "2025-10-15T12:00:00Z"
       },
       "development": {
         "version": "0.2.1",
@@ -283,7 +396,7 @@ Format: `MAJOR.MINOR.PATCH[-PRERELEASE]`
 
 ```bash
 # Build without pushing
-./build.py
+./builder.py
 
 # Verify package contents
 unzip -l releases/wicid_install.zip
@@ -305,9 +418,24 @@ unzip -p releases/wicid_install.zip manifest.json | python -m json.tool
 
 ### "mpy-cross not found"
 
+The build script looks for `./mpy-cross` in the project root. Download the correct version following the [Installing mpy-cross](#installing-mpy-cross) instructions above.
+
+Verify it's in the right location and executable:
 ```bash
-pip install mpy-cross
+ls -la ./mpy-cross
+./mpy-cross --version
 ```
+
+### "mpy-cross version mismatch"
+
+If you get fatal errors on device when loading `.mpy` files, your `mpy-cross` version doesn't match your CircuitPython version. Check your device's version:
+```python
+# On device REPL
+import sys
+print(sys.implementation.version)
+```
+
+Then download the matching `mpy-cross` version. For example, if device shows `(10, 0, 3)`, download `mpy-cross` version `10.0.3`.
 
 ### Git tag already exists
 
@@ -387,7 +515,8 @@ wicid_firmware/
 │   ├── *.py                 # Firmware modules
 │   ├── lib/                 # Libraries
 │   └── www/                 # Web UI
-├── build.py                 # Build tool
+├── builder.py               # Build tool
+├── installer.py             # Manual firmware installer
 ├── releases.json            # Master manifest
 ├── releases/                # Build artifacts (gitignored)
 └── .github/

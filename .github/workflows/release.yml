@@ -18,14 +18,67 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install dependencies
+      - name: Determine CircuitPython version from manifest
+        id: cp_version
         run: |
-          pip install mpy-cross
+          # Extract target OS version from manifest (e.g., "circuitpython_10" or "circuitpython_10_1")
+          TARGET_OS=$(python -c "import json; manifest = json.load(open('src/manifest.json')); print(manifest['target_operating_systems'][0])")
+          echo "target_os=$TARGET_OS" >> $GITHUB_OUTPUT
+          
+          # Parse major.minor from target OS (e.g., "circuitpython_10" -> "10", "circuitpython_9_3" -> "9.3")
+          VERSION_PATTERN=$(echo "$TARGET_OS" | sed 's/circuitpython_//' | sed 's/_/./')
+          echo "version_pattern=$VERSION_PATTERN" >> $GITHUB_OUTPUT
+          echo "Looking for mpy-cross matching CircuitPython ${VERSION_PATTERN}.x"
+          
+          # Query S3 bucket for available mpy-cross versions
+          S3_BUCKET_URL="https://adafruit-circuit-python.s3.amazonaws.com/?prefix=bin/mpy-cross/linux-amd64/&delimiter=/"
+          
+          # Fetch and parse available versions
+          AVAILABLE_VERSIONS=$(curl -s "$S3_BUCKET_URL" | \
+            grep -o 'mpy-cross-linux-amd64-[0-9]\+\.[0-9]\+\.[0-9]\+\.static' | \
+            sed 's/mpy-cross-linux-amd64-//' | \
+            sed 's/\.static$//' | \
+            sort -V)
+          
+          echo "Available versions:"
+          echo "$AVAILABLE_VERSIONS"
+          
+          # Find the latest stable version matching our pattern
+          # For "10" -> match "10.x.y"
+          # For "9.3" -> match "9.3.y"
+          MATCHING_VERSION=$(echo "$AVAILABLE_VERSIONS" | \
+            grep "^${VERSION_PATTERN}\." | \
+            tail -n 1)
+          
+          if [ -z "$MATCHING_VERSION" ]; then
+            echo "Error: No matching mpy-cross version found for CircuitPython ${VERSION_PATTERN}.x"
+            echo "Available versions:"
+            echo "$AVAILABLE_VERSIONS"
+            exit 1
+          fi
+          
+          echo "cp_version=$MATCHING_VERSION" >> $GITHUB_OUTPUT
+          echo "Selected mpy-cross version: $MATCHING_VERSION"
+      
+      - name: Download and setup mpy-cross
+        run: |
+          CP_VERSION="${{ steps.cp_version.outputs.cp_version }}"
+          MPY_CROSS_URL="https://adafruit-circuit-python.s3.amazonaws.com/bin/mpy-cross/linux-amd64/mpy-cross-linux-amd64-${CP_VERSION}.static"
+          
+          echo "Downloading mpy-cross for CircuitPython ${CP_VERSION}..."
+          curl -L -o mpy-cross "${MPY_CROSS_URL}"
+          chmod +x mpy-cross
+          
+          # Verify version
+          ./mpy-cross --version
+          
+          # Add to PATH for builder.py
+          echo "${PWD}" >> $GITHUB_PATH
       
       - name: Build release package
         run: |
-          # Use same build.py logic as local builds (DRY)
-          python build.py --build
+          # Use same builder.py logic as local builds (DRY)
+          python builder.py --build
       
       - name: Generate release notes
         run: |

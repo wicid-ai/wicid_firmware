@@ -285,7 +285,39 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
 
 6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package
 
+### Installing Firmware with the Installer Script (Optional)
 
+After building a release package, you can use the `installer.py` script for guided firmware installation:
+
+```bash
+python installer.py
+```
+
+The installer provides two installation modes:
+
+**SOFT Update (OTA-like)**
+- Safer installation method
+- Files are staged in `/pending_update/` on the device
+- Installation completes automatically on next reboot
+- Recommended for most users
+
+**HARD Update (Full Replacement)**
+- Immediate installation
+- Deletes all files on CIRCUITPY drive (except `secrets.json`)
+- Useful for clean installations or troubleshooting
+- Requires explicit confirmation
+
+The installer will:
+1. Auto-detect your CIRCUITPY device
+2. Verify the `releases/wicid_install.zip` package exists
+3. Guide you through the installation process
+4. Clean up temporary files and system artifacts
+5. Provide next steps for completing the update
+
+This is particularly useful for:
+- Initial device setup and flashing
+- Manual firmware updates during development
+- Troubleshooting device issues with clean installations
 
 ## Over-the-Air (OTA) Updates
 
@@ -342,10 +374,10 @@ Use the automated build tool:
 
 ```bash
 # Interactive build - prompts for all options
-./build.py
+./builder.py
 
 # Non-interactive build (for GitHub Actions)
-python build.py --build
+python builder.py --build
 ```
 
 The build tool:
@@ -412,7 +444,8 @@ wicid_firmware/
 │   ├── setup_portal.py    # Setup portal
 │   ├── lib/               # Device libraries
 │   └── www/               # Setup portal web UI
-├── build.py               # Build tool (interactive + CI)
+├── builder.py             # Build tool (interactive + CI)
+├── installer.py           # Manual firmware installer (SOFT/HARD modes)
 ├── releases.json          # Master update manifest
 ├── releases/              # Build artifacts (gitignored)
 ├── .github/

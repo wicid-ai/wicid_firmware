@@ -50,20 +50,6 @@ def print_warning(text):
     print(f"{Colors.WARNING}⚠ {text}{Colors.ENDC}")
 
 
-def get_git_commit_hash():
-    """Get current git commit hash."""
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--short', 'HEAD'],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return "unknown"
-
-
 def get_git_status():
     """Check if git working directory is clean."""
     try:
@@ -309,7 +295,6 @@ def create_manifest(version, target_machines, target_oses, release_type, release
         "release_type": release_type,
         "release_notes": release_notes,
         "release_date": datetime.now(timezone.utc).isoformat(),
-        "git_commit": get_git_commit_hash()
     }
     
     return manifest
@@ -341,7 +326,6 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
         "release_notes": manifest["release_notes"],
         "zip_url": zip_url,
         "release_date": manifest["release_date"],
-        "git_commit": manifest["git_commit"]
     }
     
     # Sort releases by most recent date
@@ -378,13 +362,17 @@ def build_package(manifest, version):
     src_path = Path("src")
     
     for py_file in src_path.glob("**/*.py"):
+        # Exclude boot.py and code.py from compilation - CircuitPython requires them as source files
+        if py_file.name in ("boot.py", "code.py"):
+            shutil.copy2(py_file, build_dir / py_file.name)
+            continue
         rel_path = py_file.relative_to(src_path)
         mpy_rel_path = str(rel_path)[:-3] + '.mpy'
         mpy_file = build_dir / mpy_rel_path
-        
+
         # Create parent directories
         mpy_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             # Compile with mpy-cross
             subprocess.run(
@@ -435,7 +423,6 @@ def show_preview(manifest, package_path, old_version):
     print(f"  Machine Types:     {', '.join(manifest['target_machine_types'])}")
     print(f"  Operating Systems: {', '.join(manifest['target_operating_systems'])}")
     print(f"  Release Notes:     {manifest['release_notes']}")
-    print(f"  Git Commit:        {manifest['git_commit']}")
     print(f"  Package:           {package_path}")
     print(f"  Package Size:      {package_path.stat().st_size / 1024:.1f} KB")
 

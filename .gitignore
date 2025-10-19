@@ -204,6 +204,8 @@ secrets.json
 pending_update/
 releases/
 boot_out.txt
+mpy-cross
+!src/manifest.json
 
 # Keep the on-device library files
 !src/lib/
