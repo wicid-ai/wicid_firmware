@@ -189,8 +189,17 @@ class UpdateManager:
                 print("Extracting update files...")
                 
                 with ZipFile(zip_path) as zf:
-                    print(f"ZIP contains {len(zf.namelist())} files")
-                    zf.extractall(self.PENDING_ROOT_DIR)
+                    all_files = zf.namelist()
+                    # Filter out hidden files (starting with .)
+                    files_to_extract = [f for f in all_files if not any(part.startswith('.') for part in f.split('/'))]
+                    
+                    print(f"ZIP contains {len(all_files)} files")
+                    if len(files_to_extract) < len(all_files):
+                        print(f"Skipping {len(all_files) - len(files_to_extract)} hidden files")
+                    
+                    # Extract each file individually to filter out dotfiles
+                    for filename in files_to_extract:
+                        zf.extract(filename, self.PENDING_ROOT_DIR)
                 
                 print("✓ Extraction complete")
                 
