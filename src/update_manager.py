@@ -251,40 +251,28 @@ class UpdateManager:
             
             return False
     
-    def schedule_next_update_check(self, hour=None):
+    def schedule_next_update_check(self, interval_hours=None):
         """
         Calculate when the next scheduled update check should occur.
         
         Args:
-            hour: Hour of day (0-23) when check should occur (default: from settings)
+            interval_hours: Hours until next check (default: from settings)
         
         Returns:
             float: Monotonic timestamp for next check
         """
-        import rtc
-        
-        if hour is None:
+        if interval_hours is None:
             try:
-                hour = int(os.getenv("SYSTEM_UPDATE_CHECK_HOUR", "2"))
+                interval_hours = int(os.getenv("SYSTEM_UPDATE_CHECK_INTERVAL", "24"))
             except:
-                hour = 2
+                interval_hours = 24
         
         try:
-            # Get current time from RTC
-            now = rtc.RTC().datetime
-            current_hour = now.tm_hour
-            
-            # Calculate hours until next check time
-            if current_hour < hour:
-                hours_until = hour - current_hour
-            else:
-                hours_until = (24 - current_hour) + hour
-            
             # Convert to seconds and add to current monotonic time
-            seconds_until = hours_until * 3600
+            seconds_until = interval_hours * 3600
             next_check = time.monotonic() + seconds_until
             
-            print(f"Next update check scheduled in {hours_until} hours at {hour}:00")
+            print(f"Next update check scheduled in {interval_hours} hours")
             return next_check
             
         except Exception as e:

@@ -483,8 +483,8 @@ Non-sensitive system settings:
 ```toml
 VERSION = "0.1.0"
 SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-SYSTEM_UPDATE_CHECK_HOUR = 2
-WEATHER_UPDATE_INTERVAL = 1200
+SYSTEM_UPDATE_CHECK_INTERVAL = 24  # hours
+WEATHER_UPDATE_INTERVAL = 1200  # seconds
 ```
 
 Read via `os.getenv()` in device code. Updated by build tool.

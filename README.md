@@ -192,8 +192,8 @@ System-level settings deployed with firmware updates:
 ```toml
 VERSION = "0.1.0"
 SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-SYSTEM_UPDATE_CHECK_HOUR = 2
-WEATHER_UPDATE_INTERVAL = 1200
+SYSTEM_UPDATE_CHECK_INTERVAL = 24  # hours
+WEATHER_UPDATE_INTERVAL = 1200  # seconds
 ```
 
 Read via `os.getenv()` in device code. Managed by build system.
@@ -355,7 +355,7 @@ with open("/development", "w") as f:
 
 Update behavior is configured in `settings.toml`:
 - `SYSTEM_UPDATE_MANIFEST_URL`: URL of update manifest (default: `https://www.wicid.ai/releases.json`)
-- `SYSTEM_UPDATE_CHECK_HOUR`: Hour of day for scheduled check (default: 2 for 2am)
+- `SYSTEM_UPDATE_CHECK_INTERVAL`: Hours between update checks (default: 24)
 - `VERSION`: Current firmware version
 
 Devices self-identify their hardware type and OS version at runtime - no hardcoded platform IDs needed.
