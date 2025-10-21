@@ -64,6 +64,20 @@ def get_git_status():
         return False
 
 
+def has_staged_files():
+    """Check if there are any files staged for commit."""
+    try:
+        result = subprocess.run(
+            ['git', 'diff', '--cached', '--name-only'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return len(result.stdout.strip()) > 0
+    except subprocess.CalledProcessError:
+        return False
+
+
 def load_previous_manifest():
     """Load previous src/manifest.json for default values."""
     manifest_file = Path("src/manifest.json")
@@ -261,20 +275,58 @@ def interactive_build():
         # Show preview
         show_preview(manifest, package_path, current_version)
         
-        # Create git tag and stage files
-        print("\nReady to create git tag and stage files? [y/N]: ", end='')
+        # Phase 2: Commit and tag workflow
+        committed = False
+        tagged = False
+        pushed = False
+        commit_sha = None
+        tag_name = None
+        
+        artifacts = ["src/settings.toml", "src/manifest.json", "releases.json"]
+        
+        print_header("Phase 2: Commit and Tag")
+        print("\nBuild artifacts ready:")
+        for artifact in artifacts:
+            print(f"  • {artifact}")
+        
+        print("\nContinue with committing build artifacts? [y/N]: ", end='')
         if input().strip().lower() == 'y':
-            create_git_tag(version)
-            stage_files()
-            print_success("\nFiles staged for commit:")
-            print("    src/settings.toml")
-            print("    src/manifest.json")
-            print("    releases.json")
-            print_header("Next steps")
-            print("  1. Review changes: git diff --staged")
-            print(f"  2. Commit: git commit -m \"Release {version}\"")
-            print("  3. Push: git push && git push --tags")
-            print("  4. Monitor GitHub Actions: releases will be built automatically")
+            # Check for staged files
+            if has_staged_files():
+                print_warning("\nThere are files already staged in git.")
+                print("Please clear the staging area before continuing:")
+                print("  • Commit staged changes: git commit")
+                print("  • Unstage changes: git reset")
+                print_error("\nAborting phase 2. Build artifacts are ready but not committed.")
+            else:
+                # Stage the build artifacts
+                stage_files()
+                
+                # Get commit message
+                commit_msg = get_commit_message(version, release_notes)
+                if commit_msg:
+                    # Commit the changes
+                    commit_sha = commit_files(commit_msg)
+                    if commit_sha:
+                        committed = True
+                        print_success(f"Committed changes: {commit_sha[:7]}")
+                        
+                        # Ask about creating tag
+                        print("\nCreate release tag? [y/N]: ", end='')
+                        if input().strip().lower() == 'y':
+                            tag_msg = get_tag_message(version, release_notes)
+                            if tag_msg:
+                                tag_name = create_git_tag(version, tag_msg)
+                                if tag_name:
+                                    tagged = True
+                                    
+                                    # Ask about pushing
+                                    print("\nPush commit and tag to remote? [y/N]: ", end='')
+                                    if input().strip().lower() == 'y':
+                                        pushed = push_changes(tag_name)
+        
+        # Show summary
+        show_build_summary(version, package_path, committed, tagged, pushed, commit_sha, tag_name, artifacts)
         
         return True
         
@@ -319,7 +371,7 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
         releases_data["releases"].append(release_entry)
     
     # Update the release type section
-    zip_url = f"https://github.com/bmcnaboe/wicid_firmware/releases/download/v{version}/wicid_install.zip"
+    zip_url = f"https://github.com/wicid-ai/wicid_firmware/releases/download/v{version}/wicid_install.zip"
     
     release_entry[release_type] = {
         "version": manifest["version"],
@@ -427,19 +479,106 @@ def show_preview(manifest, package_path, old_version):
     print(f"  Package Size:      {package_path.stat().st_size / 1024:.1f} KB")
 
 
-def create_git_tag(version):
-    """Create git tag in v{version} format."""
+def get_commit_message(version, release_notes):
+    """Get commit message from user with option to customize."""
+    default_msg = f"Release v{version}"
+    if release_notes:
+        default_msg += f"\n\n{release_notes}"
+    
+    print("\nProposed commit message:")
+    print("-" * 60)
+    print(default_msg)
+    print("-" * 60)
+    print("\nAccept this message? [Y/n/edit]: ", end='')
+    response = input().strip().lower()
+    
+    if response == 'n':
+        print("Commit cancelled.")
+        return None
+    elif response == 'edit':
+        print("\nEnter new commit message (press Ctrl+D when done):")
+        lines = []
+        try:
+            while True:
+                line = input()
+                lines.append(line)
+        except EOFError:
+            pass
+        custom_msg = '\n'.join(lines).strip()
+        return custom_msg if custom_msg else None
+    else:  # 'y' or empty (default yes)
+        return default_msg
+
+
+def commit_files(commit_message):
+    """Commit staged files and return commit SHA."""
+    try:
+        result = subprocess.run(
+            ['git', 'commit', '-m', commit_message],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        # Get the commit SHA
+        sha_result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return sha_result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to commit files: {e}")
+        return None
+
+
+def get_tag_message(version, release_notes):
+    """Get tag message from user with option to customize."""
+    default_msg = f"Release {version}"
+    if release_notes:
+        default_msg += f"\n\n{release_notes}"
+    
+    print("\nProposed tag message:")
+    print("-" * 60)
+    print(default_msg)
+    print("-" * 60)
+    print("\nAccept this message? [Y/n/edit]: ", end='')
+    response = input().strip().lower()
+    
+    if response == 'n':
+        print("Tag creation cancelled.")
+        return None
+    elif response == 'edit':
+        print("\nEnter new tag message (press Ctrl+D when done):")
+        lines = []
+        try:
+            while True:
+                line = input()
+                lines.append(line)
+        except EOFError:
+            pass
+        custom_msg = '\n'.join(lines).strip()
+        return custom_msg if custom_msg else None
+    else:  # 'y' or empty (default yes)
+        return default_msg
+
+
+def create_git_tag(version, tag_message):
+    """Create git tag in v{version} format with custom message."""
     tag_name = f"v{version}"
     
     try:
         subprocess.run(
-            ['git', 'tag', '-a', tag_name, '-m', f'Release {version}'],
+            ['git', 'tag', '-a', tag_name, '-m', tag_message],
+            capture_output=True,
+            text=True,
             check=True
         )
         print_success(f"Created git tag: {tag_name}")
+        return tag_name
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to create git tag: {e}")
-        raise
+        return None
 
 
 def stage_files():
@@ -455,6 +594,85 @@ def stage_files():
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to stage files: {e}")
         raise
+
+
+def push_changes(tag_name):
+    """Push commits and tags to remote."""
+    try:
+        # Push the branch
+        print("Pushing commits to remote...")
+        subprocess.run(
+            ['git', 'push'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print_success("Commits pushed successfully")
+        
+        # Push the tag
+        print("Pushing tag to remote...")
+        subprocess.run(
+            ['git', 'push', 'origin', tag_name],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        print_success(f"Tag {tag_name} pushed successfully")
+        return True
+    except subprocess.CalledProcessError as e:
+        print_error(f"Failed to push changes: {e}")
+        if e.stderr:
+            print(f"Error: {e.stderr}")
+        return False
+
+
+def show_build_summary(version, package_path, committed, tagged, pushed, commit_sha, tag_name, artifacts):
+    """Show comprehensive summary of build process."""
+    print_header("Build Summary")
+    
+    print(f"\n  Version:        {version}")
+    print(f"  Package:        {package_path}")
+    print(f"  Package Size:   {package_path.stat().st_size / 1024:.1f} KB")
+    
+    print("\n  Build Artifacts:")
+    for artifact in artifacts:
+        print(f"    • {artifact}")
+    
+    if committed:
+        print(f"\n  ✓ Committed:    {commit_sha}")
+    else:
+        print("\n  ✗ Not committed")
+        print("\n  Manual commit steps:")
+        print("    1. Stage files: git add src/settings.toml src/manifest.json releases.json")
+        print(f"    2. Commit: git commit -m \"Release v{version}\"")
+    
+    if tagged:
+        print(f"  ✓ Tagged:       {tag_name}")
+    else:
+        print("  ✗ Not tagged")
+        if committed:
+            print("\n  Manual tag steps:")
+            print(f"    1. Create tag: git tag -a {f'v{version}'} -m \"Release {version}\"")
+    
+    if pushed:
+        print("  ✓ Pushed:       remote updated")
+    else:
+        print("  ✗ Not pushed")
+        if tagged:
+            print("\n  Manual push steps:")
+            print("    1. Push commits: git push")
+            print(f"    2. Push tag: git push origin {tag_name}")
+        elif committed:
+            print("\n  Manual push steps:")
+            print("    1. Create and push tag first (see above)")
+            print("    2. Then push: git push && git push --tags")
+    
+    if pushed:
+        print("\n  Next steps:")
+        print("    • Monitor GitHub Actions for release build")
+        print("    • Verify release appears on GitHub")
+    
+    print()
 
 
 def main():
