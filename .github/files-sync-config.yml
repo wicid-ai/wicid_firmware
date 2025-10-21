@@ -1,6 +1,6 @@
 settings:
   commit:
-    prefix: 'chore'
+    prefix: 'build'
     subject: 'update releases.json from <%- repository %>'
   pull_request:
     disabled: true  # Push directly to main, no PR needed
@@ -10,5 +10,5 @@ patterns:
       - from: releases.json
         to: public/releases.json
     repositories:
-      - wicid/wicid_web@main
+      - wicid-ai/wicid_web@main
 
