@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "version": "0.2.0",
+  "target_machine_types": [
+    "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
+  ],
+  "target_operating_systems": [
+    "circuitpython_10_0"
+  ],
+  "release_type": "production",
+  "release_notes": "Introduces OTA updates.",
+  "release_date": "2025-10-24T20:16:22.374885+00:00"
+}

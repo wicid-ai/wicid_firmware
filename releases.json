@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "last_updated": "2025-10-24T20:16:22.377977+00:00",
+  "releases": [
+    {
+      "target_machine_types": [
+        "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
+      ],
+      "target_operating_systems": [
+        "circuitpython_10_0"
+      ],
+      "production": {
+        "version": "0.2.0",
+        "release_notes": "Introduces OTA updates.",
+        "zip_url": "https://github.com/wicid-ai/wicid_firmware/releases/download/v0.2.0/wicid_install.zip",
+        "release_date": "2025-10-24T20:16:22.374885+00:00"
+      }
+    }
+  ]
+}
