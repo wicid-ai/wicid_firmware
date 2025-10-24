@@ -12,7 +12,7 @@
       "production": {
         "version": "0.2.0",
         "release_notes": "Introduces OTA updates.",
-        "zip_url": "https://github.com/wicid-ai/wicid_firmware/releases/download/v0.2.0/wicid_install.zip",
+        "zip_url": "https://www.wicid.ai/releases/v0.2.0",
         "release_date": "2025-10-24T20:16:22.374885+00:00"
       }
     }

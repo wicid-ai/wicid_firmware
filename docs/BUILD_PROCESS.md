@@ -338,7 +338,7 @@ Multi-platform master manifest:
       "production": {
         "version": "0.2.0",
         "release_notes": "Added OTA updates",
-        "zip_url": "https://github.com/.../v0.2.0/wicid_install.zip",
+        "zip_url": "https://www.wicid.ai/releases/v0.2.0",
         "release_date": "2025-10-15T12:00:00Z"
       },
       "development": {

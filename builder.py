@@ -371,7 +371,7 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
         releases_data["releases"].append(release_entry)
     
     # Update the release type section
-    zip_url = f"https://github.com/wicid-ai/wicid_firmware/releases/download/v{version}/wicid_install.zip"
+    zip_url = f"https://www.wicid.ai/releases/v{version}"
     
     release_entry[release_type] = {
         "version": manifest["version"],
