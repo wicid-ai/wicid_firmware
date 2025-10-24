@@ -3,7 +3,7 @@ name: Build and Release Firmware
 on:
   push:
     tags:
-      - 'release_*'
+      - 'v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?'
 
 jobs:
   build:
@@ -95,6 +95,6 @@ jobs:
       - name: Sync releases.json to wicid_web
         uses: wadackel/files-sync-action@v3
         with:
-          github_token: ${{ secrets.WICID_WEB_TOKEN }}
+          github_token: ${{ secrets.WICID_WEB_RELEASES_TOKEN }}
           config_file: .github/files-sync-config.yml
 
