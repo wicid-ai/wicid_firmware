@@ -675,17 +675,78 @@ def show_build_summary(version, package_path, committed, tagged, pushed, commit_
     print()
 
 
+def show_help():
+    """Display help information."""
+    help_text = f"""
+{Colors.HEADER}{Colors.BOLD}WICID Firmware Build Tool{Colors.ENDC}
+
+Interactive CLI tool and build engine for creating firmware release packages.
+Generates manifests, compiles bytecode, creates ZIP packages, and updates releases.json.
+
+{Colors.BOLD}USAGE:{Colors.ENDC}
+    builder.py              Run interactive build wizard
+    builder.py --build      Non-interactive build from existing manifest
+    builder.py --help       Display this help message
+
+{Colors.BOLD}MODES:{Colors.ENDC}
+    {Colors.OKCYAN}Interactive Mode{Colors.ENDC} (default)
+        Guides you through creating a new firmware release:
+        • Select target machine types and operating systems
+        • Choose release type (production/development)
+        • Set version number with automatic suggestions
+        • Add release notes
+        • Build and package firmware
+        • Optional: commit, tag, and push to git
+
+    {Colors.OKCYAN}Build Mode{Colors.ENDC} (--build)
+        Non-interactive build from existing src/manifest.json
+        Used by CI/CD pipelines (GitHub Actions)
+
+{Colors.BOLD}WORKFLOW:{Colors.ENDC}
+    1. Updates VERSION in src/settings.toml
+    2. Creates/updates src/manifest.json
+    3. Compiles Python files to bytecode (.mpy)
+    4. Bundles firmware into releases/wicid_install.zip
+    5. Updates releases.json with download URLs
+    6. Optionally commits, tags (v{{version}}), and pushes to git
+
+{Colors.BOLD}EXAMPLES:{Colors.ENDC}
+    {Colors.OKBLUE}# Interactive release creation{Colors.ENDC}
+    ./builder.py
+
+    {Colors.OKBLUE}# Build from existing manifest (CI){Colors.ENDC}
+    ./builder.py --build
+
+{Colors.BOLD}FILES:{Colors.ENDC}
+    src/settings.toml       VERSION definition
+    src/manifest.json       Release metadata (auto-generated)
+    releases.json           Release index for update manager
+    releases/               Built firmware packages
+"""
+    print(help_text)
+
+
 def main():
     """Main entry point."""
-    if len(sys.argv) > 1 and sys.argv[1] == '--build':
-        # Non-interactive build mode (for GitHub Actions)
-        print("Building from existing manifest...")
-        # Load manifest and build
-        with open("src/manifest.json", 'r') as f:
-            manifest = json.load(f)
-        version = manifest['version']
-        package_path = build_package(manifest, version)
-        print_success(f"Build complete: {package_path}")
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg in ('--help', '-h'):
+            show_help()
+            sys.exit(0)
+        elif arg == '--build':
+            # Non-interactive build mode (for GitHub Actions)
+            print("Building from existing manifest...")
+            # Load manifest and build
+            with open("src/manifest.json", 'r') as f:
+                manifest = json.load(f)
+            version = manifest['version']
+            package_path = build_package(manifest, version)
+            print_success(f"Build complete: {package_path}")
+            sys.exit(0)
+        else:
+            print_error(f"Unknown option: {arg}")
+            print("Run 'builder.py --help' for usage information.")
+            sys.exit(1)
     else:
         # Interactive mode
         success = interactive_build()
