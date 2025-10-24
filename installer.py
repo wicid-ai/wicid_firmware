@@ -12,6 +12,7 @@ import shutil
 import zipfile
 import tempfile
 import glob
+import argparse
 from pathlib import Path
 
 
@@ -398,8 +399,45 @@ def hard_update(circuitpy_path, zip_path):
         print_success("Cleanup complete")
 
 
+def parse_arguments():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        prog='installer.py',
+        description='WICID Firmware Installer - Install firmware to CIRCUITPY devices',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Installation Modes:
+  SOFT UPDATE (OTA-like)
+    • Safer installation method
+    • Files are staged in /pending_update/
+    • Installation completes on next reboot
+    • Recommended for most users
+    
+  HARD UPDATE (Full Replacement)
+    • Immediate installation
+    • Deletes ALL files on CIRCUITPY drive
+    • Preserves only secrets.json
+    • Use for clean installations or troubleshooting
+
+Examples:
+  %(prog)s                    Run interactive installer
+  %(prog)s --help             Show this help message
+
+Requirements:
+  • CIRCUITPY device connected via USB
+  • Device in Safe Mode (USB mass storage enabled)
+  • Firmware package at releases/wicid_install.zip
+        """
+    )
+    
+    return parser.parse_args()
+
+
 def main():
     """Main installer entry point."""
+    # Parse arguments (handles --help automatically)
+    parse_arguments()
+    
     print_header("WICID Firmware Installer")
     
     print("\nWelcome to the WICID Firmware Installer!")
