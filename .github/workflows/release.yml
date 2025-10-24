@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
       - name: Checkout code
@@ -45,7 +47,7 @@ jobs:
           S3_BUCKET_URL="https://adafruit-circuit-python.s3.amazonaws.com/?prefix=bin/mpy-cross/linux-amd64/&delimiter=/"
           
           # Fetch and parse available versions
-          AVAILABLE_VERSIONS=$(curl -s "$S3_BUCKET_URL" | \
+          AVAILABLE_VERSIONS=$(curl -fsSL "$S3_BUCKET_URL" | \
             grep -o 'mpy-cross-linux-amd64-[0-9]\+\.[0-9]\+\.[0-9]\+\.static' | \
             sed 's/mpy-cross-linux-amd64-//' | \
             sed 's/\.static$//' | \
@@ -77,7 +79,14 @@ jobs:
           MPY_CROSS_URL="https://adafruit-circuit-python.s3.amazonaws.com/bin/mpy-cross/linux-amd64/mpy-cross-linux-amd64-${CP_VERSION}.static"
           
           echo "Downloading mpy-cross for CircuitPython ${CP_VERSION}..."
-          curl -L -o mpy-cross "${MPY_CROSS_URL}"
+          curl -fsSL -o mpy-cross "${MPY_CROSS_URL}"
+          
+          # Verify download succeeded
+          if [ ! -f mpy-cross ] || [ ! -s mpy-cross ]; then
+            echo "Error: Failed to download mpy-cross"
+            exit 1
+          fi
+          
           chmod +x mpy-cross
           
           # Verify version
@@ -91,6 +100,14 @@ jobs:
           # Use same builder.py logic as local builds (DRY)
           python builder.py --build
       
+      - name: Verify build artifacts
+        run: |
+          if [ ! -f releases/wicid_install.zip ]; then
+            echo "Error: Build artifact not found"
+            exit 1
+          fi
+          echo "Build artifact verified: $(ls -lh releases/wicid_install.zip)"
+      
       - name: Generate release notes
         run: |
           # Extract release_notes from src/manifest.json to RELEASE_NOTES.md
@@ -98,6 +115,8 @@ jobs:
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: releases/*.zip
           body_path: RELEASE_NOTES.md
