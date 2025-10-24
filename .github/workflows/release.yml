@@ -18,13 +18,14 @@ jobs:
       
       - name: Validate tag format
         run: |
+          echo "→ Validating tag format..."
           TAG="${{ github.ref_name }}"
           if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-\S+)?$'; then
-            echo "Invalid tag format: $TAG"
+            echo "✗ Invalid tag format: $TAG"
             echo "Expected format: v{major}.{minor}.{patch}[-{prerelease}]"
             exit 1
           fi
-          echo "Valid tag: $TAG"
+          echo "✓ Valid tag: $TAG"
       
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -34,84 +35,92 @@ jobs:
       - name: Determine CircuitPython version from manifest
         id: cp_version
         run: |
-          # Extract target OS version from manifest (e.g., "circuitpython_10" or "circuitpython_10_1")
+          echo "→ Reading CircuitPython version from manifest..."
           TARGET_OS=$(python -c "import json; manifest = json.load(open('src/manifest.json')); print(manifest['target_operating_systems'][0])")
           echo "target_os=$TARGET_OS" >> $GITHUB_OUTPUT
+          echo "✓ Target OS: $TARGET_OS"
           
-          # Parse major.minor from target OS (e.g., "circuitpython_10" -> "10", "circuitpython_9_3" -> "9.3")
+          echo "→ Parsing version pattern..."
           VERSION_PATTERN=$(echo "$TARGET_OS" | sed 's/circuitpython_//' | sed 's/_/./')
           echo "version_pattern=$VERSION_PATTERN" >> $GITHUB_OUTPUT
-          echo "Looking for mpy-cross matching CircuitPython ${VERSION_PATTERN}.x"
+          echo "✓ Version pattern: ${VERSION_PATTERN}.x"
           
-          # Query S3 bucket for available mpy-cross versions
+          echo "→ Querying S3 bucket for available mpy-cross versions..."
           S3_BUCKET_URL="https://adafruit-circuit-python.s3.amazonaws.com/?prefix=bin/mpy-cross/linux-amd64/&delimiter=/"
           
-          # Fetch and parse available versions
           AVAILABLE_VERSIONS=$(curl -fsSL "$S3_BUCKET_URL" | \
             grep -o 'mpy-cross-linux-amd64-[0-9]\+\.[0-9]\+\.[0-9]\+\.static' | \
             sed 's/mpy-cross-linux-amd64-//' | \
             sed 's/\.static$//' | \
             sort -V)
           
-          echo "Available versions:"
+          echo "✓ Found available versions:"
           echo "$AVAILABLE_VERSIONS"
           
-          # Find the latest stable version matching our pattern
-          # For "10" -> match "10.x.y"
-          # For "9.3" -> match "9.3.y"
+          echo "→ Finding latest version matching ${VERSION_PATTERN}.x..."
           MATCHING_VERSION=$(echo "$AVAILABLE_VERSIONS" | \
             grep "^${VERSION_PATTERN}\." | \
             tail -n 1)
           
           if [ -z "$MATCHING_VERSION" ]; then
-            echo "Error: No matching mpy-cross version found for CircuitPython ${VERSION_PATTERN}.x"
+            echo "✗ Error: No matching mpy-cross version found for CircuitPython ${VERSION_PATTERN}.x"
             echo "Available versions:"
             echo "$AVAILABLE_VERSIONS"
             exit 1
           fi
           
           echo "cp_version=$MATCHING_VERSION" >> $GITHUB_OUTPUT
-          echo "Selected mpy-cross version: $MATCHING_VERSION"
+          echo "✓ Selected mpy-cross version: $MATCHING_VERSION"
       
       - name: Download and setup mpy-cross
         run: |
           CP_VERSION="${{ steps.cp_version.outputs.cp_version }}"
           MPY_CROSS_URL="https://adafruit-circuit-python.s3.amazonaws.com/bin/mpy-cross/linux-amd64/mpy-cross-linux-amd64-${CP_VERSION}.static"
           
-          echo "Downloading mpy-cross for CircuitPython ${CP_VERSION}..."
+          echo "→ Downloading mpy-cross for CircuitPython ${CP_VERSION}..."
+          echo "URL: ${MPY_CROSS_URL}"
           curl -fsSL -o mpy-cross "${MPY_CROSS_URL}"
           
-          # Verify download succeeded
+          echo "→ Verifying download..."
           if [ ! -f mpy-cross ] || [ ! -s mpy-cross ]; then
-            echo "Error: Failed to download mpy-cross"
+            echo "✗ Error: Failed to download mpy-cross"
             exit 1
           fi
+          echo "✓ Downloaded successfully ($(ls -lh mpy-cross | awk '{print $5}'))"
           
+          echo "→ Making executable..."
           chmod +x mpy-cross
           
-          # Verify version
+          echo "→ Verifying mpy-cross version..."
           ./mpy-cross --version
+          echo "✓ mpy-cross ready"
           
-          # Add to PATH for builder.py
+          echo "→ Adding to PATH..."
           echo "${PWD}" >> $GITHUB_PATH
+          echo "✓ Added to PATH"
       
       - name: Build release package
         run: |
-          # Use same builder.py logic as local builds (DRY)
+          echo "→ Building release package with builder.py..."
           python builder.py --build
+          echo "✓ Build complete"
       
       - name: Verify build artifacts
         run: |
+          echo "→ Verifying build artifacts..."
           if [ ! -f releases/wicid_install.zip ]; then
-            echo "Error: Build artifact not found"
+            echo "✗ Error: Build artifact not found"
             exit 1
           fi
-          echo "Build artifact verified: $(ls -lh releases/wicid_install.zip)"
+          echo "✓ Build artifact verified: $(ls -lh releases/wicid_install.zip)"
       
       - name: Generate release notes
         run: |
-          # Extract release_notes from src/manifest.json to RELEASE_NOTES.md
+          echo "→ Extracting release notes from manifest.json..."
           python -c "import json; manifest = json.load(open('src/manifest.json')); open('RELEASE_NOTES.md', 'w').write(manifest.get('release_notes', 'No release notes provided.'))"
+          echo "✓ Release notes generated"
+          echo "Release notes content:"
+          cat RELEASE_NOTES.md
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -123,8 +132,44 @@ jobs:
           tag_name: ${{ github.ref_name }}
       
       - name: Sync releases.json to wicid_web
-        uses: wadackel/files-sync-action@v3
-        with:
-          github_token: ${{ secrets.WICID_WEB_RELEASES_TOKEN }}
-          config_file: .github/files-sync-config.yml
+        run: |
+          echo "→ Cloning wicid_web repository..."
+          git clone https://x-access-token:${{ secrets.WICID_WEB_RELEASES_TOKEN }}@github.com/wicid-ai/wicid_web.git
+          cd wicid_web
+          echo "✓ Repository cloned"
+          
+          echo "→ Configuring git identity..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "✓ Git configured"
+          
+          echo "→ Copying releases.json..."
+          cp ../releases.json .
+          echo "✓ File copied"
+          
+          echo "→ Checking for changes..."
+          if git diff --quiet releases.json; then
+            echo "ℹ No changes detected in releases.json"
+          else
+            echo "✓ Changes detected in releases.json:"
+            git diff releases.json
+          fi
+          
+          echo "→ Staging changes..."
+          git add releases.json
+          git status --short
+          
+          echo "→ Committing changes..."
+          if git commit -m "build: update releases.json from wicid_firmware"; then
+            echo "✓ Changes committed"
+            echo "→ Pushing to main branch..."
+            if git push origin main; then
+              echo "✓ Successfully pushed to wicid_web"
+            else
+              echo "✗ Failed to push changes to wicid_web"
+              exit 1
+            fi
+          else
+            echo "ℹ No changes to commit - releases.json is already up to date"
+          fi
 
