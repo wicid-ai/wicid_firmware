@@ -3,7 +3,8 @@ name: Build and Release Firmware
 on:
   push:
     tags:
-      - 'v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?'
+      - 'v[0-9]*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,6 +13,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Validate tag format
+        run: |
+          TAG="${{ github.ref_name }}"
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$'; then
+            echo "Invalid tag format: $TAG"
+            echo "Expected format: v{major}.{minor}.{patch}[-{prerelease}]"
+            exit 1
+          fi
+          echo "Valid tag: $TAG"
       
       - name: Setup Python
         uses: actions/setup-python@v4
