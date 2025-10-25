@@ -185,9 +185,12 @@ class UpdateManager:
             # Download the file
             response = self.session.get(zip_url)
             
-            # Save to file
+            # Save to file in chunks to handle large files reliably
+            # CircuitPython's adafruit_requests requires reading via iter_content
             with open(zip_path, "wb") as f:
-                f.write(response.content)
+                for chunk in response.iter_content(chunk_size=4096):
+                    if chunk:  # filter out keep-alive chunks
+                        f.write(chunk)
             
             response.close()
             
