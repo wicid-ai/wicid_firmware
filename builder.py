@@ -240,7 +240,15 @@ def interactive_build():
     
     # 5. Release Notes
     print("\n5. Release Notes:")
-    release_notes = input("   > ").strip()
+    if prev_manifest:
+        default_notes = prev_manifest.get('release_notes', '')
+        if default_notes:
+            print(f"   Last release: {default_notes}")
+    else:
+        default_notes = ""
+    
+    notes_input = input(f"   [{default_notes if default_notes else 'None'}]: ").strip()
+    release_notes = notes_input if notes_input else default_notes
     
     # Build the release
     print_header("Building Release")
