@@ -320,4 +320,92 @@ document.addEventListener('DOMContentLoaded', function() {
         group.style.animation = `fadeIn 0.3s ease-out ${index * 0.1}s forwards`;
         group.style.opacity = '0';
     });
+
+    // System Details functionality
+    const systemDetailsToggle = document.getElementById('systemDetailsToggle');
+    const systemDetailsContent = document.getElementById('systemDetailsContent');
+    let systemDetailsLoaded = false;
+
+    async function fetchSystemDetails() {
+        try {
+            const response = await fetch('/system-info');
+            if (!response.ok) {
+                throw new Error('Failed to fetch system information');
+            }
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Error fetching system details:', error);
+            return null;
+        }
+    }
+
+    function formatDate(timestamp) {
+        if (!timestamp) return 'Not available';
+        try {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (error) {
+            return 'Not available';
+        }
+    }
+
+    function renderSystemDetails(data) {
+        if (!data) {
+            systemDetailsContent.innerHTML = '<div class="system-details-error">Could not load system information.</div>';
+            return;
+        }
+
+        const html = `
+            <div class="system-details-grid">
+                <div class="system-detail-item">
+                    <span class="detail-label">Machine Type:</span>
+                    <span class="detail-value">${data.machine_type || 'Unknown'}</span>
+                </div>
+                <div class="system-detail-item">
+                    <span class="detail-label">Operating System:</span>
+                    <span class="detail-value">${data.os_version || 'Unknown'}</span>
+                </div>
+                <div class="system-detail-item">
+                    <span class="detail-label">WICID Version:</span>
+                    <span class="detail-value">${data.wicid_version || 'Unknown'}</span>
+                </div>
+                <div class="system-detail-item">
+                    <span class="detail-label">Last Updated:</span>
+                    <span class="detail-value">${formatDate(data.last_update)}</span>
+                </div>
+            </div>
+        `;
+        systemDetailsContent.innerHTML = html;
+    }
+
+    systemDetailsToggle.addEventListener('click', async function(e) {
+        e.preventDefault();
+        
+        const isExpanded = !systemDetailsContent.classList.contains('hidden');
+        
+        if (isExpanded) {
+            // Collapse
+            systemDetailsContent.classList.add('hidden');
+            systemDetailsToggle.classList.remove('expanded');
+        } else {
+            // Expand
+            systemDetailsContent.classList.remove('hidden');
+            systemDetailsToggle.classList.add('expanded');
+            
+            // Load data if not already loaded
+            if (!systemDetailsLoaded) {
+                systemDetailsContent.innerHTML = '<div class="system-details-loading">Loading system information...</div>';
+                const data = await fetchSystemDetails();
+                renderSystemDetails(data);
+                systemDetailsLoaded = true;
+            }
+        }
+    });
 });

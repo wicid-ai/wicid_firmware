@@ -217,6 +217,54 @@ class SetupPortal:
                 # Fallback to serving the static file if injection fails
                 return FileResponse(request, "index.html", "/www")
         
+        # System information endpoint
+        @server.route("/system-info", "GET")
+        def system_info(request: Request):
+            try:
+                from utils import get_machine_type, get_os_version_string
+                
+                # Get basic system info
+                machine_type = get_machine_type()
+                os_version_string = get_os_version_string()
+                wicid_version = os.getenv("VERSION", "unknown")
+                
+                # Load manifest for detailed machine type
+                try:
+                    with open("/manifest.json", "r") as f:
+                        manifest = json.load(f)
+                    machine_types = manifest.get("target_machine_types", [])
+                    if machine_types:
+                        machine_type = machine_types[0]
+                except Exception:
+                    pass
+                
+                # Format OS version for display
+                os_display = os_version_string.replace("_", " ").title()
+                
+                # Load installation timestamp if available
+                last_update = None
+                try:
+                    with open("/install_timestamp.json", "r") as f:
+                        install_data = json.load(f)
+                    timestamp = install_data.get("timestamp")
+                    if timestamp:
+                        # Convert Unix timestamp to ISO 8601 format
+                        # CircuitPython doesn't have datetime, so format manually
+                        last_update = timestamp
+                except Exception:
+                    pass
+                
+                return self._json_ok(request, {
+                    "machine_type": machine_type,
+                    "os_version": os_display,
+                    "wicid_version": wicid_version,
+                    "last_update": last_update
+                })
+                
+            except Exception as e:
+                print(f"Error getting system info: {e}")
+                return self._json_error(request, "Could not retrieve system information.", code=500, text="Internal Server Error")
+        
         # WiFi network scanning endpoint
         @server.route("/scan", "GET")
         def scan_networks(request: Request):

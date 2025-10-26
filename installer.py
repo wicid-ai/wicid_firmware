@@ -13,6 +13,8 @@ import zipfile
 import tempfile
 import glob
 import argparse
+import json
+import time
 from pathlib import Path
 
 
@@ -385,6 +387,27 @@ def hard_update(circuitpy_path, zip_path):
         
         # Remove macOS metadata files from CIRCUITPY
         cleanup_macos_artifacts(circuitpy_path)
+        
+        # Write installation timestamp
+        try:
+            print_step("Recording installation timestamp...")
+            manifest_path = temp_dir / "manifest.json"
+            version = "unknown"
+            if manifest_path.exists():
+                with open(manifest_path, 'r') as f:
+                    manifest = json.load(f)
+                    version = manifest.get("version", "unknown")
+            
+            install_info = {
+                "timestamp": time.time(),
+                "version": version
+            }
+            timestamp_path = circuitpy_path / "install_timestamp.json"
+            with open(timestamp_path, 'w') as f:
+                json.dump(install_info, f)
+            print_success("Installation timestamp recorded")
+        except Exception as e:
+            print(f"  Warning: Could not write timestamp: {e}")
         
         print_success("HARD update completed successfully")
         return True

@@ -323,6 +323,19 @@ def process_pending_update():
                 if pixel_controller and flash_start_time is not None:
                     pixel_controller.flash_blue_green(flash_start_time)
                 
+                # Step 5.5: Record installation timestamp
+                try:
+                    install_info = {
+                        "timestamp": time.time(),
+                        "version": manifest.get("version", "unknown")
+                    }
+                    with open("/install_timestamp.json", "w") as f:
+                        json.dump(install_info, f)
+                    os.sync()
+                    print("✓ Installation timestamp recorded")
+                except Exception as e:
+                    print(f"Warning: Could not write timestamp: {e}")
+                
                 # Step 6: Cleanup pending update directory
                 cleanup_pending_update()
                 
