@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -8,6 +8,6 @@
     "circuitpython_10_0"
   ],
   "release_type": "production",
-  "release_notes": "Introduces OTA updates.",
-  "release_date": "2025-10-24T20:16:22.374885+00:00"
+  "release_notes": "Fixes zip file extraction issue.",
+  "release_date": "2025-10-26T21:18:05.671556+00:00"
 }

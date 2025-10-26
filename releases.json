@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "last_updated": "2025-10-24T20:16:22.377977+00:00",
+  "last_updated": "2025-10-26T21:18:05.673252+00:00",
   "releases": [
     {
       "target_machine_types": [
@@ -10,10 +10,10 @@
         "circuitpython_10_0"
       ],
       "production": {
-        "version": "0.2.0",
-        "release_notes": "Introduces OTA updates.",
-        "zip_url": "https://www.wicid.ai/releases/v0.2.0",
-        "release_date": "2025-10-24T20:16:22.374885+00:00"
+        "version": "0.2.1",
+        "release_notes": "Fixes zip file extraction issue.",
+        "zip_url": "https://www.wicid.ai/releases/v0.2.1",
+        "release_date": "2025-10-26T21:18:05.671556+00:00"
       }
     }
   ]
