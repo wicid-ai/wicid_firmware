@@ -31,6 +31,16 @@ except ImportError as e:
 # Check for pending firmware update
 PENDING_UPDATE_DIR = "/pending_update"
 PENDING_ROOT_DIR = "/pending_update/root"
+BOOT_LOG_FILE = "/boot_log.txt"
+
+def log_boot_message(message):
+    """Write a message to the boot log file."""
+    try:
+        with open(BOOT_LOG_FILE, "a") as f:
+            f.write(message + "\n")
+        print(message)
+    except:
+        print(message)
 
 def cleanup_pending_update():
     """Remove pending update directory and all its contents."""
@@ -215,32 +225,31 @@ def process_pending_update():
     """
     Check for and process pending firmware updates.
     """
-    print("\nChecking for pending firmware updates...")
-    print(f"Looking for: {PENDING_ROOT_DIR}")
+    log_boot_message("\n=== BOOT: Checking for pending firmware updates ===")
+    log_boot_message(f"Looking for: {PENDING_ROOT_DIR}")
     
     # Check for pending update installation
     try:
         # First check if the directory exists
         if not os.path.isdir(PENDING_ROOT_DIR):
-            print("No pending update found - proceeding with normal boot")
+            log_boot_message("No pending update found - proceeding with normal boot")
             return
         
         # Check if directory has files
         try:
             files = os.listdir(PENDING_ROOT_DIR)
             if not files:
-                print("Pending update directory is empty - cleaning up")
+                log_boot_message("Pending update directory is empty - cleaning up")
                 cleanup_pending_update()
                 return
-            print(f"Found {len(files)} files in pending update")
-        except OSError:
-            print("Cannot read pending update directory - proceeding with normal boot")
+            log_boot_message(f"Found {len(files)} files in pending update")
+        except OSError as e:
+            log_boot_message(f"Cannot read pending update directory: {e}")
             return
         
-        print("")
-        print("=" * 50)
-        print("FIRMWARE UPDATE DETECTED")
-        print("=" * 50)
+        log_boot_message("=" * 50)
+        log_boot_message("FIRMWARE UPDATE DETECTED")
+        log_boot_message("=" * 50)
         
         # Initialize LED controller and start flashing blue/green
         pixel_controller = None
@@ -259,11 +268,12 @@ def process_pending_update():
         try:
             with open(manifest_path, "r") as f:
                 manifest = json.load(f)
-            print("✓ Manifest loaded")
+            log_boot_message("✓ Manifest loaded")
         except Exception as e:
-            print(f"ERROR: Could not load manifest: {e}")
+            log_boot_message(f"ERROR: Could not load manifest: {e}")
+            log_boot_message(f"Traceback: {traceback.format_exc()}")
             cleanup_pending_update()
-            raise
+            return
         
         # Step 2: Get current version
         try:
@@ -271,8 +281,8 @@ def process_pending_update():
         except:
             current_version = "0.0.0"
         
-        print(f"Current version: {current_version}")
-        print(f"Update version: {manifest.get('version', 'unknown')}")
+        log_boot_message(f"Current version: {current_version}")
+        log_boot_message(f"Update version: {manifest.get('version', 'unknown')}")
         
         # Step 3: Verify compatibility using DRY check
         if check_release_compatibility:
@@ -283,7 +293,7 @@ def process_pending_update():
                 pixel_controller.flash_blue_green(flash_start_time)
             
             if not is_compatible:
-                print(f"ERROR: {error_msg}")
+                log_boot_message(f"ERROR: {error_msg}")
                 
                 # Turn off LED on error
                 if pixel_controller:
@@ -293,12 +303,12 @@ def process_pending_update():
                     mark_incompatible_release(manifest.get("version", "unknown"))
                 
                 cleanup_pending_update()
-                print("=" * 50)
-                print("Update aborted due to incompatibility")
-                print("=" * 50)
-                print("")
+                log_boot_message("=" * 50)
+                log_boot_message("Update aborted due to incompatibility")
+                log_boot_message("=" * 50)
+                return
             else:
-                print(f"✓ Compatibility verified")
+                log_boot_message(f"✓ Compatibility verified")
                 
                 # Update LED
                 if pixel_controller and flash_start_time is not None:
@@ -343,11 +353,10 @@ def process_pending_update():
                 if pixel_controller and flash_start_time is not None:
                     pixel_controller.flash_blue_green(flash_start_time)
                 
-                print("=" * 50)
-                print(f"Update complete: {current_version} → {manifest.get('version')}")
-                print("Rebooting...")
-                print("=" * 50)
-                print("")
+                log_boot_message("=" * 50)
+                log_boot_message(f"Update complete: {current_version} → {manifest.get('version')}")
+                log_boot_message("Rebooting...")
+                log_boot_message("=" * 50)
                 
                 # Sync filesystem before reboot
                 os.sync()
@@ -355,15 +364,15 @@ def process_pending_update():
                 # Reboot
                 microcontroller.reset()
         else:
-            print("WARNING: Compatibility check not available, skipping update")
+            log_boot_message("WARNING: Compatibility check not available, skipping update")
             cleanup_pending_update()
 
-    except OSError:
+    except OSError as e:
         # No pending_update directory - normal boot
-        pass
+        log_boot_message(f"OSError during update check: {e}")
     except Exception as e:
-        print(f"Error checking for updates: {e}")
-        traceback.print_exception(e)
+        log_boot_message(f"Error checking for updates: {e}")
+        log_boot_message(f"Traceback: {traceback.format_exc()}")
 
 def main():
     """
