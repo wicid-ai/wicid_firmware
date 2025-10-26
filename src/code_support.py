@@ -16,6 +16,20 @@ pixel_controller = PixelController()  # Singleton handles NeoPixel initializatio
 button = digitalio.DigitalInOut(board.BUTTON)
 button.switch_to_input(pull=digitalio.Pull.UP)
 
+# Diagnostic: Check if pending update directory exists (boot.py should have processed it)
+print("\n=== Boot Diagnostic ===")
+try:
+    if os.path.isdir("/pending_update/root"):
+        files = os.listdir("/pending_update/root")
+        print(f"WARNING: /pending_update/root still exists with {len(files)} files!")
+        print("This suggests boot.py did not process the pending update.")
+        print("Files found:", files[:5] if len(files) > 5 else files)
+    else:
+        print("✓ No pending update directory (normal)")
+except Exception as e:
+    print(f"Could not check pending update: {e}")
+print("======================\n")
+
 # Load secrets from secrets.json
 try:
     with open("/secrets.json", "r") as f:
