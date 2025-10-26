@@ -446,11 +446,7 @@ def check_button_hold_duration(button, pixel_controller=None):
             if pixel_controller:
                 if safe_mode_indicated:
                     # Flash blue and green alternately (4 times per second)
-                    cycle = int((time.monotonic() - start_time) * 4) % 2
-                    if cycle == 0:
-                        pixel_controller.set_color((0, 0, 255))  # Blue
-                    else:
-                        pixel_controller.set_color((0, 255, 0))  # Green
+                    pixel_controller.flash_blue_green(start_time)
                 elif setup_indicated:
                     # Tick the pulsing animation
                     pixel_controller.tick()

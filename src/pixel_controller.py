@@ -108,3 +108,20 @@ class PixelController:
                 self.start_pulsing(self._pulse_color, self._min_b, self._max_b, self._step, self._interval, self._brightness)
         except Exception as e:
             print(f"PixelController.blink_error error: {e}")
+
+    def flash_blue_green(self, start_time):
+        """
+        Flash blue and green alternately (4 times per second).
+        Used for Safe Mode indicator and update installation.
+        
+        Args:
+            start_time: Monotonic timestamp when flashing started
+        """
+        try:
+            cycle = int((time.monotonic() - start_time) * 4) % 2
+            if cycle == 0:
+                self.set_color((0, 0, 255))  # Blue
+            else:
+                self.set_color((0, 255, 0))  # Green
+        except Exception as e:
+            print(f"PixelController.flash_blue_green error: {e}")

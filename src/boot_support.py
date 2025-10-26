@@ -14,16 +14,19 @@ import json
 import storage
 import microcontroller
 import traceback
+import time
 
 # Import compatibility checking utilities
 try:
     import sys
     sys.path.insert(0, '/')
     from utils import check_release_compatibility, mark_incompatible_release
+    from pixel_controller import PixelController
 except ImportError as e:
-    print(f"Warning: Could not import utils: {e}")
+    print(f"Warning: Could not import utils or pixel_controller: {e}")
     check_release_compatibility = None
     mark_incompatible_release = None
+    PixelController = None
 
 # Check for pending firmware update
 PENDING_UPDATE_DIR = "/pending_update"
@@ -121,13 +124,15 @@ def delete_all_except(preserve_paths):
     
     print("✓ Full reset complete")
 
-def move_directory_contents(src_dir, dest_dir):
+def move_directory_contents(src_dir, dest_dir, pixel_controller=None, flash_start_time=None):
     """
     Move all files and directories from src to dest.
     
     Args:
         src_dir: Source directory path
         dest_dir: Destination directory path
+        pixel_controller: Optional PixelController instance for LED updates
+        flash_start_time: Optional start time for LED flashing
     """
     print(f"Moving files from {src_dir} to {dest_dir}...")
     
@@ -136,6 +141,10 @@ def move_directory_contents(src_dir, dest_dir):
     for item in items:
         src_path = f"{src_dir}/{item}"
         dest_path = f"{dest_dir}/{item}"
+        
+        # Update LED during file operations
+        if pixel_controller and flash_start_time is not None:
+            pixel_controller.flash_blue_green(flash_start_time)
         
         try:
             # Check if it's a directory
@@ -154,7 +163,7 @@ def move_directory_contents(src_dir, dest_dir):
                     pass  # Directory might already exist
                 
                 # Recursively move contents
-                move_directory_contents(src_path, dest_path)
+                move_directory_contents(src_path, dest_path, pixel_controller, flash_start_time)
                 
                 # Remove source directory
                 try:
@@ -233,6 +242,18 @@ def process_pending_update():
         print("FIRMWARE UPDATE DETECTED")
         print("=" * 50)
         
+        # Initialize LED controller and start flashing blue/green
+        pixel_controller = None
+        flash_start_time = None
+        if PixelController:
+            try:
+                pixel_controller = PixelController()
+                flash_start_time = time.monotonic()
+                pixel_controller.flash_blue_green(flash_start_time)
+                print("LED indicator: flashing blue/green during update")
+            except Exception as e:
+                print(f"Could not initialize LED: {e}")
+        
         # Step 1: Load manifest from extracted update
         manifest_path = f"{PENDING_ROOT_DIR}/manifest.json"
         try:
@@ -257,8 +278,16 @@ def process_pending_update():
         if check_release_compatibility:
             is_compatible, error_msg = check_release_compatibility(manifest, current_version)
             
+            # Update LED during compatibility check
+            if pixel_controller and flash_start_time is not None:
+                pixel_controller.flash_blue_green(flash_start_time)
+            
             if not is_compatible:
                 print(f"ERROR: {error_msg}")
+                
+                # Turn off LED on error
+                if pixel_controller:
+                    pixel_controller.off()
                 
                 if mark_incompatible_release:
                     mark_incompatible_release(manifest.get("version", "unknown"))
@@ -271,6 +300,10 @@ def process_pending_update():
             else:
                 print(f"✓ Compatibility verified")
                 
+                # Update LED
+                if pixel_controller and flash_start_time is not None:
+                    pixel_controller.flash_blue_green(flash_start_time)
+                
                 # Step 4: Delete everything except secrets and incompatible list
                 preserve_paths = [
                     "/secrets.json",
@@ -279,11 +312,23 @@ def process_pending_update():
                 ]
                 delete_all_except(preserve_paths)
                 
+                # Update LED after deletion
+                if pixel_controller and flash_start_time is not None:
+                    pixel_controller.flash_blue_green(flash_start_time)
+                
                 # Step 5: Move files from pending_update/root to root
-                move_directory_contents(PENDING_ROOT_DIR, "/")
+                move_directory_contents(PENDING_ROOT_DIR, "/", pixel_controller, flash_start_time)
+                
+                # Update LED after moving files
+                if pixel_controller and flash_start_time is not None:
+                    pixel_controller.flash_blue_green(flash_start_time)
                 
                 # Step 6: Cleanup pending update directory
                 cleanup_pending_update()
+                
+                # Update LED after cleanup
+                if pixel_controller and flash_start_time is not None:
+                    pixel_controller.flash_blue_green(flash_start_time)
                 
                 print("=" * 50)
                 print(f"Update complete: {current_version} → {manifest.get('version')}")
