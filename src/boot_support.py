@@ -206,80 +206,99 @@ def process_pending_update():
     """
     Check for and process pending firmware updates.
     """
+    print("\nChecking for pending firmware updates...")
+    print(f"Looking for: {PENDING_ROOT_DIR}")
+    
     # Check for pending update installation
     try:
-        if os.path.isdir(PENDING_ROOT_DIR):
-            print("")
-            print("=" * 50)
-            print("FIRMWARE UPDATE DETECTED")
-            print("=" * 50)
-            
-            # Step 1: Load manifest from extracted update
-            manifest_path = f"{PENDING_ROOT_DIR}/manifest.json"
-            try:
-                with open(manifest_path, "r") as f:
-                    manifest = json.load(f)
-                print("✓ Manifest loaded")
-            except Exception as e:
-                print(f"ERROR: Could not load manifest: {e}")
+        # First check if the directory exists
+        if not os.path.isdir(PENDING_ROOT_DIR):
+            print("No pending update found - proceeding with normal boot")
+            return
+        
+        # Check if directory has files
+        try:
+            files = os.listdir(PENDING_ROOT_DIR)
+            if not files:
+                print("Pending update directory is empty - cleaning up")
                 cleanup_pending_update()
-                raise
+                return
+            print(f"Found {len(files)} files in pending update")
+        except OSError:
+            print("Cannot read pending update directory - proceeding with normal boot")
+            return
+        
+        print("")
+        print("=" * 50)
+        print("FIRMWARE UPDATE DETECTED")
+        print("=" * 50)
+        
+        # Step 1: Load manifest from extracted update
+        manifest_path = f"{PENDING_ROOT_DIR}/manifest.json"
+        try:
+            with open(manifest_path, "r") as f:
+                manifest = json.load(f)
+            print("✓ Manifest loaded")
+        except Exception as e:
+            print(f"ERROR: Could not load manifest: {e}")
+            cleanup_pending_update()
+            raise
+        
+        # Step 2: Get current version
+        try:
+            current_version = os.getenv("VERSION", "0.0.0")
+        except:
+            current_version = "0.0.0"
+        
+        print(f"Current version: {current_version}")
+        print(f"Update version: {manifest.get('version', 'unknown')}")
+        
+        # Step 3: Verify compatibility using DRY check
+        if check_release_compatibility:
+            is_compatible, error_msg = check_release_compatibility(manifest, current_version)
             
-            # Step 2: Get current version
-            try:
-                current_version = os.getenv("VERSION", "0.0.0")
-            except:
-                current_version = "0.0.0"
-            
-            print(f"Current version: {current_version}")
-            print(f"Update version: {manifest.get('version', 'unknown')}")
-            
-            # Step 3: Verify compatibility using DRY check
-            if check_release_compatibility:
-                is_compatible, error_msg = check_release_compatibility(manifest, current_version)
+            if not is_compatible:
+                print(f"ERROR: {error_msg}")
                 
-                if not is_compatible:
-                    print(f"ERROR: {error_msg}")
-                    
-                    if mark_incompatible_release:
-                        mark_incompatible_release(manifest.get("version", "unknown"))
-                    
-                    cleanup_pending_update()
-                    print("=" * 50)
-                    print("Update aborted due to incompatibility")
-                    print("=" * 50)
-                    print("")
-                else:
-                    print(f"✓ Compatibility verified")
-                    
-                    # Step 4: Delete everything except secrets and incompatible list
-                    preserve_paths = [
-                        "/secrets.json",
-                        "/incompatible_releases.json",
-                        PENDING_UPDATE_DIR
-                    ]
-                    delete_all_except(preserve_paths)
-                    
-                    # Step 5: Move files from pending_update/root to root
-                    move_directory_contents(PENDING_ROOT_DIR, "/")
-                    
-                    # Step 6: Cleanup pending update directory
-                    cleanup_pending_update()
-                    
-                    print("=" * 50)
-                    print(f"Update complete: {current_version} → {manifest.get('version')}")
-                    print("Rebooting...")
-                    print("=" * 50)
-                    print("")
-                    
-                    # Sync filesystem before reboot
-                    os.sync()
-                    
-                    # Reboot
-                    microcontroller.reset()
-            else:
-                print("WARNING: Compatibility check not available, skipping update")
+                if mark_incompatible_release:
+                    mark_incompatible_release(manifest.get("version", "unknown"))
+                
                 cleanup_pending_update()
+                print("=" * 50)
+                print("Update aborted due to incompatibility")
+                print("=" * 50)
+                print("")
+            else:
+                print(f"✓ Compatibility verified")
+                
+                # Step 4: Delete everything except secrets and incompatible list
+                preserve_paths = [
+                    "/secrets.json",
+                    "/incompatible_releases.json",
+                    PENDING_UPDATE_DIR
+                ]
+                delete_all_except(preserve_paths)
+                
+                # Step 5: Move files from pending_update/root to root
+                move_directory_contents(PENDING_ROOT_DIR, "/")
+                
+                # Step 6: Cleanup pending update directory
+                cleanup_pending_update()
+                
+                print("=" * 50)
+                print(f"Update complete: {current_version} → {manifest.get('version')}")
+                print("Rebooting...")
+                print("=" * 50)
+                print("")
+                
+                # Sync filesystem before reboot
+                os.sync()
+                
+                # Reboot
+                microcontroller.reset()
+        else:
+            print("WARNING: Compatibility check not available, skipping update")
+            cleanup_pending_update()
 
     except OSError:
         # No pending_update directory - normal boot
