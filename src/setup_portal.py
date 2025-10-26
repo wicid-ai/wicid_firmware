@@ -238,8 +238,8 @@ class SetupPortal:
                 except Exception:
                     pass
                 
-                # Format OS version for display
-                os_display = os_version_string.replace("_", " ").title()
+                # Format OS version for display (use basic string operations for CircuitPython compatibility)
+                os_display = os_version_string.replace("_", " ")
                 
                 # Load installation timestamp if available
                 last_update = None

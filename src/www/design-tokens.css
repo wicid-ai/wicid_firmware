@@ -446,6 +446,13 @@ body {
   min-height: 100svh;
 }
 
+.content-wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 600px;
+}
+
 @media (min-width: 640px) {
   .main-content {
     padding: 1.5rem;
