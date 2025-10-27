@@ -43,36 +43,40 @@ def log_boot_message(message):
         print(message)
 
 def cleanup_pending_update():
-    """Remove pending update directory and all its contents."""
+    """
+    Remove pending update directory and all its contents.
+    Logs errors but continues to attempt cleanup.
+    """
+    print("Cleaning up pending update...")
+    
     try:
-        print("Cleaning up pending update...")
-        
         # Remove all files in the directory tree
         for root, dirs, files in os.walk(PENDING_UPDATE_DIR, topdown=False):
             for name in files:
                 try:
                     os.remove(os.path.join(root, name))
                 except OSError as e:
-                    print(f"  Could not remove {name}: {e}")
+                    log_boot_message(f"  Could not remove {name}: {e}")
             for name in dirs:
                 try:
                     os.rmdir(os.path.join(root, name))
                 except OSError as e:
-                    print(f"  Could not remove directory {name}: {e}")
+                    log_boot_message(f"  Could not remove directory {name}: {e}")
         
         # Remove the main directory
         try:
             os.rmdir(PENDING_UPDATE_DIR)
         except OSError as e:
-            print(f"  Could not remove {PENDING_UPDATE_DIR}: {e}")
+            log_boot_message(f"  Could not remove {PENDING_UPDATE_DIR}: {e}")
         
         print("✓ Cleanup complete")
     except Exception as e:
-        print(f"Warning: Cleanup error: {e}")
+        log_boot_message(f"Warning: Cleanup error: {e}")
 
 def delete_all_except(preserve_paths):
     """
     Delete all files and directories in root except specified paths.
+    Forces recursive deletion but logs errors and continues.
     
     Args:
         preserve_paths: List of paths to preserve (e.g., ['/secrets.json', '/pending_update'])
@@ -106,7 +110,7 @@ def delete_all_except(preserve_paths):
             except OSError:
                 pass
             
-            # If not a file, try as directory
+            # If not a file, try as directory - force recursive deletion
             try:
                 # Remove directory contents recursively
                 for root, dirs, files in os.walk(item_path, topdown=False):
@@ -115,28 +119,29 @@ def delete_all_except(preserve_paths):
                             file_path = os.path.join(root, name)
                             os.remove(file_path)
                         except OSError as e:
-                            print(f"  Could not remove {file_path}: {e}")
+                            log_boot_message(f"  Could not remove {file_path}: {e}")
                     for name in dirs:
                         try:
                             dir_path = os.path.join(root, name)
                             os.rmdir(dir_path)
                         except OSError as e:
-                            print(f"  Could not remove directory {dir_path}: {e}")
+                            log_boot_message(f"  Could not remove directory {dir_path}: {e}")
                 
                 # Remove the directory itself
                 os.rmdir(item_path)
                 print(f"  Deleted directory: {item_path}")
             except OSError as e:
-                print(f"  Could not delete {item_path}: {e}")
+                log_boot_message(f"  Could not delete {item_path}: {e}")
         
         except Exception as e:
-            print(f"  Error processing {item_path}: {e}")
+            log_boot_message(f"  Error processing {item_path}: {e}")
     
     print("✓ Full reset complete")
 
 def move_directory_contents(src_dir, dest_dir, pixel_controller=None, flash_start_time=None):
     """
     Move all files and directories from src to dest.
+    Logs errors but continues to attempt moving remaining files.
     
     Args:
         src_dir: Source directory path
@@ -179,7 +184,7 @@ def move_directory_contents(src_dir, dest_dir, pixel_controller=None, flash_star
                 try:
                     os.rmdir(src_path)
                 except OSError as e:
-                    print(f"  Could not remove {src_path}: {e}")
+                    log_boot_message(f"  Could not remove {src_path}: {e}")
             else:
                 # Move file
                 try:
@@ -196,10 +201,10 @@ def move_directory_contents(src_dir, dest_dir, pixel_controller=None, flash_star
                     
                     print(f"  Moved: {item}")
                 except Exception as e:
-                    print(f"  Could not move {src_path}: {e}")
+                    log_boot_message(f"  Could not move {src_path}: {e}")
         
         except Exception as e:
-            print(f"  Error processing {item}: {e}")
+            log_boot_message(f"  Error processing {item}: {e}")
     
     print("✓ File move complete")
 

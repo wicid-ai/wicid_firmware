@@ -134,39 +134,35 @@ def delete_circuitpy_contents(circuitpy_path):
     
     Args:
         circuitpy_path: Path to CIRCUITPY drive
+    
+    Raises:
+        Exception: If any deletion fails, the entire process fails
     """
     print_step("Deleting files on CIRCUITPY drive...")
     
     deleted_count = 0
     
-    try:
-        for item in os.listdir(circuitpy_path):
-            # Skip system folders and preserved files
-            if item in SYSTEM_FOLDERS or item in PRESERVED_FILES:
-                print(f"  Preserving: {item}")
-                continue
-            
-            # Skip all hidden files - they're system artifacts and cause issues
-            if item.startswith('.'):
-                print(f"  Skipping hidden file: {item}")
-                continue
-            
-            item_path = circuitpy_path / item
-            
-            try:
-                if item_path.is_dir():
-                    shutil.rmtree(item_path)
-                    print(f"  Deleted directory: {item}")
-                else:
-                    item_path.unlink()
-                    print(f"  Deleted file: {item}")
-                deleted_count += 1
-            except Exception as e:
-                print_error(f"Could not delete {item}: {e}")
-    
-    except Exception as e:
-        print_error(f"Error during deletion: {e}")
-        raise
+    for item in os.listdir(circuitpy_path):
+        # Skip system folders and preserved files
+        if item in SYSTEM_FOLDERS or item in PRESERVED_FILES:
+            print(f"  Preserving: {item}")
+            continue
+        
+        # Skip all hidden files - they're system artifacts and cause issues
+        if item.startswith('.'):
+            print(f"  Skipping hidden file: {item}")
+            continue
+        
+        item_path = circuitpy_path / item
+        
+        if item_path.is_dir():
+            # Force recursive deletion of directories
+            shutil.rmtree(item_path, ignore_errors=False)
+            print(f"  Deleted directory: {item}")
+        else:
+            item_path.unlink()
+            print(f"  Deleted file: {item}")
+        deleted_count += 1
     
     print_success(f"Deleted {deleted_count} items from CIRCUITPY")
 
