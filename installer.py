@@ -14,7 +14,7 @@ import tempfile
 import glob
 import argparse
 import json
-import time
+from datetime import datetime
 from pathlib import Path
 
 
@@ -442,8 +442,11 @@ def hard_update(circuitpy_path, zip_path):
                     manifest = json.load(f)
                     version = manifest.get("version", "unknown")
             
+            # Format timestamp as human-readable string (matching CircuitPython format)
+            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
             install_info = {
-                "timestamp": time.time(),
+                "timestamp": timestamp_str,
                 "version": version
             }
             timestamp_path = circuitpy_path / "install_timestamp.json"

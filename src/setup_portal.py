@@ -246,11 +246,8 @@ class SetupPortal:
                 try:
                     with open("/install_timestamp.json", "r") as f:
                         install_data = json.load(f)
-                    timestamp = install_data.get("timestamp")
-                    if timestamp:
-                        # Convert Unix timestamp to ISO 8601 format
-                        # CircuitPython doesn't have datetime, so format manually
-                        last_update = timestamp
+                    # Timestamp is already in human-readable format
+                    last_update = install_data.get("timestamp")
                 except Exception:
                     pass
                 

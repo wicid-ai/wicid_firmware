@@ -42,6 +42,42 @@ def log_boot_message(message):
     except:
         print(message)
 
+def remove_directory_recursive(path):
+    """
+    Recursively remove a directory and all its contents.
+    CircuitPython-compatible (no os.walk).
+    """
+    try:
+        items = os.listdir(path)
+    except OSError:
+        # Path doesn't exist or isn't a directory
+        return
+    
+    for item in items:
+        item_path = f"{path}/{item}" if not path.endswith('/') else f"{path}{item}"
+        
+        # Try to remove as file first
+        try:
+            os.remove(item_path)
+            continue
+        except OSError:
+            pass
+        
+        # Must be a directory, recurse into it
+        remove_directory_recursive(item_path)
+        
+        # Remove the now-empty directory
+        try:
+            os.rmdir(item_path)
+        except OSError:
+            pass
+    
+    # Remove the directory itself
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
 def cleanup_pending_update():
     """
     Remove pending update directory and all its contents.
@@ -50,27 +86,7 @@ def cleanup_pending_update():
     print("Cleaning up pending update...")
     
     try:
-        # Remove all files in the directory tree
-        for root, dirs, files in os.walk(PENDING_UPDATE_DIR, topdown=False):
-            for name in files:
-                try:
-                    file_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
-                    os.remove(file_path)
-                except OSError as e:
-                    log_boot_message(f"  Could not remove {name}: {e}")
-            for name in dirs:
-                try:
-                    dir_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
-                    os.rmdir(dir_path)
-                except OSError as e:
-                    log_boot_message(f"  Could not remove directory {name}: {e}")
-        
-        # Remove the main directory
-        try:
-            os.rmdir(PENDING_UPDATE_DIR)
-        except OSError as e:
-            log_boot_message(f"  Could not remove {PENDING_UPDATE_DIR}: {e}")
-        
+        remove_directory_recursive(PENDING_UPDATE_DIR)
         print("✓ Cleanup complete")
     except Exception as e:
         log_boot_message(f"Warning: Cleanup error: {e}")
@@ -113,27 +129,8 @@ def delete_all_except(preserve_paths):
                 pass
             
             # If not a file, try as directory - force recursive deletion
-            try:
-                # Remove directory contents recursively
-                for root, dirs, files in os.walk(item_path, topdown=False):
-                    for name in files:
-                        try:
-                            file_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
-                            os.remove(file_path)
-                        except OSError as e:
-                            log_boot_message(f"  Could not remove {file_path}: {e}")
-                    for name in dirs:
-                        try:
-                            dir_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
-                            os.rmdir(dir_path)
-                        except OSError as e:
-                            log_boot_message(f"  Could not remove directory {dir_path}: {e}")
-                
-                # Remove the directory itself
-                os.rmdir(item_path)
-                print(f"  Deleted directory: {item_path}")
-            except OSError as e:
-                log_boot_message(f"  Could not delete {item_path}: {e}")
+            remove_directory_recursive(item_path)
+            print(f"  Deleted directory: {item_path}")
         
         except Exception as e:
             log_boot_message(f"  Error processing {item_path}: {e}")
@@ -169,8 +166,8 @@ def move_directory_contents(src_dir, dest_dir, pixel_controller=None, flash_star
             try:
                 os.listdir(src_path)
                 is_dir = True
-            except (OSError, NotADirectoryError):
-                pass
+            except OSError:
+                pass  # Not a directory, it's a file
             
             if is_dir:
                 # Create destination directory if it doesn't exist
@@ -341,8 +338,15 @@ def process_pending_update():
                 
                 # Step 5.5: Record installation timestamp
                 try:
+                    # Format timestamp as human-readable string
+                    timestamp = time.localtime()
+                    timestamp_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
+                        timestamp[0], timestamp[1], timestamp[2],
+                        timestamp[3], timestamp[4], timestamp[5]
+                    )
+                    
                     install_info = {
-                        "timestamp": time.time(),
+                        "timestamp": timestamp_str,
                         "version": manifest.get("version", "unknown")
                     }
                     with open("/install_timestamp.json", "w") as f:
