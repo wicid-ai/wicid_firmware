@@ -54,12 +54,14 @@ def cleanup_pending_update():
         for root, dirs, files in os.walk(PENDING_UPDATE_DIR, topdown=False):
             for name in files:
                 try:
-                    os.remove(os.path.join(root, name))
+                    file_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
+                    os.remove(file_path)
                 except OSError as e:
                     log_boot_message(f"  Could not remove {name}: {e}")
             for name in dirs:
                 try:
-                    os.rmdir(os.path.join(root, name))
+                    dir_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
+                    os.rmdir(dir_path)
                 except OSError as e:
                     log_boot_message(f"  Could not remove directory {name}: {e}")
         
@@ -116,13 +118,13 @@ def delete_all_except(preserve_paths):
                 for root, dirs, files in os.walk(item_path, topdown=False):
                     for name in files:
                         try:
-                            file_path = os.path.join(root, name)
+                            file_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
                             os.remove(file_path)
                         except OSError as e:
                             log_boot_message(f"  Could not remove {file_path}: {e}")
                     for name in dirs:
                         try:
-                            dir_path = os.path.join(root, name)
+                            dir_path = f"{root}/{name}" if not root.endswith('/') else f"{root}{name}"
                             os.rmdir(dir_path)
                         except OSError as e:
                             log_boot_message(f"  Could not remove directory {dir_path}: {e}")
@@ -235,22 +237,21 @@ def process_pending_update():
     
     # Check for pending update installation
     try:
-        # First check if the directory exists
-        if not os.path.isdir(PENDING_ROOT_DIR):
+        # Try to list directory - will raise OSError if doesn't exist
+        try:
+            files = os.listdir(PENDING_ROOT_DIR)
+        except OSError:
+            # Directory doesn't exist - normal boot
             log_boot_message("No pending update found - proceeding with normal boot")
             return
         
         # Check if directory has files
-        try:
-            files = os.listdir(PENDING_ROOT_DIR)
-            if not files:
-                log_boot_message("Pending update directory is empty - cleaning up")
-                cleanup_pending_update()
-                return
-            log_boot_message(f"Found {len(files)} files in pending update")
-        except OSError as e:
-            log_boot_message(f"Cannot read pending update directory: {e}")
+        if not files:
+            log_boot_message("Pending update directory is empty - cleaning up")
+            cleanup_pending_update()
             return
+        
+        log_boot_message(f"Found {len(files)} files in pending update")
         
         log_boot_message("=" * 50)
         log_boot_message("FIRMWARE UPDATE DETECTED")

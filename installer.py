@@ -136,7 +136,7 @@ def delete_circuitpy_contents(circuitpy_path):
         circuitpy_path: Path to CIRCUITPY drive
     
     Raises:
-        Exception: If any deletion fails, the entire process fails
+        OSError: If filesystem is read-only or deletion fails
     """
     print_step("Deleting files on CIRCUITPY drive...")
     
@@ -155,14 +155,32 @@ def delete_circuitpy_contents(circuitpy_path):
         
         item_path = circuitpy_path / item
         
-        if item_path.is_dir():
-            # Force recursive deletion of directories
-            shutil.rmtree(item_path, ignore_errors=False)
-            print(f"  Deleted directory: {item}")
-        else:
-            item_path.unlink()
-            print(f"  Deleted file: {item}")
-        deleted_count += 1
+        try:
+            if item_path.is_dir():
+                # Force recursive deletion of directories
+                shutil.rmtree(item_path, ignore_errors=False)
+                print(f"  Deleted directory: {item}")
+            else:
+                item_path.unlink()
+                print(f"  Deleted file: {item}")
+            deleted_count += 1
+        except OSError as e:
+            # Check for read-only filesystem error
+            if e.errno == 30:  # EROFS - Read-only file system
+                raise OSError(
+                    "CIRCUITPY drive is READ-ONLY. "
+                    "The device must be in Safe Mode to allow file modifications.\n\n"
+                    "To enter Safe Mode:\n"
+                    "  1. Unplug the device from USB\n"
+                    "  2. Hold the BOOT button (or button on the board)\n"
+                    "  3. While holding the button, plug in USB\n"
+                    "  4. Keep holding until the LED turns yellow/orange\n"
+                    "  5. Release the button\n\n"
+                    "The device is now in Safe Mode and the filesystem is writable.\n"
+                    "Run this installer again."
+                ) from e
+            else:
+                raise
     
     print_success(f"Deleted {deleted_count} items from CIRCUITPY")
 
@@ -203,6 +221,9 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
         source_dir: Source directory path
         dest_dir: Destination directory path
         recursive: If True, copy directory structure recursively
+    
+    Raises:
+        OSError: If filesystem is read-only or copy fails
     """
     print_step(f"Copying files to {dest_dir}...")
     
@@ -230,6 +251,24 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
                 print(f"  Copied file: {item}")
                 copied_count += 1
     
+    except OSError as e:
+        # Check for read-only filesystem error
+        if e.errno == 30:  # EROFS - Read-only file system
+            raise OSError(
+                "CIRCUITPY drive is READ-ONLY. "
+                "The device must be in Safe Mode to allow file modifications.\n\n"
+                "To enter Safe Mode:\n"
+                "  1. Unplug the device from USB\n"
+                "  2. Hold the BOOT button (or button on the board)\n"
+                "  3. While holding the button, plug in USB\n"
+                "  4. Keep holding until the LED turns yellow/orange\n"
+                "  5. Release the button\n\n"
+                "The device is now in Safe Mode and the filesystem is writable.\n"
+                "Run this installer again."
+            ) from e
+        else:
+            print_error(f"Error copying files: {e}")
+            raise
     except Exception as e:
         print_error(f"Error copying files: {e}")
         raise
@@ -296,7 +335,10 @@ def soft_update(circuitpy_path, zip_path):
     # Extract to temporary directory
     try:
         temp_dir = extract_zip_to_temp(zip_path)
-    except Exception:
+    except Exception as e:
+        print_error(f"Failed to extract firmware package: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     try:
@@ -319,7 +361,10 @@ def soft_update(circuitpy_path, zip_path):
         print_success("SOFT update prepared successfully")
         return True
     
-    except Exception:
+    except Exception as e:
+        print_error(f"SOFT update failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     finally:
@@ -371,7 +416,10 @@ def hard_update(circuitpy_path, zip_path):
     # Extract to temporary directory
     try:
         temp_dir = extract_zip_to_temp(zip_path)
-    except Exception:
+    except Exception as e:
+        print_error(f"Failed to extract firmware package: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     try:
@@ -408,7 +456,19 @@ def hard_update(circuitpy_path, zip_path):
         print_success("HARD update completed successfully")
         return True
     
-    except Exception:
+    except OSError as e:
+        # Don't print stack trace for read-only filesystem - the error message is clear
+        if "READ-ONLY" in str(e):
+            print_error(str(e))
+        else:
+            print_error(f"HARD update failed: {e}")
+            import traceback
+            traceback.print_exc()
+        return False
+    except Exception as e:
+        print_error(f"HARD update failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     finally:

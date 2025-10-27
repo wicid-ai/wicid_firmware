@@ -247,10 +247,9 @@ class UpdateManager:
             
             # Clean up partial download
             try:
-                if os.path.isfile(f"{self.PENDING_UPDATE_DIR}/update.zip"):
-                    os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
+                os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
             except OSError:
-                pass
+                pass  # File doesn't exist or can't be removed
             
             return False
     
