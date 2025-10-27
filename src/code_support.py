@@ -161,6 +161,22 @@ def main():
                     print("✓ Boot successful - all checks passed")
                     pixel_controller.blink_success()
                 
+                # DEBUG: Check for pending update that wasn't processed
+                print("\n" + "="*60)
+                print("DEBUG: Checking for pending update directory")
+                try:
+                    if os.path.isdir("/pending_update/root"):
+                        files = os.listdir("/pending_update/root")
+                        print(f"⚠ WARNING: /pending_update/root EXISTS with {len(files)} files!")
+                        print(f"   This means boot.py did NOT process the pending update")
+                        if files:
+                            print(f"   Files found: {', '.join(files[:10])}")
+                    else:
+                        print("✓ No /pending_update/root directory (expected)")
+                except Exception as e:
+                    print(f"Error checking: {e}")
+                print("="*60 + "\n")
+                
                 # Initialize update manager and check for updates on boot
                 try:
                     print("Initializing update manager...")
