@@ -100,7 +100,19 @@ def get_os_version_string():
     """
     name = get_os_name()
     version = get_os_version()
-    return f"{name}_{version[0]}_{version[1]}"
+    return f"{name}_{version[0]}_{version[1]}_{version[2]}"
+
+def get_os_version_string_pretty_print():
+    """
+    Get the OS version in a pretty print format for display.
+    
+    Returns:
+        str: OS version string in format 'OS major.minor.micro' (e.g., 'CircuitPython 10.1.4')
+    """
+    name = get_os_name()
+    version = get_os_version()
+    name_camel = (name[0].upper() + name[1:]) if name else ""
+    return f"{name_camel} {version[0]}.{version[1]}.{version[2]}"
 
 
 def os_matches_target(device_os_string, target_os_array):

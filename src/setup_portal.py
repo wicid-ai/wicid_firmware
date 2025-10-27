@@ -221,11 +221,11 @@ class SetupPortal:
         @server.route("/system-info", "GET")
         def system_info(request: Request):
             try:
-                from utils import get_machine_type, get_os_version_string
+                from utils import get_machine_type, get_os_version_string_pretty_print   
                 
                 # Get basic system info
                 machine_type = get_machine_type()
-                os_version_string = get_os_version_string()
+                os_version_string = get_os_version_string_pretty_print()
                 wicid_version = os.getenv("VERSION", "unknown")
                 
                 # Load manifest for detailed machine type
@@ -238,24 +238,10 @@ class SetupPortal:
                 except Exception:
                     pass
                 
-                # Format OS version for display (use basic string operations for CircuitPython compatibility)
-                os_display = os_version_string.replace("_", " ")
-                
-                # Load installation timestamp if available
-                last_update = None
-                try:
-                    with open("/install_timestamp.json", "r") as f:
-                        install_data = json.load(f)
-                    # Timestamp is already in human-readable format
-                    last_update = install_data.get("timestamp")
-                except Exception:
-                    pass
-                
                 return self._json_ok(request, {
                     "machine_type": machine_type,
-                    "os_version": os_display,
-                    "wicid_version": wicid_version,
-                    "last_update": last_update
+                    "os_version": os_version_string,
+                    "wicid_version": wicid_version
                 })
                 
             except Exception as e:

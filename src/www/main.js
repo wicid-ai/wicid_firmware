@@ -340,12 +340,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    function formatDate(timestamp) {
-        if (!timestamp) return 'Not available';
-        // Timestamp is already in human-readable format from device
-        return timestamp;
-    }
-
     function renderSystemDetails(data) {
         if (!data) {
             systemDetailsContent.innerHTML = '<div class="system-details-error">Could not load system information.</div>';
@@ -365,10 +359,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="system-detail-item">
                     <span class="detail-label">WICID Version:</span>
                     <span class="detail-value">${data.wicid_version || 'Unknown'}</span>
-                </div>
-                <div class="system-detail-item">
-                    <span class="detail-label">Last Updated:</span>
-                    <span class="detail-value">${formatDate(data.last_update)}</span>
                 </div>
             </div>
         `;
