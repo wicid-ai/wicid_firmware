@@ -247,9 +247,12 @@ Before flashing the application, new boards must be initialized with CircuitPyth
    - After installation completes, you should see an updated `FTHRS3BOOT` drive
 
 3. **Install CircuitPython**:
+   - While in bootloader mode (indicated by solid green LED and availability of `FTHRS3BOOT` drive)
    - From the same CircuitPython page, download the latest `.UF2` file
    - Drag the downloaded `.UF2` file to the `FTHRS3BOOT` drive
    - The board will reboot automatically and you should now see a `CIRCUITPY` drive
+
+   **Note**: If installing a new OS without first updating the Bootloader, follow the steps in number 1 to get into bootloader mode.
 
 The board is now ready for library installation and application deployment.
 
@@ -273,7 +276,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
 
 4. **Create a boot_out.txt file** in the `src/` directory. Because circup needs to determine the target OS version, and we're not running directly on the device, we reference a local boot_out.txt file:
    ```bash
-   echo "Adafruit CircuitPython 10.0.1 on 2025-10-09;" > src/boot_out.txt
+   echo "Adafruit CircuitPython 10.0.3 on 2025-10-09;" > src/boot_out.txt
    ```
    
    Note: This file is gitignored, so once created you can leave it in place. Update the version string if you change CircuitPython versions.
