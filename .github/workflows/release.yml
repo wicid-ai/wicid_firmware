@@ -144,19 +144,19 @@ jobs:
           echo "✓ Git configured"
           
           echo "→ Copying releases.json..."
-          cp ../releases.json .
+          cp ../releases.json public/
           echo "✓ File copied"
           
           echo "→ Checking for changes..."
-          if git diff --quiet releases.json; then
+          if git diff --quiet public/releases.json; then
             echo "ℹ No changes detected in releases.json"
           else
             echo "✓ Changes detected in releases.json:"
-            git diff releases.json
+            git diff public/releases.json
           fi
           
           echo "→ Staging changes..."
-          git add releases.json
+          git add public/releases.json
           git status --short
           
           echo "→ Committing changes..."
