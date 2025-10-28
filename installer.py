@@ -13,8 +13,6 @@ import zipfile
 import tempfile
 import glob
 import argparse
-import json
-from datetime import datetime
 from pathlib import Path
 
 
@@ -148,22 +146,22 @@ def delete_circuitpy_contents(circuitpy_path):
             print(f"  Preserving: {item}")
             continue
         
-        # Skip all hidden files - they're system artifacts and cause issues
+        # Skip all hidden files - they're system artifacts
+        # These will be cleaned up separately after all operations complete
         if item.startswith('.'):
-            print(f"  Skipping hidden file: {item}")
             continue
         
         item_path = circuitpy_path / item
         
         try:
             if item_path.is_dir():
-                # Force recursive deletion of directories
                 shutil.rmtree(item_path, ignore_errors=False)
                 print(f"  Deleted directory: {item}")
+                deleted_count += 1
             else:
                 item_path.unlink()
                 print(f"  Deleted file: {item}")
-            deleted_count += 1
+                deleted_count += 1
         except OSError as e:
             # Check for read-only filesystem error
             if e.errno == 30:  # EROFS - Read-only file system
@@ -180,6 +178,7 @@ def delete_circuitpy_contents(circuitpy_path):
                     "Run this installer again."
                 ) from e
             else:
+                print_error(f"Could not delete {item}: {e}")
                 raise
     
     print_success(f"Deleted {deleted_count} items from CIRCUITPY")
@@ -240,12 +239,24 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
             
             if src_path.is_dir():
                 if recursive:
+                    # Remove destination if it exists (handles stale dirs/files)
+                    if dst_path.exists():
+                        if dst_path.is_dir():
+                            shutil.rmtree(dst_path)
+                        else:
+                            dst_path.unlink()
                     # Use copy_function=shutil.copy to avoid metadata issues on FAT
                     shutil.copytree(src_path, dst_path, dirs_exist_ok=True, copy_function=shutil.copy)
                     print(f"  Copied directory: {item}/")
                     copied_count += 1
             else:
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
+                # Remove destination if it exists (handles stale dirs/files)
+                if dst_path.exists():
+                    if dst_path.is_dir():
+                        shutil.rmtree(dst_path)
+                    else:
+                        dst_path.unlink()
                 # Use copy() instead of copy2() to avoid metadata issues on FAT
                 shutil.copy(src_path, dst_path)
                 print(f"  Copied file: {item}")
@@ -423,38 +434,17 @@ def hard_update(circuitpy_path, zip_path):
         return False
     
     try:
+        # Clean up macOS metadata files BEFORE deletion to prevent interference
+        cleanup_macos_artifacts(circuitpy_path)
+        
         # Delete existing files on CIRCUITPY
         delete_circuitpy_contents(circuitpy_path)
         
         # Copy new firmware files to CIRCUITPY root
         copy_files_to_circuitpy(temp_dir, circuitpy_path, recursive=True)
         
-        # Remove macOS metadata files from CIRCUITPY
+        # Remove any newly created macOS metadata files
         cleanup_macos_artifacts(circuitpy_path)
-        
-        # Write installation timestamp
-        try:
-            print_step("Recording installation timestamp...")
-            manifest_path = temp_dir / "manifest.json"
-            version = "unknown"
-            if manifest_path.exists():
-                with open(manifest_path, 'r') as f:
-                    manifest = json.load(f)
-                    version = manifest.get("version", "unknown")
-            
-            # Format timestamp as human-readable string
-            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            install_info = {
-                "timestamp": timestamp_str,
-                "version": version
-            }
-            timestamp_path = circuitpy_path / "install_timestamp.json"
-            with open(timestamp_path, 'w') as f:
-                json.dump(install_info, f)
-            print_success("Installation timestamp recorded")
-        except Exception as e:
-            print(f"  Warning: Could not write timestamp: {e}")
         
         print_success("HARD update completed successfully")
         return True
