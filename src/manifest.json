@@ -8,6 +8,6 @@
     "circuitpython_10_0"
   ],
   "release_type": "production",
-  "release_notes": "Fixes zip file extraction issue.",
-  "release_date": "2025-10-26T21:18:05.671556+00:00"
+  "release_notes": "Improves OTA updates for stability and observability.",
+  "release_date": "2025-10-28T14:03:51.647387+00:00"
 }

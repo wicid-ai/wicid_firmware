@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "last_updated": "2025-10-26T21:18:05.673252+00:00",
+  "last_updated": "2025-10-28T14:03:51.648303+00:00",
   "releases": [
     {
       "target_machine_types": [
@@ -11,9 +11,9 @@
       ],
       "production": {
         "version": "0.2.1",
-        "release_notes": "Fixes zip file extraction issue.",
+        "release_notes": "Improves OTA updates for stability and observability.",
         "zip_url": "https://www.wicid.ai/releases/v0.2.1",
-        "release_date": "2025-10-26T21:18:05.671556+00:00"
+        "release_date": "2025-10-28T14:03:51.647387+00:00"
       }
     }
   ]
