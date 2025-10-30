@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "last_updated": "2025-10-30T12:32:10.887599+00:00",
+  "last_updated": "2025-10-30T19:11:37.164274+00:00",
   "releases": [
     {
       "target_machine_types": [
@@ -13,7 +13,7 @@
         "version": "0.3.0",
         "release_notes": "Adds new captive portal to setup flow for a more streamlined UX.",
         "zip_url": "https://www.wicid.ai/releases/v0.3.0",
-        "release_date": "2025-10-30T12:32:10.886447+00:00"
+        "release_date": "2025-10-30T19:11:37.162883+00:00"
       }
     }
   ]
