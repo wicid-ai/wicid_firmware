@@ -54,7 +54,10 @@ class WiFiManager:
         
         Retries with exponential backoff capped at MAX_BACKOFF_TIME (30 minutes).
         After MAX_RETRY_DURATION (5 days) of failed attempts, gives up and returns failure.
-        All connection failures are treated as transient and will be retried.
+        
+        Authentication failures (network reachable but invalid credentials) fail fast
+        and raise AuthenticationError immediately, allowing immediate entry into setup mode.
+        Network unreachable errors are treated as transient and will be retried.
         User can manually trigger setup mode via button press if credentials are wrong.
         
         Args:
@@ -67,6 +70,7 @@ class WiFiManager:
         
         Raises:
             KeyboardInterrupt: If button is pressed during connection attempt
+            AuthenticationError: If authentication fails (network reachable but credentials invalid)
         """
         attempts = 0
         start_time = time.monotonic()  # Track when we started trying
@@ -106,12 +110,25 @@ class WiFiManager:
                 # Re-raise keyboard interrupt to allow caller to handle mode changes
                 raise
             
+            except TimeoutError as e:
+                # Timeout indicates network unreachable, not authentication failure
+                # Retry with backoff
+                print(f"Connection attempt #{attempts} timed out: {e}")
+                result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
+                if result:  # Max retry duration exceeded
+                    return result
+                # Continue loop for retry
+            
             except RuntimeError as e:
                 error_msg = str(e).lower()
                 print(f"Connection attempt #{attempts} failed: RuntimeError - {e}")
                 
-                # All RuntimeErrors are treated as soft failures that can be retried
-                # User can manually trigger setup mode via button press if credentials are wrong
+                # Check for authentication failure (network reachable but password wrong)
+                if "auth" in error_msg or "password" in error_msg:
+                    print("Authentication failure detected - network reachable but credentials invalid")
+                    raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                
+                # Network unreachable or other transient errors - retry with backoff
                 result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
                 if result:  # Max retry duration exceeded
                     return result
@@ -123,16 +140,27 @@ class WiFiManager:
                 print(f"Connection attempt #{attempts} failed: ConnectionError - {e}")
                 print(f"Error errno: {errno_code}")
                 
-                # All ConnectionErrors are treated as soft failures that can be retried
-                # User can manually trigger setup mode via button press if credentials are wrong
+                # Check for authentication failure by errno or message
+                # errno codes: -3, 7, 15, 202 often indicate authentication failures
+                if errno_code in (-3, 7, 15, 202) or "auth" in error_msg or "password" in error_msg:
+                    print("Authentication failure detected - network reachable but credentials invalid")
+                    raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                
+                # Network unreachable or other transient errors - retry with backoff
                 result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
                 if result:  # Max retry duration exceeded
                     return result
                 # Continue loop for retry
-                
+            
+            except AuthenticationError:
+                # Re-raise authentication errors immediately (fail fast)
+                raise
+            
             except Exception as e:
                 error_msg = str(e)
                 print(f"Connection attempt #{attempts} failed: {error_msg}")
+                
+                # Network unreachable or other transient errors - retry with backoff
                 result = self._handle_retry_or_fail(attempts, error_msg, start_time, on_retry)
                 if result:  # Max retry duration exceeded
                     return result

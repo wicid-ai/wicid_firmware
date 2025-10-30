@@ -1,16 +1,13 @@
 import os
 import wifi
 import socketpool
-import adafruit_requests
 import json
 import time
-import storage
-import board
-import digitalio
 import supervisor
 from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
 from utils import check_button_hold_duration, trigger_safe_mode
+from dns_interceptor import DNSInterceptor
 
 class SetupPortal:
     # Delay after pre-check success to ensure response is transmitted before reboot (seconds)
@@ -30,6 +27,7 @@ class SetupPortal:
         self.button = button
         self.last_connection_error = None
         self.pending_ready_at = None  # monotonic timestamp for scheduled reboot
+        self.dns_interceptor = None  # DNS interceptor for captive portal
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
@@ -42,6 +40,60 @@ class SetupPortal:
             start_brightness=0.4,
         )
 
+    def _start_dns_interceptor(self):
+        """Start the DNS interceptor for captive portal functionality"""
+        try:
+            ap_ip = wifi.radio.ipv4_address_ap
+            if not ap_ip:
+                print("Cannot start DNS interceptor: AP IP address not available")
+                self.dns_interceptor = None
+                return False
+            
+            ap_ip = str(ap_ip)
+            self.dns_interceptor = DNSInterceptor(local_ip=ap_ip, timeout=5.0)
+            
+            if self.dns_interceptor.start():
+                print(f"DNS interceptor started - all domains redirect to {ap_ip}")
+                return True
+            else:
+                print("DNS interceptor failed to start - using HTTP-only detection")
+                self.dns_interceptor = None
+                return False
+                
+        except Exception as e:
+            print(f"Error starting DNS interceptor: {e}")
+            print("Using HTTP-only detection")
+            
+            if hasattr(self, 'dns_interceptor') and self.dns_interceptor:
+                try:
+                    self.dns_interceptor.stop()
+                except:
+                    pass
+            
+            self.dns_interceptor = None
+            return False
+
+    def _stop_dns_interceptor(self):
+        """Stop the DNS interceptor and clean up resources"""
+        if self.dns_interceptor:
+            try:
+                self.dns_interceptor.stop()
+            except Exception as e:
+                print(f"Error stopping DNS interceptor: {e}")
+            finally:
+                self.dns_interceptor = None
+    
+    def _check_dns_interceptor_health(self):
+        """Check DNS interceptor health"""
+        if not self.dns_interceptor:
+            return False
+        
+        try:
+            status = self.dns_interceptor.get_status()
+            return status['healthy']
+        except:
+            return False
+
     def start_access_point(self):
         """Start the access point for setup mode"""
         print("Starting access point...")
@@ -49,6 +101,20 @@ class SetupPortal:
         ssid_b = bytes(self.ap_ssid, "utf-8")
         pwd_b = bytes(self.ap_password, "utf-8") if self.ap_password else None
         try:
+            # Configure AP IP address before starting
+            # CircuitPython may not auto-assign AP IP, so set it explicitly
+            try:
+                import ipaddress
+                wifi.radio.set_ipv4_address_ap(
+                    ipv4=ipaddress.IPv4Address("192.168.4.1"),
+                    netmask=ipaddress.IPv4Address("255.255.255.0"),
+                    gateway=ipaddress.IPv4Address("192.168.4.1")
+                )
+                print("AP IP configured: 192.168.4.1")
+            except Exception as ip_err:
+                print(f"Could not set AP IP (will use default): {ip_err}")
+            
+            # Start the access point
             if pwd_b:
                 wifi.radio.start_ap(ssid_b, pwd_b)
             else:
@@ -61,24 +127,98 @@ class SetupPortal:
             print(f"start_ap failed: {e}")
             raise
         print(f"AP Mode Active. Connect to: {self.ap_ssid}")
-        print(f"IP address: {wifi.radio.ipv4_address_ap}")
-        print(f"Gateway: {wifi.radio.ipv4_gateway_ap}")
-        print(f"Subnet: {wifi.radio.ipv4_subnet_ap}")
+        
+        # Wait for AP IP address to be assigned
+        import time
+        ap_ip = None
+        for attempt in range(10):
+            ap_ip = wifi.radio.ipv4_address_ap
+            if ap_ip:
+                break
+            self.pixel.tick()  # Keep pulsing animation active during wait
+            time.sleep(0.1)
+        
+        if not ap_ip:
+            ap_ip = "192.168.4.1"
+        
+        print(f"IP address: {ap_ip}")
+        
+        # Start DNS interceptor for captive portal functionality
+        dns_success = self._start_dns_interceptor()
+        
+        if dns_success:
+            print("Captive portal mode: DNS + HTTP detection")
+        else:
+            print("Captive portal mode: HTTP-only detection")
         
         # Begin pulsing white to indicate setup mode - more pronounced with wider range
         self.start_setup_indicator()
 
-    def pulse_white(self, brightness=1.0):
-        """Compatibility helper; keep method but delegate to PixelController."""
+    def _get_os_from_user_agent(self, request: Request) -> str:
+        """
+        Parse user agent to determine operating system for captive portal handling.
+        Returns: 'android', 'ios', 'windows', 'linux', 'macos', or 'unknown'
+        """
         try:
-            self.pixel.set_color((int(255*brightness), int(255*brightness), int(255*brightness)))
-            return True
-        except Exception as e:
-            print(f"Error in pulse_white: {e}")
+            user_agent = ""
+            if hasattr(request, 'headers') and request.headers:
+                user_agent = request.headers.get('User-Agent', '').lower()
+            
+            if 'android' in user_agent or 'dalvik' in user_agent:
+                return 'android'
+            
+            if any(ios_indicator in user_agent for ios_indicator in ['iphone', 'ipad', 'ipod', 'cfnetwork']):
+                return 'ios'
+            
+            if 'windows' in user_agent or 'microsoft ncsi' in user_agent:
+                return 'windows'
+            
+            if 'mac os x' in user_agent or 'darwin' in user_agent:
+                return 'macos'
+            
+            if 'linux' in user_agent and 'android' not in user_agent:
+                return 'linux'
+            
+            return 'unknown'
+            
+        except:
+            return 'unknown'
 
-    def check_setup_button(self):
-        """Check if setup button is pressed"""
-        return not self.button.value
+    def _create_captive_redirect_response(self, request: Request, target_url: str = "/") -> Response:
+        """
+        Create appropriate redirect response for captive portal detection.
+        Preserves setup portal functionality while triggering captive portal.
+        """
+        try:
+            os_type = self._get_os_from_user_agent(request)
+            
+            # iOS devices expect HTML with meta redirect
+            if os_type == 'ios':
+                html_content = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="0; url={target_url}">
+    <title>WICID Setup</title>
+</head>
+<body>
+    <p>Redirecting to WICID setup...</p>
+    <script>window.location.href = "{target_url}";</script>
+</body>
+</html>'''
+                return Response(request, html_content, content_type="text/html")
+            
+            # All other operating systems use HTTP 302 redirect
+            else:
+                return Response(request, "", status=(302, "Found"), headers={"Location": target_url})
+                
+        except:
+            # Fallback to simple redirect
+            try:
+                return Response(request, "", status=(302, "Found"), headers={"Location": target_url})
+            except:
+                # Last resort: HTML redirect
+                fallback_html = f'<html><head><meta http-equiv="refresh" content="0; url={target_url}"></head><body>Redirecting...</body></html>'
+                return Response(request, fallback_html, content_type="text/html")
 
     # --- Logging helper ---
     def _log(self, msg: str):
@@ -179,42 +319,42 @@ class SetupPortal:
         @server.route("/")
         def base(request: Request):
             try:
+                # Load current settings
                 current_settings = {
                     'ssid': '', 'password': '', 'zip_code': ''
                 }
                 try:
-                    # Load from secrets.json to pre-populate the form
                     with open("/secrets.json", "r") as f:
                         secrets = json.load(f)
                     
                     current_settings['ssid'] = secrets.get('ssid', '')
                     current_settings['password'] = secrets.get('password', '')
                     current_settings['zip_code'] = secrets.get('weather_zip', '')
-                except Exception as load_err:
-                    print(f"Could not load existing secrets: {load_err}")
-                    # Use empty values if secrets can't be loaded
-                    pass
+                except:
+                    pass  # Use empty values if secrets can't be loaded
 
-                # Package all data for the frontend
-                page_data = {
-                    'settings': current_settings,
-                    'error': self.last_connection_error
-                }
-                # Clear the error after displaying once
-                self.last_connection_error = None
+                # Package data for the frontend
+                try:
+                    page_data = {
+                        'settings': current_settings,
+                        'error': self.last_connection_error
+                    }
+                    self.last_connection_error = None
 
-                # Inject the data into the HTML
-                with open('/www/index.html', 'r') as f:
-                    html = f.read()
-                
-                data_script = f'<script>window.WICID_PAGE_DATA = {json.dumps(page_data)};</script>'
-                html = html.replace('</head>', f'{data_script}</head>')
-                
-                return Response(request, html, content_type='text/html')
+                    # Inject the data into the HTML
+                    with open('/www/index.html', 'r') as f:
+                        html = f.read()
+                    
+                    data_script = f'<script>window.WICID_PAGE_DATA = {json.dumps(page_data)};</script>'
+                    html = html.replace('</head>', f'{data_script}</head>')
+                    
+                    return Response(request, html, content_type='text/html')
+                    
+                except:
+                    return FileResponse(request, "index.html", "/www")
 
             except Exception as e:
                 print(f"Error serving index page: {e}")
-                # Fallback to serving the static file if injection fails
                 return FileResponse(request, "index.html", "/www")
         
         # System information endpoint
@@ -282,6 +422,42 @@ class SetupPortal:
                 wifi.radio.stop_scanning_networks()  # Ensure scanning is stopped
                 return self._json_error(request, "Could not scan for networks. Please try again.", code=500, text="Internal Server Error")
 
+        # Android connectivity check endpoints
+        @server.route("/generate_204", "GET")
+        def android_generate_204(request: Request):
+            return self._create_captive_redirect_response(request)
+        
+        @server.route("/gen_204", "GET") 
+        def android_gen_204(request: Request):
+            return self._create_captive_redirect_response(request)
+        
+        @server.route("/connectivitycheck/gstatic/generate_204", "GET")
+        def android_gstatic_204(request: Request):
+            return self._create_captive_redirect_response(request)
+
+        # iOS connectivity check endpoints
+        @server.route("/hotspot-detect.html", "GET")
+        def ios_hotspot_detect(request: Request):
+            return self._create_captive_redirect_response(request)
+        
+        @server.route("/library/test/success.html", "GET")
+        def ios_library_success(request: Request):
+            return self._create_captive_redirect_response(request)
+
+        # Windows/Linux connectivity check endpoints
+        @server.route("/ncsi.txt", "GET")
+        def windows_ncsi(request: Request):
+            return self._create_captive_redirect_response(request)
+        
+        @server.route("/connecttest.txt", "GET")
+        def windows_connecttest(request: Request):
+            return self._create_captive_redirect_response(request)
+
+        # Generic captive portal detection route
+        @server.route("/redirect", "GET")
+        def generic_captive_redirect(request: Request):
+            return self._create_captive_redirect_response(request)
+
         # Handle form submission with two-stage validation
         @server.route("/configure", "POST")
         def configure(request: Request):
@@ -342,11 +518,14 @@ class SetupPortal:
                     self._log(f"Could not restart AP after fatal error: {ap_e}")
                 # Do not send a response here, as the connection is likely dead.
                 # The client will time out, which is expected in a fatal server error.
+                return None
         
         
         # Start the server
-        server.start(host=str(wifi.radio.ipv4_address_ap), port=80)
-        print(f"Server started at http://{wifi.radio.ipv4_address_ap}")
+        # Use explicit IP since ipv4_address_ap may be None
+        server_ip = wifi.radio.ipv4_address_ap or "192.168.4.1"
+        server.start(host=str(server_ip), port=80)
+        print(f"Server started at http://{server_ip}")
 
         # Wait for initial button release (from the press that got us into setup)
         while not self.button.value:
@@ -361,7 +540,17 @@ class SetupPortal:
         # Main server loop - listen for button press to exit
         while not self.setup_complete:
             try:
+                # Poll HTTP server for incoming requests
                 server.poll()
+                
+                # Poll DNS interceptor for incoming queries (if active)
+                if self.dns_interceptor:
+                    try:
+                        self.dns_interceptor.poll()
+                        self._check_dns_interceptor_health()
+                    except Exception as dns_e:
+                        print(f"DNS interceptor error: {dns_e}")
+                        self._stop_dns_interceptor()
                 
                 # Update LED pulsing via controller
                 self.pixel.tick()
@@ -369,6 +558,8 @@ class SetupPortal:
                 # If credentials were saved, wait for delay then reboot
                 if self.pending_ready_at is not None and time.monotonic() >= self.pending_ready_at:
                     print("Setup complete. Rebooting to apply new settings...")
+                    # Comprehensive cleanup before rebooting
+                    self._cleanup_setup_portal()
                     # Don't flash success yet - validation happens on next boot
                     supervisor.reload()
                 
@@ -378,11 +569,19 @@ class SetupPortal:
                     
                     if hold_result == 'safe_mode':
                         print("Safe Mode requested (10 second hold)")
+                        # Comprehensive cleanup before triggering safe mode
+                        self._cleanup_setup_portal()
                         trigger_safe_mode()
                         # This will reboot, so we never reach here
                     else:
                         # Short press or 3-second hold: exit setup mode
                         print("Button pressed, exiting setup...")
+                        # Comprehensive cleanup before exiting
+                        cleanup_successful = self._cleanup_setup_portal()
+                        
+                        if not cleanup_successful:
+                            print("⚠ Warning: Cleanup completed with issues")
+                        
                         time.sleep(0.2)  # Small debounce
                         return False
                 
@@ -392,6 +591,45 @@ class SetupPortal:
                 print(f"Server error: {e}")
                 time.sleep(1)
         
-        # Cleanup
+        # Comprehensive cleanup
+        self._cleanup_setup_portal()
         server.stop()
         return self.setup_complete
+    
+    def _cleanup_setup_portal(self):
+        """
+        Cleanup of setup portal resources and state.
+        
+        Returns:
+            bool: True if cleanup was successful, False if issues were detected
+        """
+        cleanup_successful = True
+        
+        try:
+            # Stop DNS interceptor
+            self._stop_dns_interceptor()
+            
+            # Verify DNS interceptor is fully stopped
+            if hasattr(self, 'dns_interceptor') and self.dns_interceptor:
+                # _stop_dns_interceptor() already calls stop() which handles cleanup
+                # Just ensure the reference is cleared
+                self.dns_interceptor = None
+            
+            # Stop LED pulsing
+            try:
+                self.pixel.stop_pulsing()
+                self.pixel.off()
+            except Exception as led_e:
+                print(f"Error stopping LED: {led_e}")
+            
+            # Reset setup state
+            self.setup_complete = False
+            self.pending_ready_at = None
+            self.last_connection_error = None
+            
+            return cleanup_successful
+            
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            return False
+    

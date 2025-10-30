@@ -196,6 +196,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Kiro
+.kiro/**
+
 # SpecStory is a tool for caputuring AI-powered instructions for software development.
 .specstory/**
 

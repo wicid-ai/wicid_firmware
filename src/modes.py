@@ -220,10 +220,14 @@ def run_setup_mode(button, error=None):
 
     # Wait for any current button press to be released
     while not button.value:
+        pixel_controller.tick()  # Keep pulsing animation active
         time.sleep(0.1)
     
-    # Small delay to debounce
-    time.sleep(0.5)
+    # Small delay to debounce - keep pulsing during delay
+    debounce_end = time.monotonic() + 0.5
+    while time.monotonic() < debounce_end:
+        pixel_controller.tick()
+        time.sleep(0.05)
     
     # Create and run the setup portal
     portal = SetupPortal(button)
