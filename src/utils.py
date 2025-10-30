@@ -203,52 +203,85 @@ def compare_versions(version1, version2):
     return 0
 
 
-def mark_incompatible_release(version):
+def mark_incompatible_release(version, reason="Unknown"):
     """
     Mark a release version as incompatible to prevent retry loops.
     
     Args:
         version: Release version string to mark as incompatible
+        reason: Why the release is incompatible
     """
     try:
         try:
             with open("/incompatible_releases.json", "r") as f:
                 incompatible = json.load(f)
         except (OSError, ValueError):
-            incompatible = {"versions": []}
+            incompatible = {"releases": {}}
         
-        if version not in incompatible["versions"]:
-            incompatible["versions"].append(version)
-            
-            # Keep only last 10 to prevent file growth
-            if len(incompatible["versions"]) > 10:
-                incompatible["versions"] = incompatible["versions"][-10:]
-            
-            with open("/incompatible_releases.json", "w") as f:
-                json.dump(incompatible, f)
-            os.sync()
-            
-            print(f"Marked {version} as incompatible")
+        # Migrate old format (list) to new format (dict)
+        if "versions" in incompatible:
+            old_versions = incompatible["versions"]
+            incompatible = {"releases": {v: {"reason": "Unknown (migrated)", "attempts": 1} for v in old_versions}}
+        
+        # Initialize releases dict if needed
+        if "releases" not in incompatible:
+            incompatible["releases"] = {}
+        
+        # Increment attempt counter or create new entry
+        if version in incompatible["releases"]:
+            incompatible["releases"][version]["attempts"] += 1
+            incompatible["releases"][version]["last_reason"] = reason
+        else:
+            incompatible["releases"][version] = {"reason": reason, "attempts": 1}
+        
+        # Keep only last 10 to prevent file growth
+        if len(incompatible["releases"]) > 10:
+            # Sort by attempts (keep ones with fewer attempts for retry opportunity)
+            sorted_releases = sorted(incompatible["releases"].items(), key=lambda x: x[1]["attempts"], reverse=True)
+            incompatible["releases"] = dict(sorted_releases[:10])
+        
+        with open("/incompatible_releases.json", "w") as f:
+            json.dump(incompatible, f)
+        os.sync()
+        
+        attempts = incompatible["releases"][version]["attempts"]
+        print(f"Marked {version} as incompatible (attempt {attempts}): {reason}")
     except Exception as e:
         print(f"Warning: Could not mark incompatible release: {e}")
 
 
-def is_release_incompatible(version):
+def is_release_incompatible(version, max_attempts=3):
     """
     Check if a release version is marked as incompatible.
     
     Args:
         version: Release version string to check
+        max_attempts: Maximum retry attempts before permanent block (default: 3)
     
     Returns:
-        bool: True if version is marked as incompatible
+        tuple: (is_blocked: bool, reason: str or None, attempts: int)
+               is_blocked is True only if attempts >= max_attempts
     """
     try:
         with open("/incompatible_releases.json", "r") as f:
             incompatible = json.load(f)
-            return version in incompatible.get("versions", [])
+            
+            # Support old format (list of versions) - treat as permanent block
+            if "versions" in incompatible:
+                if version in incompatible["versions"]:
+                    return (True, "Unknown (old format)", max_attempts)
+            
+            # New format (dict with reasons and attempt counts)
+            if "releases" in incompatible and version in incompatible["releases"]:
+                info = incompatible["releases"][version]
+                attempts = info.get("attempts", 1)
+                reason = info.get("last_reason") or info.get("reason", "Unknown")
+                is_blocked = attempts >= max_attempts
+                return (is_blocked, reason, attempts)
+                
+        return (False, None, 0)
     except (OSError, ValueError):
-        return False
+        return (False, None, 0)
 
 
 def check_release_compatibility(release_data, current_version):
@@ -259,7 +292,7 @@ def check_release_compatibility(release_data, current_version):
     1. Machine type compatibility
     2. OS version compatibility (semantic versioning)
     3. Version is newer than current
-    4. Not previously marked as incompatible
+    4. Not previously marked as incompatible (with retry support)
     
     Args:
         release_data: Dict with target_machine_types, target_operating_systems, version
@@ -283,9 +316,13 @@ def check_release_compatibility(release_data, current_version):
     if compare_versions(release_data["version"], current_version) <= 0:
         return (False, f"Version not newer: {release_data['version']} <= {current_version}")
     
-    # Check if previously marked incompatible
-    if is_release_incompatible(release_data["version"]):
-        return (False, f"Previously marked incompatible: {release_data['version']}")
+    # Check if previously marked incompatible (with retry logic)
+    is_blocked, reason, attempts = is_release_incompatible(release_data["version"])
+    if is_blocked:
+        return (False, f"Blocked after {attempts} attempts: {reason}")
+    elif attempts > 0:
+        print(f"Warning: Version had {attempts} failed attempts: {reason}")
+        print("Retrying compatibility check...")
     
     return (True, None)
 

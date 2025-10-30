@@ -17,13 +17,19 @@ import traceback
 import time
 
 # Import compatibility checking utilities
+import sys
+sys.path.insert(0, '/')
+
+IMPORT_ERROR = None
 try:
-    import sys
-    sys.path.insert(0, '/')
     from utils import check_release_compatibility, mark_incompatible_release
     from pixel_controller import PixelController
 except ImportError as e:
-    print(f"Warning: Could not import utils or pixel_controller: {e}")
+    IMPORT_ERROR = str(e)
+    print("=" * 50)
+    print(f"CRITICAL: Import failed - {e}")
+    print("Update functionality DISABLED")
+    print("=" * 50)
     check_release_compatibility = None
     mark_incompatible_release = None
     PixelController = None
@@ -34,13 +40,26 @@ PENDING_ROOT_DIR = "/pending_update/root"
 BOOT_LOG_FILE = "/boot_log.txt"
 
 def log_boot_message(message):
-    """Write a message to the boot log file."""
+    """
+    Write a message to the boot log file and console.
+    Always prints to console for serial debugging.
+    """
+    # Always print to console first (critical for debugging)
+    print(message)
+    
+    # Try to write to file, but don't let failures block boot
     try:
         with open(BOOT_LOG_FILE, "a") as f:
             f.write(message + "\n")
-        print(message)
-    except:
-        print(message)
+    except OSError as e:
+        # Only print filesystem errors once to avoid spam
+        if not hasattr(log_boot_message, '_logged_error'):
+            print(f"! Boot log write failed (OSError): {e}")
+            log_boot_message._logged_error = True
+    except Exception as e:
+        if not hasattr(log_boot_message, '_logged_error'):
+            print(f"! Boot log write failed: {e}")
+            log_boot_message._logged_error = True
 
 def remove_directory_recursive(path):
     """
@@ -302,8 +321,9 @@ def process_pending_update():
                 if pixel_controller:
                     pixel_controller.off()
                 
+                # Mark incompatible with detailed reason
                 if mark_incompatible_release:
-                    mark_incompatible_release(manifest.get("version", "unknown"))
+                    mark_incompatible_release(manifest.get("version", "unknown"), error_msg)
                 
                 cleanup_pending_update()
                 log_boot_message("=" * 50)
@@ -354,7 +374,12 @@ def process_pending_update():
                 # Reboot
                 microcontroller.reset()
         else:
-            log_boot_message("WARNING: Compatibility check not available, skipping update")
+            log_boot_message("=" * 50)
+            log_boot_message("CRITICAL: Compatibility check not available")
+            if IMPORT_ERROR:
+                log_boot_message(f"Import error: {IMPORT_ERROR}")
+            log_boot_message("Skipping update for safety")
+            log_boot_message("=" * 50)
             cleanup_pending_update()
 
     except OSError as e:
