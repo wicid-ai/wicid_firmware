@@ -31,11 +31,6 @@ class WiFiManager:
     BACKOFF_MULTIPLIER = 2         # Doubles each retry: 1.5s, 3s, 6s, 12s, 24s, 48s...
     MAX_BACKOFF_TIME = 60 * 30     # Cap at 30 minutes between retries
     
-    # Maximum total retry duration before giving up (5 days)
-    # After 5 days of failed connection attempts, enter setup mode
-    # This prevents creating zombie IoT devices that retry forever
-    MAX_RETRY_DURATION = 60 * 60 * 24 * 5  # 5 days in seconds
-    
     def __init__(self, button=None):
         """
         Initialize the WiFi manager.
@@ -47,22 +42,26 @@ class WiFiManager:
         self.session = None
         self._connected = False
     
-    def connect_with_backoff(self, ssid, password, on_retry=None):
+    def connect_with_backoff(self, ssid, password, timeout=None, on_retry=None):
         """
         Connect to WiFi with progressive exponential backoff retry logic.
         Can be interrupted by button press if button is provided.
         
         Retries with exponential backoff capped at MAX_BACKOFF_TIME (30 minutes).
-        After MAX_RETRY_DURATION (5 days) of failed attempts, gives up and returns failure.
+        If timeout is specified, gives up after that duration. Otherwise retries indefinitely.
         
-        Authentication failures (network reachable but invalid credentials) fail fast
-        and raise AuthenticationError immediately, allowing immediate entry into setup mode.
-        Network unreachable errors are treated as transient and will be retried.
-        User can manually trigger setup mode via button press if credentials are wrong.
+        Authentication failures require 3 consecutive occurrences before raising
+        AuthenticationError. This tolerates transient auth failures (router/radio states)
+        while still failing fast (~6-7 seconds) on truly invalid credentials.
+        
+        Network unreachable errors, timeouts, and generic errors are treated as transient
+        and will be retried with backoff until timeout is reached.
+        User can manually trigger setup mode via button press.
         
         Args:
             ssid: WiFi network SSID
             password: WiFi network password
+            timeout: Optional timeout in seconds (None for indefinite retry)
             on_retry: Optional callback function called on each retry attempt(attempt_num, wait_time)
         
         Returns:
@@ -70,10 +69,11 @@ class WiFiManager:
         
         Raises:
             KeyboardInterrupt: If button is pressed during connection attempt
-            AuthenticationError: If authentication fails (network reachable but credentials invalid)
+            AuthenticationError: If 3 consecutive authentication failures occur
         """
         attempts = 0
         start_time = time.monotonic()  # Track when we started trying
+        auth_failure_count = 0  # Track consecutive authentication failures
         
         while True:
             attempts += 1
@@ -112,43 +112,68 @@ class WiFiManager:
             
             except TimeoutError as e:
                 # Timeout indicates network unreachable, not authentication failure
-                # Retry with backoff
+                # Reset auth failure counter and retry with backoff
+                auth_failure_count = 0
                 print(f"Connection attempt #{attempts} timed out: {e}")
-                result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
-                if result:  # Max retry duration exceeded
+                result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
+                if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
             
             except RuntimeError as e:
-                error_msg = str(e).lower()
+                error_msg = str(e)
                 print(f"Connection attempt #{attempts} failed: RuntimeError - {e}")
                 
-                # Check for authentication failure (network reachable but password wrong)
-                if "auth" in error_msg or "password" in error_msg:
-                    print("Authentication failure detected - network reachable but credentials invalid")
-                    raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                # Check for explicit authentication failure message
+                # Note: Can be transient even with valid credentials (router/radio states)
+                if "authentication failure" in error_msg.lower():
+                    auth_failure_count += 1
+                    print(f"Authentication failure detected ({auth_failure_count}/3)")
+                    
+                    # Only raise after 3 consecutive auth failures to avoid false positives
+                    # Total time: ~6-7 seconds with short backoff between attempts
+                    if auth_failure_count >= 3:
+                        print("Persistent authentication failure - credentials likely invalid")
+                        raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                else:
+                    # Reset counter on non-auth errors
+                    auth_failure_count = 0
                 
                 # Network unreachable or other transient errors - retry with backoff
-                result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
-                if result:  # Max retry duration exceeded
+                result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
+                if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
             
             except ConnectionError as e:
                 errno_code = getattr(e, 'errno', None)
-                error_msg = str(e).lower()
+                error_msg = str(e)
                 print(f"Connection attempt #{attempts} failed: ConnectionError - {e}")
                 print(f"Error errno: {errno_code}")
                 
-                # Check for authentication failure by errno or message
-                # errno codes: -3, 7, 15, 202 often indicate authentication failures
-                if errno_code in (-3, 7, 15, 202) or "auth" in error_msg or "password" in error_msg:
-                    print("Authentication failure detected - network reachable but credentials invalid")
-                    raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                # Check for explicit authentication failure message
+                # Note: Can be transient even with valid credentials (router/radio states)
+                if "authentication failure" in error_msg.lower():
+                    auth_failure_count += 1
+                    print(f"Authentication failure detected ({auth_failure_count}/3)")
+                    
+                    # Only raise after 3 consecutive auth failures to avoid false positives
+                    # Intermittent auth failures can occur with valid credentials due to:
+                    # - Router processing previous disconnect
+                    # - WiFi radio initialization timing
+                    # - Router rate limiting
+                    # Total time to fail: ~6-7 seconds with short backoff between attempts
+                    if auth_failure_count >= 3:
+                        print("Persistent authentication failure - credentials likely invalid")
+                        raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                else:
+                    # Reset counter on non-auth errors
+                    auth_failure_count = 0
                 
                 # Network unreachable or other transient errors - retry with backoff
-                result = self._handle_retry_or_fail(attempts, str(e), start_time, on_retry)
-                if result:  # Max retry duration exceeded
+                # "No network with that ssid" could be typo OR temporary outage - retry cycle handles both
+                result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
+                if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
             
@@ -160,13 +185,16 @@ class WiFiManager:
                 error_msg = str(e)
                 print(f"Connection attempt #{attempts} failed: {error_msg}")
                 
+                # Reset auth failure counter for generic errors
+                auth_failure_count = 0
+                
                 # Network unreachable or other transient errors - retry with backoff
-                result = self._handle_retry_or_fail(attempts, error_msg, start_time, on_retry)
-                if result:  # Max retry duration exceeded
+                result = self._handle_retry_or_fail(attempts, error_msg, start_time, timeout, on_retry)
+                if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
     
-    def _handle_retry_or_fail(self, attempts, error_msg, start_time, on_retry=None):
+    def _handle_retry_or_fail(self, attempts, error_msg, start_time, timeout=None, on_retry=None):
         """
         Handle retry logic for soft failures.
         
@@ -174,18 +202,18 @@ class WiFiManager:
             attempts: Current attempt number
             error_msg: Error message from the failed attempt
             start_time: Monotonic timestamp when connection attempts started
+            timeout: Optional timeout in seconds (None for indefinite retry)
             on_retry: Optional callback for retry events
         
         Returns:
-            tuple: (False, error_message) if max retry duration exceeded
+            tuple: (False, error_message) if timeout exceeded
             None: if should continue retrying
         """
-        # Check if we've exceeded the maximum retry duration (5 days)
+        # Check if we've exceeded the timeout (if specified)
         elapsed_time = time.monotonic() - start_time
-        if elapsed_time >= self.MAX_RETRY_DURATION:
-            days_elapsed = elapsed_time / (60 * 60 * 24)
-            print(f"Max retry duration exceeded ({days_elapsed:.1f} days). Giving up.")
-            return False, f"Unable to connect to WiFi after {attempts} attempts over {days_elapsed:.1f} days. Please verify your network is operational and credentials are correct."
+        if timeout is not None and elapsed_time >= timeout:
+            print(f"Retry timeout exceeded ({elapsed_time:.1f}s). Giving up.")
+            return False, f"Unable to connect to WiFi after {attempts} attempts over {elapsed_time:.1f} seconds."
         
         # Calculate exponential backoff time: base * (2^(attempts-1))
         # Attempt 1: 1.5s, 2: 3s, 3: 6s, 4: 12s, 5: 24s, 6: 48s, 7: 96s...

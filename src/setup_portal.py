@@ -28,6 +28,8 @@ class SetupPortal:
         self.last_connection_error = None
         self.pending_ready_at = None  # monotonic timestamp for scheduled reboot
         self.dns_interceptor = None  # DNS interceptor for captive portal
+        self.last_request_time = None  # timestamp of last HTTP request for idle timeout tracking
+        self.user_connected = False  # flag indicating user has connected to portal
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
@@ -307,13 +309,27 @@ class SetupPortal:
     def run_web_server(self):
         """Run a simple web server to handle the setup interface"""
         from adafruit_httpserver import Server, Request, Response, FileResponse
+        from wifi_retry_state import clear_retry_count
         
         pool = socketpool.SocketPool(wifi.radio)
         server = Server(pool, "/www", debug=False)
         
+        # Initialize idle timeout tracking
+        self.last_request_time = time.monotonic()
+        setup_idle_timeout = int(os.getenv("SETUP_IDLE_TIMEOUT", "300"))
+        
+        # Helper to mark user as connected and clear retry state
+        def _mark_user_connected():
+            if not self.user_connected:
+                self.user_connected = True
+                clear_retry_count()
+                print("User connected to portal - retry counter cleared")
+            self.last_request_time = time.monotonic()
+        
         # Serve the main page, pre-populating with settings and showing previous errors
         @server.route("/")
         def base(request: Request):
+            _mark_user_connected()
             try:
                 # Load current settings
                 current_settings = {
@@ -356,6 +372,7 @@ class SetupPortal:
         # System information endpoint
         @server.route("/system-info", "GET")
         def system_info(request: Request):
+            _mark_user_connected()
             try:
                 from utils import get_machine_type, get_os_version_string_pretty_print   
                 
@@ -387,6 +404,7 @@ class SetupPortal:
         # WiFi network scanning endpoint
         @server.route("/scan", "GET")
         def scan_networks(request: Request):
+            _mark_user_connected()
             try:
                 print("Scanning for WiFi networks...")
                 networks = []
@@ -421,42 +439,51 @@ class SetupPortal:
         # Android connectivity check endpoints
         @server.route("/generate_204", "GET")
         def android_generate_204(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
         
         @server.route("/gen_204", "GET") 
         def android_gen_204(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
         
         @server.route("/connectivitycheck/gstatic/generate_204", "GET")
         def android_gstatic_204(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # iOS connectivity check endpoints
         @server.route("/hotspot-detect.html", "GET")
         def ios_hotspot_detect(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
         
         @server.route("/library/test/success.html", "GET")
         def ios_library_success(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # Windows/Linux connectivity check endpoints
         @server.route("/ncsi.txt", "GET")
         def windows_ncsi(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
         
         @server.route("/connecttest.txt", "GET")
         def windows_connecttest(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # Generic captive portal detection route
         @server.route("/redirect", "GET")
         def generic_captive_redirect(request: Request):
+            _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # Handle form submission with two-stage validation
         @server.route("/configure", "POST")
         def configure(request: Request):
+            _mark_user_connected()
             try:
                 self._log("DEBUG: Starting configure function")
                 data = request.json()
@@ -554,6 +581,15 @@ class SetupPortal:
                 
                 # Update LED pulsing via controller
                 self.pixel.tick()
+
+                # Check for idle timeout (no user interaction)
+                if self.last_request_time is not None:
+                    idle_time = time.monotonic() - self.last_request_time
+                    if idle_time >= setup_idle_timeout:
+                        print(f"Setup idle timeout exceeded ({idle_time:.0f}s). Rebooting to retry...")
+                        # Comprehensive cleanup before rebooting
+                        self._cleanup_setup_portal()
+                        supervisor.reload()
 
                 # If credentials were saved, wait for delay then reboot
                 if self.pending_ready_at is not None and time.monotonic() >= self.pending_ready_at:

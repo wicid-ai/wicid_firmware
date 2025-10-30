@@ -40,6 +40,21 @@ try:
 except (OSError, ValueError):
     secrets = {}
 
+# Load WiFi retry state
+from wifi_retry_state import load_retry_count, clear_retry_count
+retry_count = load_retry_count()
+max_retry_cycles = int(os.getenv("MAX_RETRY_CYCLES", "1200"))
+
+# Check if we've exceeded maximum retry cycles (5 days worth)
+if retry_count >= max_retry_cycles:
+    print(f"Maximum retry cycles exceeded ({retry_count}/{max_retry_cycles})")
+    print("Entering Setup Mode indefinitely. Clearing retry counter.")
+    clear_retry_count()
+    import modes
+    modes.run_setup_mode(button)
+    # If we get here, setup is complete or was cancelled
+    supervisor.reload()  # Reboot to apply new settings
+
 # Check if we should enter setup mode (button pressed on boot or no valid secrets)
 enter_setup = False
 
@@ -64,6 +79,7 @@ if enter_setup:
 # If we get here, we have valid settings
 from weather import Weather
 from wifi_manager import WiFiManager, AuthenticationError
+from wifi_retry_state import increment_retry_count, clear_retry_count as clear_retry
 from utils import check_button_held
 from update_manager import UpdateManager
 import modes
@@ -73,22 +89,28 @@ def main():
         # Initialize WiFi Manager and connect with interruptible backoff
         wifi_manager = WiFiManager(button)
         
+        # Get WiFi retry timeout from settings
+        wifi_retry_timeout = int(os.getenv("WIFI_RETRY_TIMEOUT", "60"))
+        
         try:
-            # Connect with exponential backoff (retries for up to 5 days, capped at 30 min intervals)
+            # Connect with exponential backoff (timeout configured in settings.toml)
             # User can interrupt by pressing button at any time
             success, error_msg = wifi_manager.connect_with_backoff(
                 secrets["ssid"],
-                secrets["password"]
+                secrets["password"],
+                timeout=wifi_retry_timeout
             )
             
             if not success:
-                # If connection fails after 5 days of retries, enter setup mode
+                # Connection failed after timeout - increment retry counter and enter setup mode
                 print(f"Could not connect to WiFi: {error_msg}")
+                new_count = increment_retry_count()
+                print(f"Incrementing retry counter to {new_count}")
                 print("Entering setup mode...")
                 pixel_controller.blink_error()
                 time.sleep(2)
                 wifi_error = {
-                    "message": "Unable to connect to WiFi after multiple days of trying. Please verify your network is operational and credentials are correct.",
+                    "message": f"Unable to connect to WiFi. Network may be unreachable. (Retry cycle {new_count})",
                     "field": "ssid"
                 }
                 if modes.run_setup_mode(button, error=wifi_error):
@@ -99,13 +121,16 @@ def main():
                     print("Setup cancelled. Rebooting to retry...")
                     time.sleep(2)
                     supervisor.reload()
-            # Connection successful - continue to full validation before indicating success
+            
+            # Connection successful - clear retry counter and continue
+            clear_retry()
+            print("✓ WiFi connected - retry counter cleared")
                 
         except AuthenticationError as e:
             # Authentication failure detected - network reachable but credentials invalid
-            # Fail fast and enter setup mode immediately
+            # Fail fast and enter setup mode immediately (do NOT increment counter)
             print(f"WiFi authentication failure: {e}")
-            print("Entering setup mode immediately...")
+            print("Entering setup mode immediately (no retry increment)...")
             pixel_controller.blink_error()
             time.sleep(2)
             wifi_error = {
