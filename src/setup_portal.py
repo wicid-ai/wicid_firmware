@@ -31,14 +31,7 @@ class SetupPortal:
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
-        self.pixel.start_pulsing(
-            color=(255, 255, 255),
-            min_b=0.1,
-            max_b=0.7,
-            step=0.03,
-            interval=0.04,
-            start_brightness=0.4,
-        )
+        self.pixel.start_setup_mode_pulsing()
 
     def _start_dns_interceptor(self):
         """Start the DNS interceptor for captive portal functionality"""
@@ -50,7 +43,7 @@ class SetupPortal:
                 return False
             
             ap_ip = str(ap_ip)
-            self.dns_interceptor = DNSInterceptor(local_ip=ap_ip, timeout=5.0)
+            self.dns_interceptor = DNSInterceptor(local_ip=ap_ip)
             
             if self.dns_interceptor.start():
                 print(f"DNS interceptor started - all domains redirect to {ap_ip}")
@@ -151,8 +144,11 @@ class SetupPortal:
         else:
             print("Captive portal mode: HTTP-only detection")
         
-        # Begin pulsing white to indicate setup mode - more pronounced with wider range
-        self.start_setup_indicator()
+        # Ensure pulsing is active (already started in run_setup_mode, but verify state)
+        if not self.pixel._pulsing:
+            self.start_setup_indicator()
+        # Call tick immediately to ensure animation starts
+        self.pixel.tick()
 
     def _get_os_from_user_agent(self, request: Request) -> str:
         """
@@ -529,10 +525,14 @@ class SetupPortal:
 
         # Wait for initial button release (from the press that got us into setup)
         while not self.button.value:
+            self.pixel.tick()  # Keep pulsing animation active
             time.sleep(0.1)
         
-        # Small debounce delay
-        time.sleep(0.5)
+        # Small debounce delay - keep pulsing during delay
+        debounce_end = time.monotonic() + 0.5
+        while time.monotonic() < debounce_end:
+            self.pixel.tick()
+            time.sleep(0.05)
         
         print("Starting main server loop")
         print("Visit: http://192.168.4.1/ while connected to WICID-Setup")
@@ -585,7 +585,9 @@ class SetupPortal:
                         time.sleep(0.2)  # Small debounce
                         return False
                 
-                time.sleep(0.01)  # Shorter sleep for more responsive button
+                # Small sleep to prevent busy-waiting while maintaining smooth LED animation
+                # 5ms is fast enough for smooth pulsing (tick interval is 40ms) while being CPU-friendly
+                time.sleep(0.005)
                 
             except Exception as e:
                 print(f"Server error: {e}")

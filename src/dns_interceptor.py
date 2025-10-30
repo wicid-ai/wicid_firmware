@@ -44,16 +44,17 @@ class DNSInterceptor:
     DNS_RCODE_NO_ERROR = 0    # No error
     DNS_RCODE_NAME_ERROR = 3  # Name does not exist
     
-    def __init__(self, local_ip="192.168.4.1", timeout=5.0):
+    def __init__(self, local_ip="192.168.4.1"):
         """
         Initialize the DNS interceptor using CircuitPython's socketpool.
         
+        Socket operates in non-blocking mode for smooth integration with
+        main event loop and LED animation.
+        
         Args:
             local_ip (str): IP address to return for all A record queries
-            timeout (float): Socket timeout in seconds for DNS operations
         """
         self.local_ip = local_ip
-        self.timeout = timeout
         self.socket = None
         self.socket_pool = None
         self.running = False
@@ -112,12 +113,13 @@ class DNSInterceptor:
                 self.socket_pool.SOCK_DGRAM
             )
             
-            # Set socket to non-blocking mode
+            # Set socket to non-blocking mode for polling
+            # This ensures recvfrom_into() returns immediately if no data available
             self.socket.setblocking(False)
             
-            # Set socket timeout if specified
-            if self.timeout > 0:
-                self.socket.settimeout(self.timeout)
+            # Note: settimeout() is not needed for non-blocking sockets
+            # Non-blocking mode makes recvfrom_into() return immediately with EAGAIN
+            # if no data is available, which is what we want for smooth LED animation
             
             # Bind to DNS port on all interfaces
             self.socket.bind(('0.0.0.0', self.DNS_PORT))

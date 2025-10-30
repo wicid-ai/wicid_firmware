@@ -439,14 +439,7 @@ def check_button_hold_duration(button, pixel_controller=None):
                 setup_indicated = True
                 print("3 second threshold reached - pulsing Setup Mode indicator")
                 # Use the same pulsing pattern as setup mode
-                pixel_controller.start_pulsing(
-                    color=(255, 255, 255),
-                    min_b=0.1,
-                    max_b=0.7,
-                    step=0.03,
-                    interval=0.04,
-                    start_brightness=0.4,
-                )
+                pixel_controller.start_setup_mode_pulsing()
             
             # At 10 seconds, start flashing blue/green for Safe Mode indicator
             if elapsed >= 10.0 and not safe_mode_indicated and pixel_controller:
@@ -465,15 +458,21 @@ def check_button_hold_duration(button, pixel_controller=None):
             
             time.sleep(0.05)
         
-        # Button released - clean up LED state
-        if pixel_controller:
-            if setup_indicated:
-                pixel_controller.stop_pulsing()
-            if setup_indicated or safe_mode_indicated:
-                pixel_controller.set_color((0, 0, 0))
-        
         # Determine which mode based on hold duration
         final_duration = time.monotonic() - start_time
+        
+        # Button released - clean up LED state
+        # Only clean up for short presses; leave pulsing/flashing active for mode entry
+        if pixel_controller:
+            if final_duration < 3.0:
+                # Short press - clean up any indicators
+                if setup_indicated:
+                    pixel_controller.stop_pulsing()
+                if setup_indicated or safe_mode_indicated:
+                    pixel_controller.set_color((0, 0, 0))
+            # For setup mode (3-10s) or safe mode (10+), leave LED state as-is
+            # so the mode can continue with the visual indicator
+        
         if final_duration >= 10.0:
             return 'safe_mode'
         elif final_duration >= 3.0:

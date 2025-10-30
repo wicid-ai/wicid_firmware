@@ -64,11 +64,26 @@ class PixelController:
     def stop_pulsing(self):
         self._pulsing = False
 
+    def start_setup_mode_pulsing(self):
+        """
+        Start pulsing white to indicate setup mode is active.
+        Uses the same pattern for button hold indication and setup mode itself.
+        """
+        self.start_pulsing(
+            color=(255, 255, 255),
+            min_b=0.1,
+            max_b=0.7,
+            step=0.03,
+            interval=0.04,
+            start_brightness=0.4,
+        )
+
     def tick(self):
         if not self._pulsing:
             return
         now = time.monotonic()
-        if now - self._last_update < self._interval:
+        time_since_last = now - self._last_update
+        if time_since_last < self._interval:
             return
         self._last_update = now
         # Update brightness
