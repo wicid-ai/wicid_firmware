@@ -135,6 +135,7 @@ class SetupPortal:
             ap_ip = wifi.radio.ipv4_address_ap
             if ap_ip:
                 break
+            self.pixel.tick()  # Keep pulsing animation active during wait
             time.sleep(0.1)
         
         if not ap_ip:

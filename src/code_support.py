@@ -63,7 +63,7 @@ if enter_setup:
 
 # If we get here, we have valid settings
 from weather import Weather
-from wifi_manager import WiFiManager
+from wifi_manager import WiFiManager, AuthenticationError
 from utils import check_button_held
 from update_manager import UpdateManager
 import modes
@@ -100,6 +100,26 @@ def main():
                     time.sleep(2)
                     supervisor.reload()
             # Connection successful - continue to full validation before indicating success
+                
+        except AuthenticationError as e:
+            # Authentication failure detected - network reachable but credentials invalid
+            # Fail fast and enter setup mode immediately
+            print(f"WiFi authentication failure: {e}")
+            print("Entering setup mode immediately...")
+            pixel_controller.blink_error()
+            time.sleep(2)
+            wifi_error = {
+                "message": "WiFi authentication failed. Please check your password.",
+                "field": "password"
+            }
+            if modes.run_setup_mode(button, error=wifi_error):
+                # Setup completed, reboot to apply new settings
+                supervisor.reload()
+            else:
+                # Setup cancelled, reboot to retry
+                print("Setup cancelled. Rebooting to retry...")
+                time.sleep(2)
+                supervisor.reload()
                 
         except KeyboardInterrupt:
             # User pressed button during connection attempts
