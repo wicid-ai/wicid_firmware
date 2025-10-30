@@ -110,17 +110,51 @@ The device fetches weather data including:
 
 ## Setup Portal Notes and Troubleshooting
 
-- **Direct access**: Always use **http://192.168.4.1/** to reach the setup interface while connected to WICID-Setup.
+### Captive Portal Functionality
 
-- **Use HTTP, not HTTPS**: Always use HTTP URLs for setup access.
+WICID includes intelligent captive portal detection that automatically redirects devices to the setup interface:
 
-- **Troubleshooting**:
-  - Navigate directly to http://192.168.4.1/
-  - Ensure you type "http://192.168.4.1/" exactly (include http:// and trailing slash)
-  - If using a mobile device, you may need to disable mobile data, i.e., go into *Airplane Mode* (leaving WiFi enabled) to prevent your phone from bypassing the IP address provided
-  - Desktop browsers may default to search or HTTPS if you don't include the full URL
+- **Automatic Detection**: When you connect to "WICID-Setup", most devices will automatically detect the captive portal and show a notification or popup
+- **Cross-Platform Support**: Works with Android, iOS, Windows, macOS, and Linux devices
+- **DNS Interception**: All domain name requests are redirected to the setup portal (192.168.4.1)
+- **Fallback Mode**: If DNS interception fails, the setup portal continues to work via direct HTTP access
 
-- **Saving settings**: If you see a read‑only filesystem error while saving, try plugging the WICID into a power-only USB cable (when connected to a computer with a data-enabled USB cable, the WICID may behave like a thumbdrive and prevent config updates through the setup interface)
+**How It Works**:
+- Your device performs connectivity checks when joining the WICID-Setup network
+- WICID intercepts these checks and redirects them to the setup interface
+- This triggers your device's captive portal detection, showing a "Sign in to network" notification
+- Tapping the notification opens the WICID setup interface automatically
+
+### Setup Access
+
+- **Automatic (Recommended)**: Connect to "WICID-Setup" and follow the captive portal notification
+- **Direct access**: Navigate to **http://192.168.4.1/** if automatic detection doesn't work
+- **Use HTTP, not HTTPS**: Always use HTTP URLs for setup access
+
+### Troubleshooting
+
+**If captive portal doesn't appear automatically**:
+- Wait 10-15 seconds after connecting for detection to complete
+- Try opening a web browser and navigating to any website (e.g., google.com)
+- Navigate directly to http://192.168.4.1/
+- Ensure you type "http://192.168.4.1/" exactly (include http:// and trailing slash)
+
+**Mobile device issues**:
+- Disable mobile data or enable *Airplane Mode* (keeping WiFi on) to prevent bypassing the captive portal
+- Some devices may show "No internet connection" - this is normal, tap "Use network as is" or similar option
+- If the setup page doesn't load, try navigating directly to http://192.168.4.1/
+
+**Desktop browser issues**:
+- Browsers may default to search or HTTPS if you don't include the full URL
+- Try a different browser if one doesn't work
+- Clear browser cache if you've connected to WICID-Setup before
+
+**Connection problems**:
+- Ensure you're connected to "WICID-Setup" network (not your regular WiFi)
+- Check that WiFi is enabled and airplane mode is off (except for mobile data)
+- Restart WiFi on your device if connection fails
+
+**Saving settings**: If you see a read‑only filesystem error while saving, try plugging the WICID into a power-only USB cable (when connected to a computer with a data-enabled USB cable, the WICID may behave like a thumbdrive and prevent config updates through the setup interface)
 
 ## Error Handling
 
