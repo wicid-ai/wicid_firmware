@@ -14,8 +14,6 @@ all DNS traffic and redirecting it to the setup portal.
 
 import struct
 import time
-import wifi
-import socketpool
 
 
 class DNSInterceptor:
@@ -44,19 +42,20 @@ class DNSInterceptor:
     DNS_RCODE_NO_ERROR = 0    # No error
     DNS_RCODE_NAME_ERROR = 3  # Name does not exist
     
-    def __init__(self, local_ip="192.168.4.1"):
+    def __init__(self, local_ip="192.168.4.1", socket_pool=None):
         """
-        Initialize the DNS interceptor using CircuitPython's socketpool.
+        Initialize the DNS interceptor.
         
         Socket operates in non-blocking mode for smooth integration with
         main event loop and LED animation.
         
         Args:
             local_ip (str): IP address to return for all A record queries
+            socket_pool: Optional socketpool.SocketPool instance (required for start())
         """
         self.local_ip = local_ip
         self.socket = None
-        self.socket_pool = None
+        self.socket_pool = socket_pool
         self.running = False
         self.error_count = 0
         self.max_errors = 10  # Maximum consecutive errors before disabling
@@ -104,8 +103,10 @@ class DNSInterceptor:
             self.error_count = 0
             self.last_error_time = 0
             
-            # Create socket pool from wifi radio
-            self.socket_pool = socketpool.SocketPool(wifi.radio)
+            # Socket pool must be provided
+            if not self.socket_pool:
+                print("DNSInterceptor: No socket pool provided")
+                return False
             
             # Create UDP socket using CircuitPython API
             self.socket = self.socket_pool.socket(

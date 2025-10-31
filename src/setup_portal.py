@@ -1,6 +1,4 @@
 import os
-import wifi
-import socketpool
 import json
 import time
 import supervisor
@@ -8,6 +6,7 @@ from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
 from utils import check_button_hold_duration, trigger_safe_mode
 from dns_interceptor import DNSInterceptor
+from wifi_manager import WiFiManager
 
 class SetupPortal:
     # Delay after pre-check success to ensure response is transmitted before reboot (seconds)
@@ -24,6 +23,7 @@ class SetupPortal:
         self.ap_password = None  # Open network
         self.setup_complete = False
         self.pixel = PixelController()  # Get singleton instance
+        self.wifi_manager = WiFiManager.get_instance(button)  # Get WiFiManager singleton
         self.button = button
         self.last_connection_error = None
         self.pending_ready_at = None  # monotonic timestamp for scheduled reboot
@@ -35,17 +35,19 @@ class SetupPortal:
         """Begin pulsing white to indicate setup mode is active."""
         self.pixel.start_setup_mode_pulsing()
 
-    def _start_dns_interceptor(self):
-        """Start the DNS interceptor for captive portal functionality"""
+    def _start_dns_interceptor(self, ap_ip):
+        """
+        Start the DNS interceptor for captive portal functionality.
+        
+        Args:
+            ap_ip: Access point IP address
+        
+        Returns:
+            bool: True if DNS interceptor started successfully
+        """
         try:
-            ap_ip = wifi.radio.ipv4_address_ap
-            if not ap_ip:
-                print("Cannot start DNS interceptor: AP IP address not available")
-                self.dns_interceptor = None
-                return False
-            
-            ap_ip = str(ap_ip)
-            self.dns_interceptor = DNSInterceptor(local_ip=ap_ip)
+            socket_pool = self.wifi_manager.get_socket_pool()
+            self.dns_interceptor = DNSInterceptor(local_ip=ap_ip, socket_pool=socket_pool)
             
             if self.dns_interceptor.start():
                 print(f"DNS interceptor started - all domains redirect to {ap_ip}")
@@ -90,68 +92,12 @@ class SetupPortal:
             return False
 
     def start_access_point(self):
-        """Start the access point for setup mode"""
-        print("Starting access point...")
-        
-        # Initialize/reset WiFi radio to ensure it's in a known good state
-        # This is critical for fresh boards that haven't had WiFi initialized yet
-        try:
-            wifi.radio.enabled = False
-            time.sleep(0.2)
-            wifi.radio.enabled = True
-            time.sleep(0.2)
-            print("WiFi radio initialized")
-        except Exception as e:
-            print(f"WiFi radio initialization warning: {e}")
-        
-        # Use bytes for SSID/password to satisfy older firmware buffer requirements
-        ssid_b = bytes(self.ap_ssid, "utf-8")
-        pwd_b = bytes(self.ap_password, "utf-8") if self.ap_password else None
-        try:
-            # Configure AP IP address before starting
-            # CircuitPython may not auto-assign AP IP, so set it explicitly
-            try:
-                import ipaddress
-                wifi.radio.set_ipv4_address_ap(
-                    ipv4=ipaddress.IPv4Address("192.168.4.1"),
-                    netmask=ipaddress.IPv4Address("255.255.255.0"),
-                    gateway=ipaddress.IPv4Address("192.168.4.1")
-                )
-                print("AP IP configured: 192.168.4.1")
-            except Exception as ip_err:
-                print(f"Could not set AP IP (will use default): {ip_err}")
-            
-            # Start the access point
-            if pwd_b:
-                wifi.radio.start_ap(ssid_b, pwd_b)
-            else:
-                # Open network; signature varies by version
-                try:
-                    wifi.radio.start_ap(ssid_b)  # preferred if supported
-                except TypeError:
-                    wifi.radio.start_ap(ssid_b, None)  # fallback for older signatures
-        except Exception as e:
-            print(f"start_ap failed: {e}")
-            raise
-        print(f"AP Mode Active. Connect to: {self.ap_ssid}")
-        
-        # Wait for AP IP address to be assigned
-        import time
-        ap_ip = None
-        for attempt in range(10):
-            ap_ip = wifi.radio.ipv4_address_ap
-            if ap_ip:
-                break
-            self.pixel.tick()  # Keep pulsing animation active during wait
-            time.sleep(0.1)
-        
-        if not ap_ip:
-            ap_ip = "192.168.4.1"
-        
-        print(f"IP address: {ap_ip}")
+        """Start the access point for setup mode using WiFiManager."""
+        # Start AP through WiFiManager (handles all radio state transitions)
+        ap_ip = self.wifi_manager.start_access_point(self.ap_ssid, self.ap_password)
         
         # Start DNS interceptor for captive portal functionality
-        dns_success = self._start_dns_interceptor()
+        dns_success = self._start_dns_interceptor(ap_ip)
         
         if dns_success:
             print("Captive portal mode: DNS + HTTP detection")
@@ -259,23 +205,16 @@ class SetupPortal:
 
     def _scan_ssids(self):
         """Scan for WiFi networks and return a list of available SSIDs.
-        Ensures scanning is stopped. Raises on failure.
+        Uses WiFiManager for scanning (ensures scanning is stopped).
         """
         self._log("DEBUG: Starting network scan for SSID validation")
         try:
-            scan_results = wifi.radio.start_scanning_networks()
-            self._log(f"DEBUG: Scan results type: {type(scan_results)}")
-            if isinstance(scan_results, int):
-                raise RuntimeError(f"Scan failed with error code {scan_results}")
-            ssids = [net.ssid for net in scan_results if getattr(net, 'ssid', None)]
+            ssids = [net.ssid for net in self.wifi_manager.scan_networks() if getattr(net, 'ssid', None)]
             self._log(f"DEBUG: Found SSIDs: {ssids}")
             return ssids
-        finally:
-            # Always stop scanning
-            try:
-                wifi.radio.stop_scanning_networks()
-            except Exception as e:
-                self._log(f"DEBUG: stop_scanning_networks failed: {e}")
+        except Exception as e:
+            self._log(f"DEBUG: Network scan error: {e}")
+            raise
 
     # --- Response helpers to keep code DRY and API-compatible ---
     def _json_ok(self, request: Request, data: dict):
@@ -323,7 +262,7 @@ class SetupPortal:
         from adafruit_httpserver import Server, Request, Response, FileResponse
         from wifi_retry_state import clear_retry_count
         
-        pool = socketpool.SocketPool(wifi.radio)
+        pool = self.wifi_manager.get_socket_pool()
         server = Server(pool, "/www", debug=False)
         
         # Initialize idle timeout tracking
@@ -421,8 +360,8 @@ class SetupPortal:
                 print("Scanning for WiFi networks...")
                 networks = []
                 
-                # Scan for available networks
-                for network in wifi.radio.start_scanning_networks():
+                # Scan for available networks using WiFiManager
+                for network in self.wifi_manager.scan_networks():
                     # Only add networks with SSIDs (skip hidden networks)
                     if network.ssid:
                         network_info = {
@@ -435,8 +374,6 @@ class SetupPortal:
                         if not any(n['ssid'] == network.ssid for n in networks):
                             networks.append(network_info)
                 
-                wifi.radio.stop_scanning_networks()
-                
                 # Sort by signal strength (RSSI, higher is better)
                 networks.sort(key=lambda x: x['rssi'], reverse=True)
                 
@@ -445,7 +382,6 @@ class SetupPortal:
                 
             except Exception as e:
                 print(f"Error scanning networks: {e}")
-                wifi.radio.stop_scanning_networks()  # Ensure scanning is stopped
                 return self._json_error(request, "Could not scan for networks. Please try again.", code=500, text="Internal Server Error")
 
         # Android connectivity check endpoints
@@ -557,9 +493,8 @@ class SetupPortal:
         
         
         # Start the server
-        # Use explicit IP since ipv4_address_ap may be None
-        server_ip = wifi.radio.ipv4_address_ap or "192.168.4.1"
-        server.start(host=str(server_ip), port=80)
+        server_ip = self.wifi_manager.get_ap_ip_address()
+        server.start(host=server_ip, port=80)
         print(f"Server started at http://{server_ip}")
 
         # Wait for initial button release (from the press that got us into setup)
@@ -649,6 +584,9 @@ class SetupPortal:
     def _cleanup_setup_portal(self):
         """
         Cleanup of setup portal resources and state.
+        
+        Note: WiFi radio reset is handled by WiFiManager.reconnect() when caller
+        reconnects to station mode, so we don't manage WiFi state here.
         
         Returns:
             bool: True if cleanup was successful, False if issues were detected

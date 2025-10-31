@@ -1,10 +1,6 @@
 import time
 import board
 import digitalio
-import wifi
-import socketpool
-import ssl
-import adafruit_requests
 import json
 import storage
 import os

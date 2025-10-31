@@ -5,9 +5,6 @@ import os
 import json
 import storage
 import supervisor
-import wifi
-import socketpool
-import ssl
 from pixel_controller import PixelController
 from utils import trigger_safe_mode, check_button_hold_duration
 
@@ -86,8 +83,8 @@ import modes
 
 def main():
     try:
-        # Initialize WiFi Manager and connect with interruptible backoff
-        wifi_manager = WiFiManager(button)
+        # Initialize WiFi Manager singleton and connect with interruptible backoff
+        wifi_manager = WiFiManager.get_instance(button)
         
         # Get WiFi retry timeout from settings
         wifi_retry_timeout = int(os.getenv("WIFI_RETRY_TIMEOUT", "60"))
@@ -198,8 +195,26 @@ def main():
                         # Setup completed, reboot to apply new settings
                         supervisor.reload()
                     else:
-                        # Setup cancelled, continue without weather
-                        print("Setup cancelled. Continuing without weather service.")
+                        # Setup cancelled, reconnect WiFi and continue without weather
+                        print("Setup cancelled. Reconnecting to WiFi...")
+                        try:
+                            success, error = wifi_manager.reconnect(
+                                secrets["ssid"],
+                                secrets["password"],
+                                timeout=wifi_retry_timeout
+                            )
+                            if success:
+                                print("✓ WiFi reconnected. Continuing without weather service.")
+                                # Recreate session for future use
+                                session = wifi_manager.create_session()
+                            else:
+                                print(f"✗ Failed to reconnect: {error}")
+                                print("Rebooting to recover...")
+                                supervisor.reload()
+                        except Exception as e:
+                            print(f"Error reconnecting: {e}")
+                            print("Rebooting to recover...")
+                            supervisor.reload()
                         weather = None
                 else:
                     # All checks passed - WiFi connected and ZIP validated
@@ -296,7 +311,26 @@ def main():
                     # If setup was successful, reboot to apply new settings
                     supervisor.reload()
                 else:
-                    # If setup was cancelled, continue with normal operation
+                    # If setup was cancelled, reconnect WiFi and continue
+                    print("Setup cancelled. Reconnecting to WiFi...")
+                    if wifi_manager:
+                        try:
+                            success, error = wifi_manager.reconnect(
+                                secrets["ssid"],
+                                secrets["password"],
+                                timeout=wifi_retry_timeout
+                            )
+                            if success:
+                                print("✓ WiFi reconnected. Resuming normal operation.")
+                            else:
+                                print(f"✗ Failed to reconnect: {error}")
+                                print("Continuing without WiFi...")
+                                # Reset wifi_manager to indicate no connection
+                                wifi_manager._connected = False
+                        except Exception as e:
+                            print(f"Error reconnecting: {e}")
+                            print("Continuing without WiFi...")
+                            wifi_manager._connected = False
                     time.sleep(0.5)  # Debounce
                     continue
             else:  # 'short'

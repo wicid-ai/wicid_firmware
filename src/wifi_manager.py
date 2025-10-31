@@ -1,11 +1,15 @@
 """
 WiFi Manager - Centralized WiFi connection management with progressive backoff and interrupt support.
 
-This module encapsulates all WiFi connection logic for the WICID device, including:
-- Progressive exponential backoff retry logic
+This module encapsulates ALL WiFi operations for the WICID device, including:
+- Station mode connection with progressive exponential backoff
+- Access Point mode for setup portal
 - Button interrupt support during connection attempts
 - Connection state management
+- WiFi radio lifecycle management
 - Graceful error handling
+
+WiFiManager is a singleton - use WiFiManager.get_instance() to access it.
 """
 
 import wifi
@@ -21,7 +25,14 @@ class AuthenticationError(Exception):
 
 
 class WiFiManager:
-    """Manages WiFi connections with progressive backoff and interrupt support."""
+    """
+    Singleton manager for all WiFi operations.
+    
+    Encapsulates station mode, AP mode, and all WiFi radio state management.
+    Use get_instance() to access the singleton instance.
+    """
+    
+    _instance = None
     
     # Connection timeout for a single attempt (seconds)
     CONNECTION_TIMEOUT = 10
@@ -31,9 +42,27 @@ class WiFiManager:
     BACKOFF_MULTIPLIER = 2         # Doubles each retry: 1.5s, 3s, 6s, 12s, 24s, 48s...
     MAX_BACKOFF_TIME = 60 * 30     # Cap at 30 minutes between retries
     
-    def __init__(self, button=None):
+    @classmethod
+    def get_instance(cls, button=None):
         """
-        Initialize the WiFi manager.
+        Get the singleton instance of WiFiManager.
+        
+        Args:
+            button: Optional button instance (only used on first call)
+        
+        Returns:
+            WiFiManager: The singleton instance
+        """
+        if cls._instance is None:
+            # Create instance directly without going through __init__ check
+            instance = object.__new__(cls)
+            instance._init_singleton(button)
+            cls._instance = instance
+        return cls._instance
+    
+    def _init_singleton(self, button=None):
+        """
+        Internal initialization method for singleton.
         
         Args:
             button: Optional button instance to check for interrupts during connection
@@ -41,6 +70,33 @@ class WiFiManager:
         self.button = button
         self.session = None
         self._connected = False
+        self._ap_active = False
+    
+    def __init__(self, button=None):
+        """
+        Direct instantiation is discouraged.
+        Use get_instance() instead for singleton pattern.
+        
+        This is kept for backwards compatibility but will create independent instances.
+        """
+        self._init_singleton(button)
+    
+    def reset_radio_to_station_mode(self):
+        """
+        Reset WiFi radio to station mode, clearing any AP mode state.
+        This ensures the radio is ready for client connections.
+        
+        Call this after exiting setup/AP mode to restore normal operation.
+        """
+        try:
+            print("Resetting WiFi radio to station mode...")
+            wifi.radio.enabled = False
+            time.sleep(0.3)
+            wifi.radio.enabled = True
+            time.sleep(0.3)
+            print("✓ WiFi radio reset complete")
+        except Exception as e:
+            print(f"Warning: Error resetting radio: {e}")
     
     def connect_with_backoff(self, ssid, password, timeout=None, on_retry=None):
         """
@@ -355,6 +411,34 @@ class WiFiManager:
         """Check if currently connected to WiFi."""
         return self._connected and wifi.radio.connected
     
+    def reconnect(self, ssid, password, timeout=None):
+        """
+        Reconnect to WiFi after setup mode or network disruption.
+        Handles all necessary cleanup and state management:
+        - Resets WiFi radio from AP mode to station mode
+        - Clears connection state
+        - Reconnects using standard backoff logic
+        
+        Args:
+            ssid: WiFi network SSID
+            password: WiFi network password
+            timeout: Optional timeout in seconds
+        
+        Returns:
+            tuple: (success: bool, error_message: str or None)
+        """
+        print("Reconnecting to WiFi after setup mode exit...")
+        
+        # Reset radio to station mode (clears any AP mode state)
+        self.reset_radio_to_station_mode()
+        
+        # Reset connection state
+        self._connected = False
+        self.session = None
+        
+        # Reconnect using standard backoff logic
+        return self.connect_with_backoff(ssid, password, timeout)
+    
     def create_session(self):
         """
         Create and return an HTTP session for making requests.
@@ -372,3 +456,183 @@ class WiFiManager:
         pool = socketpool.SocketPool(wifi.radio)
         self.session = adafruit_requests.Session(pool, ssl.create_default_context())
         return self.session
+    
+    def get_mac_address(self):
+        """
+        Get the WiFi MAC address as a hex string.
+        
+        Returns:
+            str: MAC address in format "aa:bb:cc:dd:ee:ff"
+        """
+        mac_binary = wifi.radio.mac_address
+        return mac_binary.hex(':')
+    
+    def start_access_point(self, ssid, password=None):
+        """
+        Start WiFi access point for setup mode.
+        Handles all necessary radio state transitions and configuration.
+        
+        Args:
+            ssid: Access point SSID
+            password: Optional password (None for open network)
+        
+        Returns:
+            str: AP IP address
+        
+        Raises:
+            RuntimeError: If AP fails to start
+        """
+        print("Starting access point...")
+        
+        # Disconnect from any existing WiFi connection before starting AP
+        try:
+            if wifi.radio.connected:
+                print("Disconnecting from current network...")
+                wifi.radio.stop_station()
+                time.sleep(0.3)
+        except Exception as e:
+            print(f"Warning during disconnect: {e}")
+        
+        # Initialize/reset WiFi radio to ensure it's in a known good state
+        try:
+            wifi.radio.enabled = False
+            time.sleep(0.2)
+            wifi.radio.enabled = True
+            time.sleep(0.2)
+            print("WiFi radio initialized")
+        except Exception as e:
+            print(f"WiFi radio initialization warning: {e}")
+        
+        # Use bytes for SSID/password to satisfy older firmware buffer requirements
+        ssid_b = bytes(ssid, "utf-8")
+        pwd_b = bytes(password, "utf-8") if password else None
+        
+        try:
+            # Configure AP IP address before starting
+            try:
+                import ipaddress
+                wifi.radio.set_ipv4_address_ap(
+                    ipv4=ipaddress.IPv4Address("192.168.4.1"),
+                    netmask=ipaddress.IPv4Address("255.255.255.0"),
+                    gateway=ipaddress.IPv4Address("192.168.4.1")
+                )
+                print("AP IP configured: 192.168.4.1")
+            except Exception as ip_err:
+                print(f"Could not set AP IP (will use default): {ip_err}")
+            
+            # Start the access point
+            if pwd_b:
+                wifi.radio.start_ap(ssid_b, pwd_b)
+            else:
+                # Open network; signature varies by version
+                try:
+                    wifi.radio.start_ap(ssid_b)
+                except TypeError:
+                    wifi.radio.start_ap(ssid_b, None)
+        except Exception as e:
+            print(f"start_ap failed: {e}")
+            raise RuntimeError(f"Failed to start access point: {e}")
+        
+        print(f"AP Mode Active. Connect to: {ssid}")
+        self._ap_active = True
+        self._connected = False  # Not in station mode
+        
+        # Wait for AP IP address to be assigned
+        ap_ip = None
+        for attempt in range(10):
+            ap_ip = wifi.radio.ipv4_address_ap
+            if ap_ip:
+                break
+            time.sleep(0.1)
+        
+        if not ap_ip:
+            ap_ip = "192.168.4.1"
+        
+        print(f"IP address: {ap_ip}")
+        return str(ap_ip)
+    
+    def stop_access_point(self):
+        """
+        Stop access point and reset radio to station mode.
+        Called when exiting setup mode.
+        """
+        if not self._ap_active:
+            return
+        
+        print("Stopping access point...")
+        self.reset_radio_to_station_mode()
+        self._ap_active = False
+        print("✓ Access point stopped")
+    
+    def is_ap_active(self):
+        """Check if access point mode is currently active."""
+        return self._ap_active
+    
+    def get_socket_pool(self):
+        """
+        Get a socket pool for the current WiFi radio.
+        Used by DNS interceptor and other network services.
+        
+        Returns:
+            socketpool.SocketPool instance
+        """
+        return socketpool.SocketPool(wifi.radio)
+    
+    def get_ap_ip_address(self):
+        """
+        Get the current access point IP address.
+        
+        Returns:
+            str: AP IP address, or "192.168.4.1" if not available
+        """
+        ap_ip = wifi.radio.ipv4_address_ap
+        return str(ap_ip) if ap_ip else "192.168.4.1"
+    
+    def scan_networks(self):
+        """
+        Scan for available WiFi networks.
+        
+        Yields:
+            Network objects with ssid, rssi, channel, etc.
+        """
+        try:
+            for network in wifi.radio.start_scanning_networks():
+                yield network
+        finally:
+            try:
+                wifi.radio.stop_scanning_networks()
+            except Exception as e:
+                print(f"Warning: Error stopping network scan: {e}")
+    
+    def validate_ssid_exists(self, ssid):
+        """
+        Check if a given SSID exists in the available networks.
+        
+        Args:
+            ssid: SSID to validate
+        
+        Returns:
+            bool: True if SSID found in scan results
+        """
+        try:
+            scan_results = wifi.radio.start_scanning_networks()
+            
+            # Handle different return types (iterator or int)
+            if isinstance(scan_results, int):
+                return False
+            
+            found = False
+            for network in scan_results:
+                if network.ssid == ssid:
+                    found = True
+                    break
+            
+            return found
+        except Exception as e:
+            print(f"Error during SSID validation scan: {e}")
+            return False
+        finally:
+            try:
+                wifi.radio.stop_scanning_networks()
+            except Exception as e:
+                print(f"Warning: Error stopping scan: {e}")

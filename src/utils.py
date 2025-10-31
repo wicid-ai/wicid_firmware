@@ -12,11 +12,6 @@ import board
 import microcontroller
 import json
 
-try:
-    import wifi
-    WIFI_AVAILABLE = True
-except ImportError:
-    WIFI_AVAILABLE = False
 
 def get_os_name():
     """
@@ -80,15 +75,18 @@ def get_cpu_uid():
 
 def get_mac_address():
     """
-    Get the MAC address if Wi-Fi is available.
+    Get the MAC address via WiFiManager.
     
     Returns:
         str: MAC address in colon-separated hex format, or None if Wi-Fi unavailable
     """
-    if WIFI_AVAILABLE:
-        mac_binary = wifi.radio.mac_address
-        return mac_binary.hex(':')
-    return None
+    try:
+        # Lazy import to avoid circular dependency (wifi_manager imports from utils)
+        from wifi_manager import WiFiManager
+        wifi_manager = WiFiManager.get_instance()
+        return wifi_manager.get_mac_address()
+    except Exception:
+        return None
 
 
 def get_os_version_string():
