@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -8,6 +8,6 @@
     "circuitpython_10_0"
   ],
   "release_type": "production",
-  "release_notes": "Fixes OTA updates issue causing file corruption.",
-  "release_date": "2025-10-31T00:05:49.296935+00:00"
+  "release_notes": "Increases robustness of OTA updates with new update manager architecture.",
+  "release_date": "2025-10-31T18:15:43.691809+00:00"
 }
