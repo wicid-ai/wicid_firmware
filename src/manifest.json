@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -8,6 +8,6 @@
     "circuitpython_10_0"
   ],
   "release_type": "production",
-  "release_notes": "Increases robustness of OTA updates with new update manager architecture.",
-  "release_date": "2025-10-31T18:15:43.691809+00:00"
+  "release_notes": "Fixes bug preventing Setup Mode from starting.",
+  "release_date": "2025-10-31T19:53:29.652824+00:00"
 }
