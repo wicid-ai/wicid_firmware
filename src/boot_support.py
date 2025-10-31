@@ -344,6 +344,7 @@ def process_pending_update():
                     PENDING_UPDATE_DIR
                 ]
                 delete_all_except(preserve_paths)
+                os.sync()  # Sync after deletion
                 
                 # Update LED after deletion
                 if pixel_controller and flash_start_time is not None:
@@ -351,6 +352,7 @@ def process_pending_update():
                 
                 # Step 5: Move files from pending_update/root to root
                 move_directory_contents(PENDING_ROOT_DIR, "/", pixel_controller, flash_start_time)
+                os.sync()  # Sync after moving all files
                 
                 # Update LED after moving files
                 if pixel_controller and flash_start_time is not None:
@@ -358,6 +360,7 @@ def process_pending_update():
                 
                 # Step 6: Cleanup pending update directory
                 cleanup_pending_update()
+                os.sync()  # Sync after cleanup
                 
                 # Update LED after cleanup
                 if pixel_controller and flash_start_time is not None:

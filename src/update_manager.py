@@ -218,12 +218,26 @@ class UpdateManager:
                     for filename in files_to_extract:
                         zf.extract(filename, self.PENDING_ROOT_DIR)
                 
+                # Sync filesystem immediately after extraction to prevent corruption
+                os.sync()
                 print("✓ Extraction complete")
+                
+                # Validate the extracted manifest.json
+                manifest_path = f"{self.PENDING_ROOT_DIR}/manifest.json"
+                try:
+                    with open(manifest_path, "r") as f:
+                        manifest = json.load(f)
+                    print(f"✓ Manifest validated (version: {manifest.get('version', 'unknown')})")
+                except (OSError, ValueError, KeyError) as e:
+                    print(f"Error: Extracted manifest.json is corrupted or invalid: {e}")
+                    # Clean up corrupted extraction
+                    os.remove(zip_path)
+                    return False
                 
                 # Remove the ZIP file (we only need the extracted files)
                 os.remove(zip_path)
                 
-                # Sync filesystem
+                # Final sync
                 os.sync()
                 
                 print(f"✓ Update ready for installation")
