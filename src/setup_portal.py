@@ -92,6 +92,18 @@ class SetupPortal:
     def start_access_point(self):
         """Start the access point for setup mode"""
         print("Starting access point...")
+        
+        # Initialize/reset WiFi radio to ensure it's in a known good state
+        # This is critical for fresh boards that haven't had WiFi initialized yet
+        try:
+            wifi.radio.enabled = False
+            time.sleep(0.2)
+            wifi.radio.enabled = True
+            time.sleep(0.2)
+            print("WiFi radio initialized")
+        except Exception as e:
+            print(f"WiFi radio initialization warning: {e}")
+        
         # Use bytes for SSID/password to satisfy older firmware buffer requirements
         ssid_b = bytes(self.ap_ssid, "utf-8")
         pwd_b = bytes(self.ap_password, "utf-8") if self.ap_password else None
@@ -147,7 +159,7 @@ class SetupPortal:
             print("Captive portal mode: HTTP-only detection")
         
         # Ensure pulsing is active (already started in run_setup_mode, but verify state)
-        if not self.pixel._pulsing:
+        if self.pixel._mode != PixelController.MODE_PULSING:
             self.start_setup_indicator()
         # Call tick immediately to ensure animation starts
         self.pixel.tick()

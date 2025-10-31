@@ -209,7 +209,7 @@ def run_setup_mode(button, error=None):
     
     # Begin pulsing immediately to indicate setup entry (if not already pulsing)
     pixel_controller = PixelController()
-    if not pixel_controller._pulsing:
+    if pixel_controller._mode != PixelController.MODE_PULSING:
         pixel_controller.start_setup_mode_pulsing()
     # Call tick to ensure animation updates
     pixel_controller.tick()
