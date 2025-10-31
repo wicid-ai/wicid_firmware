@@ -2,8 +2,9 @@
 """
 WICID Firmware Installer
 
-Provides SOFT (OTA-like) and HARD (full replacement) installation methods
-for WICID firmware packages to CIRCUITPY devices.
+Provides SOFT (OTA-like), HARD (full replacement), and SIMULATED OTA 
+(local development testing) installation methods for WICID firmware 
+packages to CIRCUITPY devices.
 """
 
 import os
@@ -13,7 +14,18 @@ import zipfile
 import tempfile
 import glob
 import argparse
+import subprocess
+import re
+import json
+import time
 from pathlib import Path
+
+# Load environment variables from .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, use defaults
 
 
 SYSTEM_FOLDERS = ['.Trashes', '.fseventsd', '.metadata_never_index', 'System Volume Information', '.TemporaryItems', '.Spotlight-V100']
@@ -40,6 +52,23 @@ def print_success(text):
 def print_error(text):
     """Print an error message."""
     print(f"✗ ERROR: {text}")
+
+
+def get_web_root_directory():
+    """
+    Get the WICID Web root directory from environment or use default.
+    
+    Returns:
+        Path: Path to WICID Web root directory
+    """
+    # Try environment variable first
+    env_path = os.environ.get('LOCAL_WICID_WEB_ROOT_DIR')
+    if env_path:
+        return Path(env_path)
+    
+    # Use default: ../wicid_web relative to project root
+    project_root = Path(__file__).parent
+    return project_root.parent / "wicid_web"
 
 
 def detect_circuitpy_drive():
@@ -324,6 +353,298 @@ def cleanup_macos_artifacts(circuitpy_path):
         print(f"  Warning: Error during cleanup: {e}")
 
 
+def validate_simulated_ota_prerequisites(web_root_dir, circuitpy_path, zip_path):
+    """
+    Validate all prerequisites for simulated OTA update are met.
+    
+    Args:
+        web_root_dir: Path to WICID Web root directory
+        circuitpy_path: Path to CIRCUITPY drive
+        zip_path: Path to firmware ZIP file
+    
+    Returns:
+        tuple: (bool success, str error_message)
+    """
+    # Check web root directory exists
+    if not web_root_dir.exists():
+        return False, f"WICID Web directory not found: {web_root_dir}\n\nPlease ensure the WICID Web repository exists at this location.\nYou can set a custom path with LOCAL_WICID_WEB_ROOT_DIR in .env file."
+    
+    if not web_root_dir.is_dir():
+        return False, f"WICID Web path is not a directory: {web_root_dir}"
+    
+    # Check for package.json to validate it's a Node project
+    package_json = web_root_dir / "package.json"
+    if not package_json.exists():
+        return False, f"package.json not found in: {web_root_dir}\n\nThis doesn't appear to be a Node.js project."
+    
+    # Check for public directory
+    public_dir = web_root_dir / "public"
+    if not public_dir.exists():
+        return False, f"public/ directory not found in: {web_root_dir}\n\nUnable to copy files to web server."
+    
+    # Check firmware package exists
+    if not zip_path.exists():
+        return False, f"Firmware package not found: {zip_path}\n\nPlease build the firmware first."
+    
+    # Check releases.json exists
+    releases_json = Path("releases.json")
+    if not releases_json.exists():
+        return False, f"releases.json not found in project root\n\nPlease build the firmware first."
+    
+    # Check CIRCUITPY drive is writable
+    test_file = circuitpy_path / ".write_test"
+    try:
+        test_file.write_text("test")
+        test_file.unlink()
+    except OSError as e:
+        if e.errno == 30:  # EROFS
+            return False, (
+                "CIRCUITPY drive is READ-ONLY.\n\n"
+                "The device must be in Safe Mode to allow file modifications.\n"
+                "To enter Safe Mode:\n"
+                "  1. Unplug the device from USB\n"
+                "  2. Hold the BOOT button\n"
+                "  3. While holding, plug in USB\n"
+                "  4. Keep holding until LED turns yellow/orange\n"
+                "  5. Release the button"
+            )
+        return False, f"Cannot write to CIRCUITPY drive: {e}"
+    
+    # Check settings.toml exists
+    settings_toml = circuitpy_path / "settings.toml"
+    if not settings_toml.exists():
+        return False, f"settings.toml not found on CIRCUITPY drive: {settings_toml}"
+    
+    return True, ""
+
+
+def start_wicid_web_server(web_root_dir):
+    """
+    Start the WICID Web application server in the background.
+    
+    Args:
+        web_root_dir: Path to WICID Web root directory
+    
+    Returns:
+        tuple: (subprocess.Popen process, str local_wicid_web_url)
+    
+    Raises:
+        Exception: If server fails to start or times out
+    """
+    print_step(f"Starting WICID Web server from: {web_root_dir}")
+    
+    try:
+        # Start npm run dev in background
+        process = subprocess.Popen(
+            ["npm", "run", "dev"],
+            cwd=str(web_root_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        print("  Waiting for server to start...")
+        
+        # Read output until we see "ready" with timeout
+        start_time = time.time()
+        timeout = 30  # seconds
+        output_lines = []
+        local_url = None
+        
+        while time.time() - start_time < timeout:
+            line = process.stdout.readline()
+            if not line:
+                # Check if process died
+                if process.poll() is not None:
+                    raise Exception(f"Server process exited unexpectedly with code {process.returncode}")
+                time.sleep(0.1)
+                continue
+            
+            output_lines.append(line.strip())
+            print(f"    {line.strip()}")
+            
+            # Check if ready
+            if "ready" in line.lower():
+                # Found ready marker, now look for Network URL in subsequent lines
+                # Read a few more lines to find the Network URL
+                for _ in range(10):
+                    line = process.stdout.readline()
+                    if not line:
+                        break
+                    output_lines.append(line.strip())
+                    print(f"    {line.strip()}")
+                    
+                    # Look for Network URL pattern: "Network: http://IP:PORT/"
+                    match = re.search(r'Network:\s+(http://[\d.]+:\d+/?)', line)
+                    if match:
+                        local_url = match.group(1).rstrip('/')
+                        break
+                
+                # Exit the outer loop after finding ready
+                break
+        
+        if local_url is None:
+            process.terminate()
+            raise Exception(
+                f"Server started but could not find Network URL in output.\n"
+                f"Server may not be configured correctly.\n"
+                f"Output received:\n" + "\n".join(output_lines)
+            )
+        
+        print_success(f"Server started at: {local_url}")
+        print(f"  Server PID: {process.pid}")
+        
+        return process, local_url
+    
+    except FileNotFoundError:
+        raise Exception(
+            "npm command not found. Please ensure Node.js and npm are installed."
+        )
+    except Exception as e:
+        # Try to clean up process if it exists
+        try:
+            if 'process' in locals() and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+        except:
+            pass
+        raise
+
+
+def stop_wicid_web_server(process):
+    """
+    Stop the WICID Web application server.
+    
+    Args:
+        process: subprocess.Popen process to terminate
+    """
+    print_step(f"Stopping WICID Web server (PID: {process.pid})...")
+    
+    try:
+        # Try graceful shutdown first
+        process.terminate()
+        
+        try:
+            process.wait(timeout=5)
+            print_success("Server stopped gracefully")
+        except subprocess.TimeoutExpired:
+            # Force kill if it doesn't stop
+            print("  Server did not stop gracefully, forcing...")
+            process.kill()
+            process.wait()
+            print_success("Server force stopped")
+    
+    except Exception as e:
+        print(f"  Warning: Error stopping server: {e}")
+
+
+def copy_files_to_web_public(web_root_dir, local_wicid_web_url):
+    """
+    Copy firmware files to web server public directory and update releases.json.
+    
+    Args:
+        web_root_dir: Path to WICID Web root directory
+        local_wicid_web_url: Local web server URL (e.g., http://10.0.0.142:8080)
+    
+    Raises:
+        Exception: If file operations fail
+    """
+    print_step("Copying files to web server public directory...")
+    
+    public_dir = web_root_dir / "public"
+    
+    # Copy firmware ZIP
+    src_zip = Path("releases/wicid_install.zip")
+    dst_zip = public_dir / "wicid_install.zip"
+    
+    shutil.copy(src_zip, dst_zip)
+    print(f"  Copied: wicid_install.zip -> {dst_zip}")
+    
+    # Read and modify releases.json
+    src_releases = Path("releases.json")
+    with open(src_releases, 'r') as f:
+        releases_data = json.load(f)
+    
+    # Update all zip_url fields to point to local server
+    modified_count = 0
+    for release in releases_data.get("releases", []):
+        if "production" in release:
+            release["production"]["zip_url"] = f"{local_wicid_web_url}/wicid_install.zip"
+            modified_count += 1
+        if "development" in release:
+            release["development"]["zip_url"] = f"{local_wicid_web_url}/wicid_install.zip"
+            modified_count += 1
+    
+    # Write modified releases.json to public directory
+    dst_releases = public_dir / "releases.json"
+    with open(dst_releases, 'w') as f:
+        json.dump(releases_data, f, indent=2)
+    
+    print(f"  Modified releases.json with {modified_count} URL(s) updated")
+    print(f"  Copied: releases.json -> {dst_releases}")
+    
+    print_success("Files copied to web server")
+
+
+def modify_circuitpy_settings(circuitpy_path, local_wicid_web_url):
+    """
+    Modify settings.toml on CIRCUITPY drive for local OTA testing.
+    
+    Args:
+        circuitpy_path: Path to CIRCUITPY drive
+        local_wicid_web_url: Local web server URL
+    
+    Raises:
+        OSError: If filesystem is read-only or modification fails
+    """
+    print_step("Modifying CIRCUITPY settings.toml...")
+    
+    settings_file = circuitpy_path / "settings.toml"
+    
+    try:
+        # Read current settings
+        with open(settings_file, 'r') as f:
+            content = f.read()
+        
+        # Replace VERSION with 0.0.0 to trigger update
+        content = re.sub(
+            r'VERSION\s*=\s*"[^"]*"',
+            'VERSION = "0.0.0"',
+            content
+        )
+        
+        # Replace SYSTEM_UPDATE_MANIFEST_URL with local URL
+        content = re.sub(
+            r'SYSTEM_UPDATE_MANIFEST_URL\s*=\s*"[^"]*"',
+            f'SYSTEM_UPDATE_MANIFEST_URL = "{local_wicid_web_url}/releases.json"',
+            content
+        )
+        
+        # Write back to file
+        with open(settings_file, 'w') as f:
+            f.write(content)
+        
+        print(f"  Set VERSION = \"0.0.0\"")
+        print(f"  Set SYSTEM_UPDATE_MANIFEST_URL = \"{local_wicid_web_url}/releases.json\"")
+        
+        print_success("CIRCUITPY settings.toml updated")
+    
+    except OSError as e:
+        if e.errno == 30:  # EROFS
+            raise OSError(
+                "CIRCUITPY drive is READ-ONLY.\n\n"
+                "The device must be in Safe Mode to allow file modifications.\n"
+                "To enter Safe Mode:\n"
+                "  1. Unplug the device from USB\n"
+                "  2. Hold the BOOT button\n"
+                "  3. While holding, plug in USB\n"
+                "  4. Keep holding until LED turns yellow/orange\n"
+                "  5. Release the button"
+            ) from e
+        raise
+
+
 def soft_update(circuitpy_path, zip_path):
     """
     Perform a SOFT update (OTA-like installation).
@@ -471,6 +792,105 @@ def hard_update(circuitpy_path, zip_path):
         print_success("Cleanup complete")
 
 
+def simulated_ota_update(circuitpy_path, zip_path):
+    """
+    Perform a SIMULATED OTA update using local WICID Web server.
+    
+    Args:
+        circuitpy_path: Path to CIRCUITPY drive
+        zip_path: Path to firmware ZIP file
+    
+    Returns:
+        bool: True if setup completed successfully, False otherwise
+    """
+    print_header("SIMULATED OTA UPDATE MODE")
+    print("\nThis will set up a simulated over-the-air update:")
+    print("1. Start local WICID Web application server")
+    print("2. Copy firmware files to web server public directory")
+    print("3. Modify device settings to point to local server")
+    print("4. Device will pull update from local server on reset")
+    print("\nThis is useful for testing the OTA update flow in development.")
+    
+    process = None
+    
+    try:
+        # Get web root directory
+        web_root_dir = get_web_root_directory()
+        print(f"\nUsing WICID Web directory: {web_root_dir}")
+        
+        # Validate prerequisites
+        print_step("Validating prerequisites...")
+        success, error_msg = validate_simulated_ota_prerequisites(web_root_dir, circuitpy_path, zip_path)
+        
+        if not success:
+            print_error(error_msg)
+            return False
+        
+        print_success("All prerequisites validated")
+        
+        # Start web server
+        process, local_url = start_wicid_web_server(web_root_dir)
+        
+        # Copy files to web server
+        copy_files_to_web_public(web_root_dir, local_url)
+        
+        # Modify CIRCUITPY settings
+        modify_circuitpy_settings(circuitpy_path, local_url)
+        
+        # Print completion summary
+        print_header("Simulated OTA Update Ready")
+        print("\n✓ Setup Complete!")
+        print("\nConfiguration Summary:")
+        print(f"  • Web Server: {local_url} (PID: {process.pid})")
+        print(f"  • Device VERSION: 0.0.0 (will trigger update)")
+        print(f"  • Update Manifest: {local_url}/releases.json")
+        print(f"  • Firmware Package: {local_url}/wicid_install.zip")
+        
+        print("\n" + "=" * 60)
+        print("TESTING INSTRUCTIONS")
+        print("=" * 60)
+        print("\n1. Press the RESET button on your WICID device")
+        print("2. The device will boot and check for updates")
+        print("3. It will download and install the firmware from local server")
+        print("4. Monitor the device LED for update progress:")
+        print("   - Downloading: LED activity")
+        print("   - Installing: Device will reboot")
+        print("   - Success: Normal operation resumes")
+        
+        print("\nIMPORTANT: The web server must remain running during the update.")
+        print("           Do not stop the server until the update is complete.")
+        
+        # Prompt to terminate server
+        print("\n" + "=" * 60)
+        response = input("\nOnce update is verified, terminate server? [Y/n]: ").strip().lower()
+        
+        if response == "" or response == "y" or response == "yes":
+            stop_wicid_web_server(process)
+            process = None  # Mark as stopped
+        else:
+            print(f"\nWeb server remains running at: {local_url}")
+            print(f"Server PID: {process.pid}")
+            print("\nTo stop the server later, run:")
+            print(f"  kill {process.pid}")
+        
+        return True
+    
+    except Exception as e:
+        print_error(f"Simulated OTA update failed: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Only stop server if it was started and we encountered an error before user prompt
+        # If we've already prompted the user, they control the server lifecycle
+        if process and process.poll() is None:
+            try:
+                stop_wicid_web_server(process)
+            except:
+                pass
+        
+        return False
+
+
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -490,6 +910,12 @@ Installation Modes:
     • Deletes ALL files on CIRCUITPY drive
     • Preserves only secrets.json
     • Use for clean installations or troubleshooting
+  
+  SIMULATED OTA UPDATE (Local Development)
+    • Starts local WICID Web application server
+    • Points device to local server for updates
+    • Useful for testing OTA update flow in development
+    • Requires WICID Web repository at ../wicid_web (configurable via .env)
 
 Examples:
   %(prog)s                    Run interactive installer
@@ -499,6 +925,7 @@ Requirements:
   • CIRCUITPY device connected via USB
   • Device in Safe Mode (USB mass storage enabled)
   • Firmware package at releases/wicid_install.zip
+  • For simulated OTA: Node.js and WICID Web repository
         """
     )
     
@@ -514,9 +941,10 @@ def main():
     
     print("\nWelcome to the WICID Firmware Installer!")
     print("\nThis installer will help you update your WICID device with new firmware.")
-    print("\nTwo installation modes are available:")
+    print("\nThree installation modes are available:")
     print("  • SOFT: OTA-like update (safer, requires reboot to complete)")
     print("  • HARD: Full replacement (immediate, deletes all files on device)")
+    print("  • SIMULATED OTA: Local development testing (uses local web server)")
     print("\nThe installer will:")
     print("  1. Detect your CIRCUITPY device")
     print("  2. Verify firmware package availability")
@@ -564,11 +992,17 @@ def main():
     print("   • Preserves only secrets.json")
     print("   • Use for clean installations or troubleshooting")
     
+    print("\n3. Simulated OTA Update (Local Development)")
+    print("   • Starts local WICID Web application server")
+    print("   • Points device to local server for updates")
+    print("   • Tests OTA update flow in development")
+    print("   • Requires WICID Web repository")
+    
     update_successful = False
     update_mode = None
     
     while True:
-        choice = input("\nEnter your choice (1 or 2): ").strip()
+        choice = input("\nEnter your choice (1, 2, or 3): ").strip()
         
         if choice == "1":
             update_mode = "soft"
@@ -578,20 +1012,29 @@ def main():
             update_mode = "hard"
             update_successful = hard_update(circuitpy_path, zip_path)
             break
+        elif choice == "3":
+            update_mode = "simulated_ota"
+            update_successful = simulated_ota_update(circuitpy_path, zip_path)
+            break
         else:
-            print("Invalid choice. Please enter 1 or 2.")
+            print("Invalid choice. Please enter 1, 2, or 3.")
     
     # Only show completion message if update succeeded
     if update_successful:
-        print_header("Installation Complete")
-        print("\nTo complete the update:")
-        print("  1. Press the RESET button on your WICID device")
-        print("  2. The device will reboot and apply the firmware")
-        
-        if update_mode == "soft":
-            print("\nThe boot.py script will automatically install the update on next boot.")
-        
-        print("\nThank you for using WICID!")
+        # Simulated OTA handles its own completion messages and instructions
+        if update_mode != "simulated_ota":
+            print_header("Installation Complete")
+            print("\nTo complete the update:")
+            print("  1. Press the RESET button on your WICID device")
+            print("  2. The device will reboot and apply the firmware")
+            
+            if update_mode == "soft":
+                print("\nThe boot.py script will automatically install the update on next boot.")
+            
+            print("\nThank you for using WICID!")
+        else:
+            # For simulated OTA, just print a thank you
+            print("\nThank you for using WICID!")
 
 
 if __name__ == "__main__":

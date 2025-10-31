@@ -330,7 +330,7 @@ After building a release package, you can use the `installer.py` script for guid
 python installer.py
 ```
 
-The installer provides two installation modes:
+The installer provides three installation modes:
 
 **SOFT Update (OTA-like)**
 - Safer installation method
@@ -344,6 +344,13 @@ The installer provides two installation modes:
 - Useful for clean installations or troubleshooting
 - Requires explicit confirmation
 
+**Simulated OTA Update (Local Development)**
+- Starts local WICID Web application server
+- Points device to local server for OTA updates
+- Tests complete OTA update flow in development environment
+- Requires WICID Web repository at `../wicid_web` (configurable via `.env` file)
+- Optional: Install `python-dotenv` for `.env` support (`pip install python-dotenv`)
+
 The installer will:
 1. Auto-detect your CIRCUITPY device
 2. Verify the `releases/wicid_install.zip` package exists
@@ -354,6 +361,7 @@ The installer will:
 This is particularly useful for:
 - Initial device setup and flashing
 - Manual firmware updates during development
+- Testing OTA update mechanisms locally
 - Troubleshooting device issues with clean installations
 
 ## Over-the-Air (OTA) Updates
