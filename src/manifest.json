@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -8,6 +8,6 @@
     "circuitpython_10_0"
   ],
   "release_type": "production",
-  "release_notes": "Fixes bug preventing Setup Mode from starting.",
-  "release_date": "2025-10-31T19:53:29.652824+00:00"
+  "release_notes": "Improves WiFi management and setup flow.",
+  "release_date": "2025-10-31T23:48:43.179035+00:00"
 }
