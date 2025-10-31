@@ -10,6 +10,44 @@ document.addEventListener('DOMContentLoaded', function() {
     const ssidManual = document.getElementById('ssid-manual');
     const statusDiv = document.getElementById('status');
 
+    // Function to show success state with countdown
+    function showSuccessMessage(restartDelay) {
+        // Show success state
+        document.getElementById('setupState').style.display = 'none';
+        document.getElementById('successState').style.display = 'block';
+        
+        // Start countdown timer with server-provided delay
+        let timeLeft = restartDelay;
+        const countdownElement = document.getElementById('countdown');
+        countdownElement.textContent = timeLeft;
+        const restartButton = document.getElementById('restartNowButton');
+        
+        const countdownInterval = setInterval(() => {
+            timeLeft--;
+            if (timeLeft >= 0) {
+                countdownElement.textContent = timeLeft;
+            }
+            
+            if (timeLeft <= 0) {
+                clearInterval(countdownInterval);
+                countdownElement.textContent = '0';
+            }
+        }, 1000);
+        
+        // Handle manual restart button
+        restartButton.addEventListener('click', async function() {
+            clearInterval(countdownInterval);
+            restartButton.disabled = true;
+            restartButton.querySelector('.button-text').textContent = 'Restarting...';
+            
+            try {
+                await fetch('/restart-now', { method: 'POST' });
+            } catch (e) {
+                // Expected - device will disconnect during restart
+            }
+        });
+    }
+
     // Password reveal functionality
     passwordToggle.addEventListener('click', function() {
         if (passwordInput.type === 'password') {
@@ -172,19 +210,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(result.message || 'An unknown server error occurred.');
             }
 
-            // If we get a 200 OK response, show success state
-            if (response.status === 200 && result.status === 'precheck_success') {
-                // Hide the form, show success message
-                document.getElementById('setupState').style.display = 'none';
-                document.getElementById('successState').style.display = 'block';
-                // Device will reboot shortly (server handles timing)
-                return;
-            }
-
-            // Unexpected success format
-            if (result.status === 'success') {
-                document.getElementById('setupState').style.display = 'none';
-                document.getElementById('successState').style.display = 'block';
+            // If we get a success response, show success message
+            if (response.ok && (result.status === 'precheck_success' || result.status === 'success')) {
+                showSuccessMessage(result.restart_delay);
                 return;
             }
         } catch (error) {

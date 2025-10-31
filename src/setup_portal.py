@@ -9,8 +9,8 @@ from dns_interceptor import DNSInterceptor
 from wifi_manager import WiFiManager
 
 class SetupPortal:
-    # Delay after pre-check success to ensure response is transmitted before reboot (seconds)
-    PRECHECK_DELAY_SECONDS = 2
+    # Delay after pre-check success to give user time to read instructions before automatic reboot (seconds)
+    PRECHECK_DELAY_SECONDS = 30
     # --- Centralized error strings ---
     ERR_INVALID_REQUEST = "Invalid request data."
     ERR_EMPTY_SSID = "SSID cannot be empty."
@@ -477,7 +477,7 @@ class SetupPortal:
                 self._log("✓ Credentials saved. Scheduling reboot...")
                 # Schedule reboot to allow client to receive response and show success
                 self.pending_ready_at = time.monotonic() + self.PRECHECK_DELAY_SECONDS
-                return self._json_ok(request, {"status": "precheck_success"})
+                return self._json_ok(request, {"status": "precheck_success", "restart_delay": self.PRECHECK_DELAY_SECONDS})
 
             except Exception as e:
                 self._log(f"Fatal error in /configure: {e}")
@@ -490,6 +490,19 @@ class SetupPortal:
                 # Do not send a response here, as the connection is likely dead.
                 # The client will time out, which is expected in a fatal server error.
                 return None
+
+        # Handle manual restart request
+        @server.route("/restart-now", "POST")
+        def restart_now(request: Request):
+            _mark_user_connected()
+            try:
+                self._log("Manual restart requested by user")
+                # Trigger immediate reboot
+                self.pending_ready_at = time.monotonic()
+                return self._json_ok(request, {"status": "restarting"})
+            except Exception as e:
+                self._log(f"Error in /restart-now: {e}")
+                return self._json_error(request, "Restart failed", code=500, text="Internal Server Error")
         
         
         # Start the server
