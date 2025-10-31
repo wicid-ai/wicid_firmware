@@ -291,14 +291,17 @@ Every release package contains complete firmware:
 wicid_install.zip
 ├── manifest.json        # Compatibility metadata
 ├── settings.toml        # System config (includes VERSION)
-├── boot.mpy            # Compiled bootloader
-├── code.mpy            # Compiled main app
+├── boot.py             # Source bootloader (CircuitPython requirement)
+├── code.py             # Source main app (CircuitPython requirement)
+├── boot_support.mpy    # Compiled boot logic
+├── code_support.mpy    # Compiled runtime logic
+├── update_manager.mpy  # Compiled update system
 ├── *.mpy               # All other firmware modules
 ├── lib/                # Device libraries
 └── www/                # Web UI assets
 ```
 
-All Python files are compiled to bytecode for efficiency. User data (`secrets.json`) is never included.
+All Python files except `boot.py` and `code.py` are compiled to bytecode for efficiency. CircuitPython requires these two files as source. User data (`secrets.json`) and recovery backup (`/recovery/`) are never included.
 
 ### manifest.json Format
 
@@ -316,16 +319,18 @@ Simplified manifest for compatibility verification:
     "circuitpython_10_1"
   ],
   "release_type": "production",
-  "release_notes": "Added OTA updates",
-  "release_date": "2025-10-15T12:00:00Z",
+  "release_notes": "Added OTA updates with checksum verification",
+  "release_date": "2025-10-15T12:00:00Z"
 }
 ```
 
 No file lists, removal patterns, or install scripts - the full reset strategy doesn't need them.
 
+**Note**: The manifest in the ZIP contains metadata about the release. It does not include the SHA-256 checksum (that's in releases.json).
+
 ## releases.json Structure
 
-Multi-platform master manifest:
+Multi-platform master manifest with SHA-256 checksums:
 
 ```json
 {
@@ -337,8 +342,9 @@ Multi-platform master manifest:
       "target_operating_systems": ["circuitpython_9_3", "circuitpython_10_1"],
       "production": {
         "version": "0.2.0",
-        "release_notes": "Added OTA updates",
+        "release_notes": "Added OTA updates with checksum verification",
         "zip_url": "https://www.wicid.ai/releases/v0.2.0",
+        "sha256": "a1b2c3d4e5f6...full 64-char hex string",
         "release_date": "2025-10-15T12:00:00Z"
       },
       "development": {
@@ -352,25 +358,74 @@ Multi-platform master manifest:
 
 The build tool maintains this automatically - you don't edit it manually.
 
+**Critical**: The `sha256` field contains the SHA-256 checksum of the ZIP file, calculated during the build process. Devices verify this checksum after download to ensure integrity and prevent installation of corrupted or tampered updates.
+
+**Build Process**: `releases.json` is now a generated artifact (not checked into git). The builder calculates the checksum from the actual ZIP file and includes it in releases.json. GitHub Actions syncs this generated file to wicid_web for deployment.
+
 ## Installation on Device
 
 When a device downloads an update:
 
-1. **Download**: ZIP saved to `/pending_update/`
-2. **Extract**: Contents extracted to `/pending_update/root/`
-3. **Restart**: Device reboots immediately
-4. **Verify**: Bootloader checks compatibility:
+1. **Pre-flight Checks**:
+   - Check available disk space (requires ~200KB minimum)
+   - Verify update manifest is reachable
+   
+2. **Download**: ZIP saved to `/pending_update/`
+   - Download in 4KB chunks for reliability
+   - Calculate SHA-256 checksum of downloaded file
+   
+3. **Verification**: Validate download integrity
+   - Compare calculated checksum against manifest
+   - Abort if checksum mismatch (corrupted/tampered download)
+   
+4. **Extract**: Contents extracted to `/pending_update/root/`
+   - Extract all non-hidden files
+   - Validate manifest.json is present and valid
+   - Verify all critical files are present
+   
+5. **Restart**: Device reboots immediately via hard reset
+
+6. **Recovery Check** (at boot, before everything):
+   - Check if all critical files are present
+   - If missing, restore from `/recovery/` backup
+   - Mark failed update as incompatible
+   - Reboot after recovery
+   
+7. **Verify**: Bootloader checks compatibility:
    - Machine type must match
    - OS version must be compatible  
    - Version must be newer
    - Not previously marked incompatible
-5. **Install**: If compatible, perform full reset:
+   - All critical files present in update package
+   
+8. **Install**: If compatible, perform full reset:
    - Delete all existing firmware
-   - Preserve `/secrets.json` and `/incompatible_releases.json`
+   - Preserve `/secrets.json`, `/incompatible_releases.json`, and `/recovery/`
    - Move new files to root
-6. **Reboot**: Device starts with new firmware
+   - Validate all critical files present after installation
+   
+9. **Backup**: Create/update recovery backup
+   - Back up all critical files to `/recovery/`
+   - Persistent across updates for catastrophic failure recovery
+   
+10. **Reboot**: Device starts with new firmware
 
-If incompatible, the release is marked to prevent retry loops and the device boots with current firmware.
+If incompatible or validation fails at any stage, the release is marked to prevent retry loops and the device boots with current firmware.
+
+### Recovery System
+
+The OTA update process includes a persistent recovery backup system to prevent device bricking:
+
+- **Recovery Backup**: Located in `/recovery/`, contains copies of all critical files
+- **Automatic Recovery**: If critical files are missing at boot, automatically restores from `/recovery/`
+- **One-Strike Policy**: Updates that trigger recovery are immediately marked incompatible
+- **Persistent**: Recovery backup is preserved across all updates and only updated on successful installations
+
+This ensures the device can always recover from:
+- Power loss during update installation
+- Corrupted update packages
+- Filesystem corruption
+- Interrupted file operations
 
 ## Version Guidelines
 

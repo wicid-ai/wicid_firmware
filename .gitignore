@@ -204,8 +204,8 @@ cython_debug/
 
 # WICID-specific files
 secrets.json
-pending_update/
 releases/
+releases.json
 boot_out.txt
 mpy-cross
 !src/manifest.json

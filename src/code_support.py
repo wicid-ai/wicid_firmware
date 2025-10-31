@@ -207,27 +207,15 @@ def main():
                     pixel_controller.blink_success()
                 
                 # Initialize update manager and check for updates on boot
+                # UpdateManager accesses PixelController singleton internally for LED feedback
                 try:
                     print("Initializing update manager...")
                     update_manager = UpdateManager(session)
                     
                     print("Checking for firmware updates...")
-                    update_info = update_manager.check_for_updates()
-                    
-                    if update_info:
-                        print(f"Update available: {update_info['version']}")
-                        print(f"Release notes: {update_info['release_notes']}")
-                        print("Downloading update...")
-                        
-                        if update_manager.download_update(update_info['zip_url']):
-                            print("Update downloaded successfully")
-                            print("Restarting to install update...")
-                            time.sleep(2)
-                            supervisor.reload()
-                        else:
-                            print("Update download failed, continuing with current version")
-                    else:
-                        print("No updates available")
+                    # Use centralized update workflow - handles check, download, and reboot
+                    update_manager.check_download_and_reboot(delay_seconds=2)
+                    # If we reach here, no update was available or download failed
                     
                     # Schedule next update check
                     update_manager.next_update_check = update_manager.schedule_next_update_check()
@@ -259,16 +247,9 @@ def main():
             if update_manager and update_manager.should_check_now():
                 print("Scheduled update check triggered")
                 try:
-                    update_info = update_manager.check_for_updates()
-                    
-                    if update_info:
-                        print(f"Update available: {update_info['version']}")
-                        print("Downloading update...")
-                        
-                        if update_manager.download_update(update_info['zip_url']):
-                            print("Update downloaded, restarting...")
-                            time.sleep(1)
-                            supervisor.reload()
+                    # Use centralized update workflow - handles check, download, and reboot
+                    update_manager.check_download_and_reboot(delay_seconds=1)
+                    # If we reach here, no update was available or download failed
                     
                     # Reschedule next check
                     update_manager.next_update_check = update_manager.schedule_next_update_check()

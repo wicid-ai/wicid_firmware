@@ -3,9 +3,10 @@
 WICID Firmware Build Tool
 
 Interactive CLI tool and build engine for creating firmware release packages.
-Generates manifests, compiles bytecode, creates ZIP packages, and updates releases.json.
+Generates manifests, compiles bytecode, creates ZIP packages, and generates releases.json.
 
 Full reset strategy: every release contains complete firmware (no partial updates).
+Note: releases.json is generated but not committed (gitignored, deployed separately).
 """
 
 import sys
@@ -14,6 +15,7 @@ import json
 import subprocess
 import zipfile
 import shutil
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +50,27 @@ def print_error(text):
 def print_warning(text):
     """Print warning message."""
     print(f"{Colors.WARNING}⚠ {text}{Colors.ENDC}")
+
+
+def calculate_sha256(file_path, chunk_size=65536):
+    """
+    Calculate SHA-256 checksum of a file.
+    
+    Args:
+        file_path: Path to file to checksum
+        chunk_size: Bytes to read per iteration (default: 64KB for speed)
+    
+    Returns:
+        str: Hexadecimal SHA-256 checksum
+    """
+    sha256 = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            sha256.update(chunk)
+    return sha256.hexdigest()
 
 
 def get_git_status():
@@ -272,13 +295,13 @@ def interactive_build():
             json.dump(manifest, f, indent=2)
             f.write('\n')
         
-        # Update releases.json
-        print_success(f"Updating releases.json...")
-        update_releases_json(releases_data, manifest, target_machines, target_oses, release_type, version)
-        save_releases_json(releases_data)
+        # Build package (returns path and checksum)
+        package_path, checksum = build_package(manifest, version)
         
-        # Build package
-        package_path = build_package(manifest, version)
+        # Update releases.json with checksum
+        print_success(f"Updating releases.json...")
+        update_releases_json(releases_data, manifest, target_machines, target_oses, release_type, version, checksum)
+        save_releases_json(releases_data)
         
         # Show preview
         show_preview(manifest, package_path, current_version)
@@ -290,12 +313,13 @@ def interactive_build():
         commit_sha = None
         tag_name = None
         
-        artifacts = ["src/settings.toml", "src/manifest.json", "releases.json"]
+        artifacts = ["src/settings.toml", "src/manifest.json"]
         
         print_header("Phase 2: Commit and Tag")
         print("\nBuild artifacts ready:")
         for artifact in artifacts:
             print(f"  • {artifact}")
+        print(f"  • releases.json (generated, not committed)")
         
         print("\nContinue with committing build artifacts? [y/N]: ", end='')
         if input().strip().lower() == 'y':
@@ -360,7 +384,7 @@ def create_manifest(version, target_machines, target_oses, release_type, release
     return manifest
 
 
-def update_releases_json(releases_data, manifest, target_machines, target_oses, release_type, version):
+def update_releases_json(releases_data, manifest, target_machines, target_oses, release_type, version, sha256_checksum):
     """Update releases.json with new multi-platform structure."""
     # Find existing release entry matching these machine types and OSes
     release_entry = None
@@ -385,6 +409,7 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
         "version": manifest["version"],
         "release_notes": manifest["release_notes"],
         "zip_url": zip_url,
+        "sha256": sha256_checksum,
         "release_date": manifest["release_date"],
     }
     
@@ -472,7 +497,13 @@ def build_package(manifest, version):
     shutil.rmtree(build_dir)
     
     print_success(f"Package created: {package_path}")
-    return package_path
+    
+    # Calculate SHA-256 checksum
+    print_success("Calculating SHA-256 checksum...")
+    checksum = calculate_sha256(package_path)
+    print(f"  SHA-256: {checksum}")
+    
+    return package_path, checksum
 
 
 def show_preview(manifest, package_path, old_version):
@@ -590,11 +621,10 @@ def create_git_tag(version, tag_message):
 
 
 def stage_files():
-    """Stage manifest and releases files for commit."""
+    """Stage manifest files for commit."""
     files_to_stage = [
         "src/settings.toml",
-        "src/manifest.json",
-        "releases.json"
+        "src/manifest.json"
     ]
     
     try:
@@ -651,7 +681,7 @@ def show_build_summary(version, package_path, committed, tagged, pushed, commit_
     else:
         print("\n  ✗ Not committed")
         print("\n  Manual commit steps:")
-        print("    1. Stage files: git add src/settings.toml src/manifest.json releases.json")
+        print("    1. Stage files: git add src/settings.toml src/manifest.json")
         print(f"    2. Commit: git commit -m \"Release v{version}\"")
     
     if tagged:
@@ -689,7 +719,7 @@ def show_help():
 {Colors.HEADER}{Colors.BOLD}WICID Firmware Build Tool{Colors.ENDC}
 
 Interactive CLI tool and build engine for creating firmware release packages.
-Generates manifests, compiles bytecode, creates ZIP packages, and updates releases.json.
+Generates manifests, compiles bytecode, creates ZIP packages, and generates releases.json.
 
 {Colors.BOLD}USAGE:{Colors.ENDC}
     builder.py              Run interactive build wizard
@@ -715,7 +745,7 @@ Generates manifests, compiles bytecode, creates ZIP packages, and updates releas
     2. Creates/updates src/manifest.json
     3. Compiles Python files to bytecode (.mpy)
     4. Bundles firmware into releases/wicid_install.zip
-    5. Updates releases.json with download URLs
+    5. Generates releases.json with download URLs (gitignored)
     6. Optionally commits, tags (v{{version}}), and pushes to git
 
 {Colors.BOLD}EXAMPLES:{Colors.ENDC}
@@ -726,10 +756,10 @@ Generates manifests, compiles bytecode, creates ZIP packages, and updates releas
     ./builder.py --build
 
 {Colors.BOLD}FILES:{Colors.ENDC}
-    src/settings.toml       VERSION definition
-    src/manifest.json       Release metadata (auto-generated)
-    releases.json           Release index for update manager
-    releases/               Built firmware packages
+    src/settings.toml       VERSION definition (committed)
+    src/manifest.json       Release metadata (auto-generated, committed)
+    releases.json           Release index (auto-generated, gitignored)
+    releases/               Built firmware packages (gitignored)
 """
     print(help_text)
 
@@ -748,8 +778,25 @@ def main():
             with open("src/manifest.json", 'r') as f:
                 manifest = json.load(f)
             version = manifest['version']
-            package_path = build_package(manifest, version)
+            package_path, checksum = build_package(manifest, version)
             print_success(f"Build complete: {package_path}")
+            print_success(f"SHA-256: {checksum}")
+            
+            # Update releases.json with checksum
+            print("Updating releases.json with checksum...")
+            releases_data = load_releases_json()
+            update_releases_json(
+                releases_data,
+                manifest,
+                manifest['target_machine_types'],
+                manifest['target_operating_systems'],
+                manifest['release_type'],
+                version,
+                checksum
+            )
+            save_releases_json(releases_data)
+            print_success("releases.json updated")
+            
             sys.exit(0)
         else:
             print_error(f"Unknown option: {arg}")

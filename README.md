@@ -179,6 +179,7 @@ The device uses `boot.py` to control filesystem access. By default, it runs in *
 **Production Mode** (default):
 - Filesystem is writable from code (setup portal can save credentials)
 - USB mass storage is disabled
+- USB serial console is enabled for monitoring and debugging
 - Used for normal operation and by customers
 
 **Safe Mode** (for development):

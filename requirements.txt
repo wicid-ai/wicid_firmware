@@ -2,11 +2,12 @@
 # Install using:
 # circup install -r requirements.txt
 
-adafruit_pixelbuf==2.0.9
-adafruit_connection_manager==3.1.5
-adafruit_requests==4.1.13
-adafruit_datetime==1.4.3
-neopixel==6.3.17
-adafruit_ntp==3.3.4
-adafruit_wsgi==3.0.2
-adafruit_httpserver==4.7.0
+adafruit_pixelbuf==2.0.10
+adafruit_connection_manager==3.1.6
+adafruit_requests==4.1.14
+adafruit_datetime==1.4.4
+neopixel==6.3.18
+adafruit_ntp==3.3.5
+adafruit_hashlib==1.4.20
+adafruit_wsgi==3.0.3
+adafruit_httpserver==4.7.1
