@@ -469,27 +469,21 @@ def check_button_hold_duration(button, pixel_controller=None):
         while not button.value:
             elapsed = time.monotonic() - start_time
             
-            # At 3 seconds, start pulsing white for Setup Mode indicator (same as setup mode)
+            # At 3 seconds, start pulsing white for Setup Mode indicator
             if elapsed >= 3.0 and not setup_indicated and pixel_controller:
                 setup_indicated = True
                 print("3 second threshold reached - pulsing Setup Mode indicator")
-                # Use the same pulsing pattern as setup mode
-                pixel_controller.start_setup_mode_pulsing()
+                pixel_controller.indicate_setup_mode()
             
             # At 10 seconds, start flashing blue/green for Safe Mode indicator
             if elapsed >= 10.0 and not safe_mode_indicated and pixel_controller:
                 safe_mode_indicated = True
                 print("10 second threshold reached - flashing Safe Mode indicator")
-                # Stop pulsing and switch to flashing
-                pixel_controller.stop_pulsing()
+                pixel_controller.indicate_safe_mode()
             
+            # Keep animation running
             if pixel_controller:
-                if safe_mode_indicated:
-                    # Flash blue and green alternately (4 times per second)
-                    pixel_controller.flash_blue_green(start_time)
-                elif setup_indicated:
-                    # Tick the pulsing animation
-                    pixel_controller.tick()
+                pixel_controller.tick()
             
             time.sleep(0.05)
         
@@ -497,14 +491,11 @@ def check_button_hold_duration(button, pixel_controller=None):
         final_duration = time.monotonic() - start_time
         
         # Button released - clean up LED state
-        # Only clean up for short presses; leave pulsing/flashing active for mode entry
+        # Only clean up for short presses; leave LED active for mode entry
         if pixel_controller:
             if final_duration < 3.0:
-                # Short press - clean up any indicators
-                if setup_indicated:
-                    pixel_controller.stop_pulsing()
-                if setup_indicated or safe_mode_indicated:
-                    pixel_controller.set_color((0, 0, 0))
+                # Short press - turn off LED
+                pixel_controller.clear()
             # For setup mode (3-10s) or safe mode (10+), leave LED state as-is
             # so the mode can continue with the visual indicator
         

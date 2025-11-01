@@ -391,16 +391,17 @@ class UpdateManager:
         
         return (len(missing_files) == 0, missing_files)
     
-    def calculate_sha256(self, file_path, chunk_size=65536):
+    def calculate_sha256(self, file_path, chunk_size=2048):
         """
         Calculate SHA-256 checksum of a file using adafruit_hashlib.
         
-        Optimized for maximum speed with frequent LED feedback.
-        Uses large chunks for speed, but updates LED based on time for smoothness.
+        Uses 2KB chunks as testing showed this provides optimal performance balance
+        between memory pressure and loop overhead, while still providing frequent
+        LED updates during long checksum operations.
         
         Args:
             file_path: Path to file to checksum
-            chunk_size: Bytes to read per iteration (default: 64KB for maximum speed)
+            chunk_size: Bytes to read per iteration (default: 2KB for optimal performance)
         
         Returns:
             str: Hexadecimal SHA-256 checksum, or None on error
@@ -413,6 +414,7 @@ class UpdateManager:
             start_time = time.monotonic()
             sha256 = hashlib.sha256()
             bytes_processed = 0
+            tick_count = 0
             
             with open(file_path, 'rb') as f:
                 while True:
@@ -423,10 +425,13 @@ class UpdateManager:
                     bytes_processed += len(chunk)
                     
                     # Update LED based on time - ensures consistent animation
+                    tick_count += 1
                     self._update_download_led()
             
             elapsed = time.monotonic() - start_time
             print(f"  Checksum calculated in {elapsed:.1f} seconds")
+            print(f"  Total tick() calls during checksum: {tick_count}")
+            print(f"  Average time per chunk: {elapsed / tick_count:.2f} seconds")
             
             return sha256.hexdigest()
         except Exception as e:
@@ -612,8 +617,8 @@ class UpdateManager:
         # Start LED flashing for download phase
         if self.pixel_controller:
             self._download_flash_start = time.monotonic()
-            # Start the flashing animation
-            self.pixel_controller.start_flashing([(0, 0, 255), (0, 255, 0)], rate=4)
+            # Use semantic operation to indicate downloading
+            self.pixel_controller.indicate_downloading()
             print("LED indicator: flashing blue/green during download and verification")
         
         try:
@@ -671,10 +676,9 @@ class UpdateManager:
             # Verify checksum if provided
             if expected_checksum:
                 print("Verifying download integrity...")
-                # Ensure LED is still flashing for checksum phase
-                if self.pixel_controller and self._download_flash_start is not None:
-                    if self.pixel_controller._mode != self.pixel_controller.MODE_FLASHING:
-                        self.pixel_controller.start_flashing([(0, 0, 255), (0, 255, 0)], rate=4)
+                # Switch to verifying indicator (same pattern as downloading)
+                if self.pixel_controller:
+                    self.pixel_controller.indicate_verifying()
                 self._update_download_led()
                 checksum_valid, checksum_msg = self.verify_checksum(zip_path, expected_checksum)
                 

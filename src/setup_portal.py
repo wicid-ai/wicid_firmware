@@ -33,7 +33,7 @@ class SetupPortal:
 
     def start_setup_indicator(self):
         """Begin pulsing white to indicate setup mode is active."""
-        self.pixel.start_setup_mode_pulsing()
+        self.pixel.indicate_setup_mode()
 
     def _start_dns_interceptor(self, ap_ip):
         """
@@ -104,9 +104,8 @@ class SetupPortal:
         else:
             print("Captive portal mode: HTTP-only detection")
         
-        # Ensure pulsing is active (already started in run_setup_mode, but verify state)
-        if self.pixel._mode != PixelController.MODE_PULSING:
-            self.start_setup_indicator()
+        # Ensure setup mode indicator is active (already started in run_setup_mode)
+        self.pixel.indicate_setup_mode()
         # Call tick immediately to ensure animation starts
         self.pixel.tick()
 
@@ -616,12 +615,11 @@ class SetupPortal:
                 # Just ensure the reference is cleared
                 self.dns_interceptor = None
             
-            # Stop LED pulsing
+            # Clear LED
             try:
-                self.pixel.stop_pulsing()
-                self.pixel.off()
+                self.pixel.clear()
             except Exception as led_e:
-                print(f"Error stopping LED: {led_e}")
+                print(f"Error clearing LED: {led_e}")
             
             # Reset setup state
             self.setup_complete = False

@@ -46,9 +46,8 @@ class UpdateInstaller:
     """
     Manages the focused update installation process with LED feedback.
     
-    Centralizes LED flashing logic to avoid parameter threading through
-    multiple helper functions. Provides a clean interface for update operations.
-    Uses PixelController singleton for LED access.
+    Centralizes LED control to avoid parameter threading through
+    multiple helper functions. Uses PixelController singleton for LED access.
     """
     
     def __init__(self):
@@ -57,24 +56,23 @@ class UpdateInstaller:
         if PixelController:
             try:
                 self.pixel_controller = PixelController()
-                self.flash_start_time = time.monotonic()
+                # Start installation indicator (blue/green flashing)
+                self.pixel_controller.indicate_installing()
             except Exception as e:
                 print(f"Could not initialize LED: {e}")
                 self.pixel_controller = None
-                self.flash_start_time = None
         else:
             self.pixel_controller = None
-            self.flash_start_time = None
     
     def update_led(self):
-        """Update LED flashing if available. Call frequently during long operations."""
-        if self.pixel_controller and self.flash_start_time is not None:
-            self.pixel_controller.flash_blue_green(self.flash_start_time)
+        """Update LED animation. Call frequently during long operations."""
+        if self.pixel_controller:
+            self.pixel_controller.tick()
     
     def turn_off_led(self):
         """Turn off LED (used on error conditions)."""
         if self.pixel_controller:
-            self.pixel_controller.off()
+            self.pixel_controller.clear()
 
 def log_boot_message(message):
     """
@@ -169,8 +167,8 @@ def delete_all_except(preserve_paths, installer=None):
     """
     print("Performing full reset (deleting all existing files)...")
     
-    # Normalize preserve paths
-    preserve_set = set(path.rstrip('/') for path in preserve_paths)
+    # Normalize preserve paths (case-insensitive for FAT32 filesystem)
+    preserve_set = set(path.rstrip('/').lower() for path in preserve_paths)
     
     # Get list of all items in root
     root_items = os.listdir('/')
@@ -182,8 +180,8 @@ def delete_all_except(preserve_paths, installer=None):
         if installer:
             installer.update_led()
         
-        # Skip preserved paths
-        if item_path in preserve_set:
+        # Skip preserved paths (case-insensitive comparison for FAT32)
+        if item_path.lower() in preserve_set:
             print(f"  Preserved: {item_path}")
             continue
         
@@ -214,12 +212,18 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
     Move all files and directories from src to dest.
     Logs errors but continues to attempt moving remaining files.
     
+    CRITICAL: Never overwrites preserved files (secrets.json, etc.)
+    
     Args:
         src_dir: Source directory path
         dest_dir: Destination directory path
         installer: Optional UpdateInstaller instance for LED feedback
     """
     print(f"Moving files from {src_dir} to {dest_dir}...")
+    
+    # Define preserved files that should NEVER be overwritten
+    # These must match the preservation list used during deletion
+    PRESERVED_FILES = ['secrets.json', 'incompatible_releases.json']
     
     items = os.listdir(src_dir)
     
@@ -230,6 +234,17 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
         # Update LED during file operations
         if installer:
             installer.update_led()
+        
+        # Skip preserved files - never overwrite them during OTA updates
+        # Use case-insensitive comparison for FAT32 filesystem compatibility
+        if dest_dir == "/" and item.lower() in [f.lower() for f in PRESERVED_FILES]:
+            print(f"  Skipping preserved file: {item}")
+            # Remove from pending_update to avoid confusion
+            try:
+                os.remove(src_path)
+            except:
+                pass
+            continue
         
         try:
             # Check if it's a directory
@@ -258,6 +273,15 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
             else:
                 # Move file
                 try:
+                    # Additional safety check: never overwrite preserved files
+                    # Extract filename from dest_path for checking
+                    dest_filename = dest_path.split('/')[-1]
+                    if dest_filename.lower() in [f.lower() for f in PRESERVED_FILES]:
+                        log_boot_message(f"ERROR: Attempted to overwrite preserved file: {dest_filename}")
+                        log_boot_message(f"  Source: {src_path}")
+                        log_boot_message(f"  Destination: {dest_path}")
+                        raise Exception(f"BUG: Move would overwrite preserved file {dest_filename}")
+                    
                     # Read from source
                     with open(src_path, 'rb') as src_file:
                         content = src_file.read()
@@ -430,7 +454,19 @@ def process_pending_update():
                 if installer:
                     installer.update_led()
                 
-                # Step 4: Delete everything except secrets, incompatible list, and recovery
+                # Step 4: Verify preserved files exist before destructive operations
+                log_boot_message("Verifying preserved files before update...")
+                secrets_exists = False
+                try:
+                    with open("/secrets.json", "r") as f:
+                        secrets_data = f.read()
+                        secrets_size = len(secrets_data)
+                    secrets_exists = True
+                    log_boot_message(f"✓ secrets.json found ({secrets_size} bytes)")
+                except:
+                    log_boot_message("ℹ No secrets.json (first-time setup)")
+                
+                # Step 5: Delete everything except secrets, incompatible list, and recovery
                 preserve_paths = [
                     "/secrets.json",
                     "/incompatible_releases.json",
@@ -440,15 +476,41 @@ def process_pending_update():
                 delete_all_except(preserve_paths, installer)
                 os.sync()  # Sync after deletion
                 
+                # Verify preserved files still exist after deletion
+                if secrets_exists:
+                    try:
+                        with open("/secrets.json", "r") as f:
+                            post_delete_data = f.read()
+                        if post_delete_data != secrets_data:
+                            log_boot_message("ERROR: secrets.json was modified during deletion!")
+                            raise Exception("Preservation failed - secrets.json corrupted")
+                        log_boot_message("✓ secrets.json preserved after deletion")
+                    except OSError:
+                        log_boot_message("ERROR: secrets.json was deleted during cleanup!")
+                        raise Exception("Preservation failed - secrets.json deleted")
+                
                 # Update LED after deletion
                 if installer:
                     installer.update_led()
                 
-                # Step 5: Move files from pending_update/root to root
+                # Step 6: Move files from pending_update/root to root
                 move_directory_contents(PENDING_ROOT_DIR, "/", installer)
                 os.sync()  # Sync after moving all files
                 
-                # Validate critical files are present after installation
+                # Verify preserved files still exist after move
+                if secrets_exists:
+                    try:
+                        with open("/secrets.json", "r") as f:
+                            post_move_data = f.read()
+                        if post_move_data != secrets_data:
+                            log_boot_message("ERROR: secrets.json was modified during file move!")
+                            raise Exception("File move corrupted secrets.json")
+                        log_boot_message("✓ secrets.json preserved after file move")
+                    except OSError:
+                        log_boot_message("ERROR: secrets.json was deleted during file move!")
+                        raise Exception("File move deleted secrets.json")
+                
+                # Step 7: Validate critical files are present after installation
                 # Use centralized validation from UpdateManager if available
                 if UpdateManager:
                     all_present, missing_files = UpdateManager.validate_critical_files()
@@ -475,7 +537,7 @@ def process_pending_update():
                 if installer:
                     installer.update_led()
                 
-                # Step 6: Create or update recovery backup
+                # Step 8: Create or update recovery backup
                 log_boot_message("Creating recovery backup...")
                 if UpdateManager:
                     try:
@@ -493,7 +555,7 @@ def process_pending_update():
                 if installer:
                     installer.update_led()
                 
-                # Step 7: Cleanup pending update directory
+                # Step 9: Cleanup pending update directory
                 cleanup_pending_update(installer)
                 os.sync()  # Sync after cleanup
                 
