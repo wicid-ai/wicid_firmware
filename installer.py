@@ -18,6 +18,7 @@ import subprocess
 import re
 import json
 import time
+import threading
 from pathlib import Path
 
 # Load environment variables from .env if present
@@ -171,13 +172,20 @@ def delete_circuitpy_contents(circuitpy_path):
     
     for item in os.listdir(circuitpy_path):
         # Skip system folders and preserved files
-        if item in SYSTEM_FOLDERS or item in PRESERVED_FILES:
+        # Use case-insensitive comparison for FAT32 filesystem compatibility
+        if item in SYSTEM_FOLDERS or item.lower() in [f.lower() for f in PRESERVED_FILES]:
             print(f"  Preserving: {item}")
             continue
         
         # Skip all hidden files - they're system artifacts
         # These will be cleaned up separately after all operations complete
         if item.startswith('.'):
+            continue
+        
+        # Skip FAT32 short filenames related to macOS filesystem events
+        # These are 8.3 format aliases for .fseventsd contents that can't be deleted
+        if item.upper().startswith('FSEVEN~'):
+            print(f"  Skipping locked macOS artifact: {item}")
             continue
         
         item_path = circuitpy_path / item
@@ -206,6 +214,11 @@ def delete_circuitpy_contents(circuitpy_path):
                     "The device is now in Safe Mode and the filesystem is writable.\n"
                     "Run this installer again."
                 ) from e
+            elif e.errno == 14:  # EFAULT - Bad address (corrupted/locked file)
+                # This happens with macOS locked files or FAT32 corruption
+                # Skip and continue - these are typically system artifacts
+                print(f"  Skipping locked/corrupted file: {item} (Bad address)")
+                continue
             else:
                 print_error(f"Could not delete {item}: {e}")
                 raise
@@ -263,6 +276,12 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
             if item.startswith('.'):
                 continue
             
+            # Skip preserved files - never overwrite them
+            # Use case-insensitive comparison for FAT32 filesystem
+            if item.lower() in [f.lower() for f in PRESERVED_FILES]:
+                print(f"  Skipping preserved file: {item}")
+                continue
+            
             src_path = source_dir / item
             dst_path = dest_dir / item
             
@@ -274,22 +293,47 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
                             shutil.rmtree(dst_path)
                         else:
                             dst_path.unlink()
-                    # Use copy_function=shutil.copy to avoid metadata issues on FAT
-                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True, copy_function=shutil.copy)
+                    # Use copy_function=shutil.copyfile to avoid metadata/permission issues on FAT32
+                    # copyfile() only copies data, no permissions or timestamps
+                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True, copy_function=shutil.copyfile)
                     print(f"  Copied directory: {item}/")
                     copied_count += 1
             else:
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Additional safety check: never delete preserved files from destination
+                # This protects against FAT32 aliasing or path confusion bugs
+                dst_name = dst_path.name
+                if dst_name.lower() in [f.lower() for f in PRESERVED_FILES]:
+                    print(f"  ERROR: Attempted to overwrite preserved file: {dst_name}")
+                    print(f"    Source: {src_path}")
+                    print(f"    Destination: {dst_path}")
+                    raise Exception(f"BUG: Copy operation would overwrite preserved file {dst_name}")
+                
                 # Remove destination if it exists (handles stale dirs/files)
                 if dst_path.exists():
                     if dst_path.is_dir():
                         shutil.rmtree(dst_path)
                     else:
                         dst_path.unlink()
-                # Use copy() instead of copy2() to avoid metadata issues on FAT
-                shutil.copy(src_path, dst_path)
-                print(f"  Copied file: {item}")
-                copied_count += 1
+                
+                # Use a safer two-step copy for FAT32 filesystems to avoid file handle confusion
+                # Copy to temporary name first, then rename
+                temp_dst = dst_path.parent / f".tmp_{item}_{os.getpid()}"
+                try:
+                    # Copy to temporary file
+                    shutil.copyfile(src_path, temp_dst)
+                    # Rename to final destination (atomic operation)
+                    temp_dst.rename(dst_path)
+                    print(f"  Copied file: {item}")
+                    copied_count += 1
+                except Exception as e:
+                    # Clean up temp file if something failed
+                    try:
+                        temp_dst.unlink()
+                    except:
+                        pass
+                    raise e
     
     except OSError as e:
         # Check for read-only filesystem error
@@ -418,6 +462,21 @@ def validate_simulated_ota_prerequisites(web_root_dir, circuitpy_path, zip_path)
     return True, ""
 
 
+def _drain_stdout(pipe):
+    """
+    Continuously drain stdout pipe to prevent blocking.
+    Runs in a background daemon thread.
+    
+    Args:
+        pipe: File object to drain
+    """
+    try:
+        for line in pipe:
+            pass  # Discard output
+    except:
+        pass  # Pipe closed or process died
+
+
 def start_wicid_web_server(web_root_dir):
     """
     Start the WICID Web application server in the background.
@@ -451,6 +510,7 @@ def start_wicid_web_server(web_root_dir):
         timeout = 30  # seconds
         output_lines = []
         local_url = None
+        candidate_urls = []
         
         while time.time() - start_time < timeout:
             line = process.stdout.readline()
@@ -466,8 +526,7 @@ def start_wicid_web_server(web_root_dir):
             
             # Check if ready
             if "ready" in line.lower():
-                # Found ready marker, now look for Network URL in subsequent lines
-                # Read a few more lines to find the Network URL
+                # Found ready marker, now collect all Network URLs from subsequent lines
                 for _ in range(10):
                     line = process.stdout.readline()
                     if not line:
@@ -478,11 +537,31 @@ def start_wicid_web_server(web_root_dir):
                     # Look for Network URL pattern: "Network: http://IP:PORT/"
                     match = re.search(r'Network:\s+(http://[\d.]+:\d+/?)', line)
                     if match:
-                        local_url = match.group(1).rstrip('/')
+                        url = match.group(1).rstrip('/')
+                        candidate_urls.append(url)
+                    
+                    # Stop reading when we see the help prompt (no more URLs after this)
+                    if "press" in line.lower():
                         break
                 
-                # Exit the outer loop after finding ready
+                # Exit the outer loop after collecting URLs
                 break
+        
+        # Start background thread to drain stdout and prevent pipe blocking
+        # This is critical: Vite continues to output messages, and if we don't drain
+        # the pipe, it will fill up (~64KB) and block the process, preventing termination
+        drain_thread = threading.Thread(target=_drain_stdout, args=(process.stdout,), daemon=True)
+        drain_thread.start()
+        
+        # Prioritize URLs starting with 10.0.0, otherwise use the first one found
+        if candidate_urls:
+            for url in candidate_urls:
+                if re.search(r'http://10\.0\.0\.\d+', url):
+                    local_url = url
+                    break
+            # If no 10.0.0.x URL found, use the first candidate
+            if local_url is None:
+                local_url = candidate_urls[0]
         
         if local_url is None:
             process.terminate()
@@ -758,11 +837,63 @@ def hard_update(circuitpy_path, zip_path):
         # Clean up macOS metadata files BEFORE deletion to prevent interference
         cleanup_macos_artifacts(circuitpy_path)
         
+        # Verify secrets.json exists before deletion (for debugging)
+        secrets_path = circuitpy_path / "secrets.json"
+        had_secrets = secrets_path.exists()
+        if had_secrets:
+            print(f"  ✓ Found existing secrets.json to preserve")
+            try:
+                secrets_size = secrets_path.stat().st_size
+                print(f"    Size: {secrets_size} bytes")
+            except:
+                pass
+        else:
+            print(f"  ℹ No secrets.json found (first-time setup)")
+        
         # Delete existing files on CIRCUITPY
         delete_circuitpy_contents(circuitpy_path)
         
+        # Sync filesystem after deletion
+        print("  Syncing filesystem after deletion...")
+        try:
+            import os as os_module
+            os_module.sync()
+        except:
+            pass  # sync() not available on all platforms
+        
+        # Verify secrets.json still exists after deletion (preservation check)
+        if had_secrets:
+            if not secrets_path.exists():
+                print_error("BUG DETECTED: secrets.json was deleted during cleanup!")
+                print_error("This should never happen - preservation logic failed")
+                raise Exception("Preservation logic failed - secrets.json was deleted in delete_circuitpy_contents()")
+            else:
+                print(f"  ✓ Verified secrets.json preserved after deletion")
+        
         # Copy new firmware files to CIRCUITPY root
         copy_files_to_circuitpy(temp_dir, circuitpy_path, recursive=True)
+        
+        # Sync filesystem after copy
+        print("  Syncing filesystem after copy...")
+        try:
+            import os as os_module
+            os_module.sync()
+        except:
+            pass
+        
+        # Final verification that secrets.json still exists (copy operation check)
+        if had_secrets:
+            if not secrets_path.exists():
+                print_error("BUG DETECTED: secrets.json was deleted during file copy!")
+                print_error("This should never happen - copy operation overwrote preserved file")
+                raise Exception("File copy overwrote preserved secrets.json")
+            else:
+                print(f"  ✓ Verified secrets.json preserved after copy")
+                try:
+                    final_size = secrets_path.stat().st_size
+                    print(f"    Final size: {final_size} bytes")
+                except:
+                    pass
         
         # Remove any newly created macOS metadata files
         cleanup_macos_artifacts(circuitpy_path)
@@ -1048,4 +1179,5 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
 
