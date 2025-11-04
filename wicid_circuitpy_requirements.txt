@@ -1,6 +1,6 @@
 # Required CircuitPython libraries for WICID
 # Install using:
-# circup install -r requirements.txt
+# circup install -r wicid_circuitpy_requirements.txt.txt
 
 adafruit_pixelbuf==2.0.10
 adafruit_connection_manager==3.1.6

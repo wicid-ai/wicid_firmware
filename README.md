@@ -172,6 +172,30 @@ The device includes robust error handling and will:
 - `circup` for managing CircuitPython libraries
 - (Optional) Mu Editor for code editing and serial console
 
+### Required Libraries
+
+Install the following Python packages for building firmware:
+
+```bash
+pip install circup rcssmin rjsmin htmlmin beautifulsoup4
+```
+
+**Note**: For consistent package versions across the project, consider using `pipenv` with the included `Pipfile` and `Pipfile.lock`. See [pipenv](https://pipenv.pypa.io/) for installation and usage instructions.
+
+**Required packages:**
+- `circup`: Manages CircuitPython libraries in `/src/lib/`
+- `rcssmin`: CSS minification for captive portal web assets
+- `rjsmin`: JavaScript minification for captive portal web assets
+- `htmlmin`: HTML minification for captive portal web assets
+- `beautifulsoup4`: HTML parsing for combining CSS/JS into single-file HTML
+
+**Build tools:**
+- `mpy-cross`: CircuitPython bytecode compiler (must match target CircuitPython version)
+  - See [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md) for installation instructions
+
+**Optional packages:**
+- `python-dotenv`: For `.env` file support in `installer.py` (simulated OTA updates)
+
 ### Filesystem Modes
 
 The device uses `boot.py` to control filesystem access. By default, it runs in **Production Mode** which allows the setup portal to save configuration files but disables USB mass storage.
@@ -261,7 +285,7 @@ User-specific credentials, preserved across firmware updates:
 - `lib/`: CircuitPython libraries
 - `www/`: Web interface files for the setup portal
 - `docs/`: Documentation including build and update server specifications
-- `requirements.txt`: CircuitPython library dependencies
+- `wicid_circuitpy_requirements.txt.txt`: CircuitPython library dependencies
 
 ### Flashing and Building
 
@@ -302,7 +326,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
    pip install circup
    ```
 
-2. **Update requirements.txt** to reflect the library changes you need
+2. **Update wicid_circuitpy_requirements.txt.txt** to reflect the library changes you need
 
 3. **Delete the existing /src/lib/ directory** to regenerate it cleanly:
    ```bash
@@ -318,7 +342,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
 
 5. **Install libraries** using circup from the project root:
    ```bash
-   circup --path src install -r requirements.txt
+   circup --path src install -r wicid_circuitpy_requirements.txt.txt
    ```
 
 6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package

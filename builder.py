@@ -4,6 +4,7 @@ WICID Firmware Build Tool
 
 Interactive CLI tool and build engine for creating firmware release packages.
 Generates manifests, compiles bytecode, creates ZIP packages, and generates releases.json.
+Also builds/minifies captive portal web assets (src/www → build/www).
 
 Full reset strategy: every release contains complete firmware (no partial updates).
 Note: releases.json is generated but not committed (gitignored, deployed separately).
@@ -16,8 +17,31 @@ import subprocess
 import zipfile
 import shutil
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Optional minifiers / HTML parser (graceful fallback if not installed)
+try:
+    from rjsmin import jsmin as _jsmin
+except Exception:
+    _jsmin = None
+try:
+    from rcssmin import cssmin as _cssmin
+except Exception:
+    _cssmin = None
+# Require htmlmin2 distribution, but import its module name "htmlmin"
+try:
+    import htmlmin as _htmlmin  # module provided by htmlmin2
+    from importlib.metadata import distribution
+    # hard-check that the installed provider is *htmlmin2*, not legacy htmlmin
+    distribution("htmlmin2")  # raises if htmlmin2 dist isn't installed
+except Exception as e:
+    _htmlmin = None
+try:
+    from bs4 import BeautifulSoup as _BS
+except Exception:
+    _BS = None
 
 # Color codes for terminal output
 class Colors:
@@ -129,6 +153,139 @@ def save_releases_json(releases_data):
     with open("releases.json", 'w') as f:
         json.dump(releases_data, f, indent=2)
         f.write('\n')  # Add trailing newline
+
+
+# === Captive portal (www) build helpers (minimal integration) ===
+def _minify_css(css: str) -> str:
+    """Minify CSS using rcssmin if available, else return original."""
+    if _cssmin:
+        try:
+            return _cssmin(css)
+        except Exception:
+            return css
+    return css
+
+def _minify_js(js: str) -> str:
+    """Minify JS using rjsmin if available, else return original."""
+    if _jsmin:
+        try:
+            return _jsmin(js)
+        except Exception:
+            return js
+    return js
+
+def _minify_html(html: str) -> str:
+    """Minify HTML using htmlmin2/htmlmin if available, else collapse simple whitespace."""
+    if _htmlmin:
+        try:
+            return _htmlmin.minify(
+                html,
+                remove_comments=True,
+                remove_empty_space=True,
+                reduce_boolean_attributes=True,
+                remove_optional_attribute_quotes=False
+            )
+        except Exception:
+            return html
+    # very light fallback: trim leading/trailing spaces on lines
+    return "\n".join(line.strip() for line in html.splitlines() if line.strip())
+
+def _inline_single_file_html(html: str, css_min: str, js_min: str) -> str:
+    """
+    Inline CSS and JS into provided HTML. Uses BeautifulSoup when available,
+    otherwise falls back to conservative regex replacements.
+    """
+    if _BS:
+        soup = _BS(html, 'html.parser')
+        # Replace <link rel="stylesheet" ...> with <style>...</style>
+        link = soup.find('link', rel='stylesheet')
+        if link:
+            style_tag = soup.new_tag('style')
+            style_tag.string = css_min
+            link.replace_with(style_tag)
+        # Replace first <script src=...> with inline script at end of body
+        script = soup.find('script', src=True)
+        if script:
+            inline = soup.new_tag('script')
+            inline.string = js_min
+            script.decompose()
+            if soup.body:
+                soup.body.append(inline)
+            else:
+                soup.append(inline)
+        return str(soup)
+    # Conservative regex fallback (use function repl to prevent backslash escapes)
+    link_pat = re.compile(r'<link[^>]+rel=["\']stylesheet["\'][^>]*>', re.IGNORECASE)
+    html_out = link_pat.sub(lambda _m: '<style>' + css_min + '</style>', html, count=1)
+    script_pat = re.compile(r'<script[^>]+src=["\'][^"\']+["\'][^>]*>\s*</script>', re.IGNORECASE)
+    html_out = script_pat.sub(lambda _m: '<script>' + js_min + '</script>', html_out, count=1)
+    return html_out
+
+def build_www_assets(src_www: Path, out_root: Path, mode: str = "single") -> None:
+    """
+    Build the captive portal www assets into build/www.
+      mode: "single" (default), "split", or "both"
+    Outputs (always under build/www):
+      - single: index.html (inline CSS/JS)
+      - split/both: design-tokens.min.css, main.min.js, and index.html pointing to them
+    """
+    index_path = src_www / "index.html"
+    css_path = src_www / "design-tokens.css"
+    js_path = src_www / "main.js"
+
+    if not index_path.exists():
+        print_warning("www/index.html not found; copying www directory as-is.")
+        shutil.copytree(src_www, out_root / "www", dirs_exist_ok=True)
+        return
+
+    index_html = index_path.read_text(encoding="utf-8")
+    css_text = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
+    js_text = js_path.read_text(encoding="utf-8") if js_path.exists() else ""
+
+    css_min = _minify_css(css_text)
+    js_min  = _minify_js(js_text)
+
+    out_www = out_root / "www"
+    out_www.mkdir(parents=True, exist_ok=True)
+
+    # Split build (optional)
+    if mode in ("split", "both"):
+        (out_www / "design-tokens.min.css").write_text(css_min or "", encoding="utf-8")
+        (out_www / "main.min.js").write_text(js_min or "", encoding="utf-8")
+        html_split = index_html
+        if _BS:
+            soup = _BS(html_split, 'html.parser')
+            link = soup.find('link', rel='stylesheet')
+            if link:
+                link['href'] = "./design-tokens.min.css"
+            script = soup.find('script', src=True)
+            if script:
+                script['src'] = "./main.min.js"
+            html_split = str(soup)
+        else:
+            html_split = re.sub(r'<link([^>]+)href=["\'][^"\']+["\']', r'<link\1href="./design-tokens.min.css"', html_split, count=1, flags=re.IGNORECASE)
+            html_split = re.sub(r'<script([^>]+)src=["\'][^"\']+["\']', r'<script\1src="./main.min.js"', html_split, count=1, flags=re.IGNORECASE)
+
+        (out_www / "index.html").write_text(_minify_html(html_split), encoding="utf-8")
+        print_success(f"Built split www → {out_www}")
+
+    # Single-file build (default) — always writes index.html under build/www/
+    if mode in ("single", "both"):
+        html_single = _inline_single_file_html(index_html, css_min, js_min)
+        (out_www / "index.html").write_text(_minify_html(html_single), encoding="utf-8")
+        print_success(f"Built single-file www → {out_www}")
+
+    # Copy any additional static assets (e.g., favicon.svg, inline svgs, logos)
+    for p in src_www.iterdir():
+        if p.is_file() and p.name not in ("index.html", "design-tokens.css", "main.js"):
+            target = out_www / p.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, target)
+
+    # Warn if minifiers are missing
+    if (_cssmin is None) or (_jsmin is None) or (_htmlmin is None):
+        print_warning("Minifier packages not fully installed. Install with:")
+        print_warning("  pip install rcssmin rjsmin htmlmin2 beautifulsoup4")
 
 
 def parse_version(version_str):
@@ -300,6 +457,7 @@ def interactive_build():
         
         # Update releases.json with checksum
         print_success(f"Updating releases.json...")
+        releases_data = load_releases_json()
         update_releases_json(releases_data, manifest, target_machines, target_oses, release_type, version, checksum)
         save_releases_json(releases_data)
         
@@ -380,7 +538,6 @@ def create_manifest(version, target_machines, target_oses, release_type, release
         "release_notes": release_notes,
         "release_date": datetime.now(timezone.utc).isoformat(),
     }
-    
     return manifest
 
 
@@ -426,7 +583,7 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
 
 
 def build_package(manifest, version):
-    """Build the release package with bytecode compilation."""
+    """Build the release package with bytecode compilation and web asset build."""
     print_success("Compiling Python to bytecode...")
     
     # Create releases directory
@@ -471,14 +628,22 @@ def build_package(manifest, version):
             # Fall back to copying source file
             shutil.copy2(py_file, build_dir / rel_path)
     
-    # Copy non-Python files
+    # Copy non-Python files (special-case www)
     for item in src_path.iterdir():
         if item.is_file() and not item.name.endswith('.py'):
             shutil.copy2(item, build_dir / item.name)
             print(f"  Copied: {item.name}")
         elif item.is_dir() and item.name not in ['__pycache__']:
-            shutil.copytree(item, build_dir / item.name, dirs_exist_ok=True)
-            print(f"  Copied: {item.name}/")
+            if item.name == 'www':
+                # Build minified/combined web UI into build/www
+                www_mode = os.environ.get('WICID_WWW_MODE', 'single').lower()
+                if www_mode not in ('single', 'split', 'both'):
+                    www_mode = 'single'
+                print_success(f"Building www assets (mode={www_mode})...")
+                build_www_assets(item, build_dir, mode=www_mode)
+            else:
+                shutil.copytree(item, build_dir / item.name, dirs_exist_ok=True)
+                print(f"  Copied: {item.name}/")
     
     # Copy manifest.json to build directory
     shutil.copy2("src/manifest.json", build_dir / "manifest.json")
@@ -719,47 +884,39 @@ def show_help():
 {Colors.HEADER}{Colors.BOLD}WICID Firmware Build Tool{Colors.ENDC}
 
 Interactive CLI tool and build engine for creating firmware release packages.
-Generates manifests, compiles bytecode, creates ZIP packages, and generates releases.json.
+Generates manifests, compiles bytecode, creates ZIP packages, generates releases.json,
+and builds/minifies captive portal web assets.
 
 {Colors.BOLD}USAGE:{Colors.ENDC}
     builder.py              Run interactive build wizard
     builder.py --build      Non-interactive build from existing manifest
     builder.py --help       Display this help message
 
-{Colors.BOLD}MODES:{Colors.ENDC}
-    {Colors.OKCYAN}Interactive Mode{Colors.ENDC} (default)
-        Guides you through creating a new firmware release:
-        • Select target machine types and operating systems
-        • Choose release type (production/development)
-        • Set version number with automatic suggestions
-        • Add release notes
-        • Build and package firmware
-        • Optional: commit, tag, and push to git
-
-    {Colors.OKCYAN}Build Mode{Colors.ENDC} (--build)
-        Non-interactive build from existing src/manifest.json
-        Used by CI/CD pipelines (GitHub Actions)
-
 {Colors.BOLD}WORKFLOW:{Colors.ENDC}
     1. Updates VERSION in src/settings.toml
     2. Creates/updates src/manifest.json
     3. Compiles Python files to bytecode (.mpy)
-    4. Bundles firmware into releases/wicid_install.zip
-    5. Generates releases.json with download URLs (gitignored)
-    6. Optionally commits, tags (v{{version}}), and pushes to git
-
-{Colors.BOLD}EXAMPLES:{Colors.ENDC}
-    {Colors.OKBLUE}# Interactive release creation{Colors.ENDC}
-    ./builder.py
-
-    {Colors.OKBLUE}# Build from existing manifest (CI){Colors.ENDC}
-    ./builder.py --build
+    4. Builds and minifies captive portal web assets (src/www → build/www)
+       • CSS and JS minified (rcssmin / rjsmin)
+       • index.html combined with inline CSS/JS (htmlmin2/htmlmin)
+       • Default mode: single (inline)
+       • Override with WICID_WWW_MODE=split|both
+    5. Bundles firmware into releases/wicid_install.zip
+    6. Generates releases.json (gitignored)
+    7. Optionally commits, tags (v{{version}}), and pushes to git
 
 {Colors.BOLD}FILES:{Colors.ENDC}
     src/settings.toml       VERSION definition (committed)
     src/manifest.json       Release metadata (auto-generated, committed)
+    src/www/                Captive portal sources (HTML/CSS/JS)
+    build/www/              Built web assets (single-file index.html by default)
     releases.json           Release index (auto-generated, gitignored)
     releases/               Built firmware packages (gitignored)
+
+Default captive portal build mode: single (inline CSS/JS).
+Override with env var:
+    WICID_WWW_MODE=split   # external minified CSS/JS alongside index.html
+    WICID_WWW_MODE=both    # produce both inline index.html AND external minified assets
 """
     print(help_text)
 
@@ -772,9 +929,8 @@ def main():
             show_help()
             sys.exit(0)
         elif arg == '--build':
-            # Non-interactive build mode (for GitHub Actions)
+            # Non-interactive build mode (for CI)
             print("Building from existing manifest...")
-            # Load manifest and build
             with open("src/manifest.json", 'r') as f:
                 manifest = json.load(f)
             version = manifest['version']
@@ -796,7 +952,6 @@ def main():
             )
             save_releases_json(releases_data)
             print_success("releases.json updated")
-            
             sys.exit(0)
         else:
             print_error(f"Unknown option: {arg}")
