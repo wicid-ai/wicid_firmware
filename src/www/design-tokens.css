@@ -1,31 +1,5 @@
-.banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(10, 15, 28, 0.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
-  padding: 0.625rem 1.5rem;
-  height: 4rem;
-}
-
-@media (min-width: 640px) {
-  .banner {
-    padding: 0.75rem 3rem;
-    height: 4.25rem;
-  }
-}
-/* WICID Design Tokens - Mobile-First Responsive Design */
-/* Matches www.wicid.ai/pre-order exactly on mobile and desktop */
-
 :root {
-  /* HSL Design tokens from actual WICID website */
+  /* HSL Design tokens aligned with SPA */
   --background: 0 0% 100%;
   --foreground: 222.2 84% 4.9%;
   --card: 0 0% 100%;
@@ -45,1042 +19,218 @@
   --border: 214.3 31.8% 91.4%;
   --input: 214.3 31.8% 91.4%;
   --ring: 222.2 84% 4.9%;
-  --radius: 0.5rem;
-  
-  /* Mobile-first container widths */
+  --radius: 0.75rem;
+
+  /* Container widths */
   --container-mobile: 100%;
   --container-sm: 640px;
   --container-md: 768px;
   --container-lg: 1024px;
-  --container-xl: 1280px;
-  
-  /* Weather-themed RGB colors from actual WICID website */
+
+  /* Weather palette (RGB) */
   --weather-radar-50: 240 249 255;
   --weather-radar-100: 224 242 254;
   --weather-radar-200: 186 230 253;
   --weather-radar-300: 125 211 252;
   --weather-radar-400: 56 189 248;
   --weather-radar-500: 14 165 233;
-  --weather-radar-600: 2 132 199;
-  --weather-radar-700: 3 105 161;
-  --weather-radar-800: 7 89 133;
-  --weather-radar-900: 12 74 110;
-
-  --weather-retro-50: 248 250 252;
-  --weather-retro-100: 241 245 249;
-  --weather-retro-200: 226 232 240;
-  --weather-retro-300: 203 213 225;
-  --weather-retro-400: 148 163 184;
-  --weather-retro-500: 100 116 139;
-  --weather-retro-600: 71 85 105;
-  --weather-retro-700: 51 65 85;
-  --weather-retro-800: 30 41 59;
-  --weather-retro-900: 15 23 42;
 
   --weather-amber-400: 251 191 36;
   --weather-amber-500: 245 158 11;
-  --weather-warm-400: 255 138 76;
-  --weather-warm-500: 255 87 34;
+  --weather-amber-600: 217 119 6;
+
   --weather-green-500: 34 197 94;
-  --weather-cold-500: 14 165 233;
+
+  /* Semantic aliases */
+  --success-rgb: var(--weather-green-500);
+  --info-rgb: var(--weather-radar-400);
+  --error-hsl: var(--destructive);
 }
 
-.dark {
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --card: 222.2 84% 4.9%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222.2 84% 4.9%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 210 40% 98%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 217.2 32.6% 17.5%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217.2 32.6% 17.5%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --accent: 217.2 32.6% 17.5%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217.2 32.6% 17.5%;
-  --input: 217.2 32.6% 17.5%;
-  --ring: 212.7 26.8% 83.9%;
-}
-
-/* Mobile-First Base Styles matching WICID pre-order page */
-* {
-  box-sizing: border-box;
-  border-width: 0;
-  border-style: solid;
-  border-color: hsl(var(--border));
-}
-
-*:before,
-*:after {
-  box-sizing: border-box;
-  border-width: 0;
-  border-style: solid;
-  border-color: hsl(var(--border));
-}
-
-html {
-  line-height: 1.5;
-  -webkit-text-size-adjust: 100%;
-  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  font-feature-settings: normal;
-  font-variation-settings: normal;
-  -webkit-tap-highlight-color: transparent;
-  scroll-behavior: smooth;
-}
-
+/* Base / Typography */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
   margin: 0;
-  line-height: inherit;
-  background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  min-height: 100vh;
-  min-height: 100svh;
+  background: hsl(var(--background));
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
 }
 
-/* Container - Mobile First like WICID */
-.container {
-  width: 100%;
-  margin-right: auto;
-  margin-left: auto;
-  padding-right: 1rem;
-  padding-left: 1rem;
-}
-
-@media (min-width: 640px) {
-  .container {
-    padding-right: 2rem;
-    padding-left: 2rem;
-  }
-}
-
-@media (min-width: 1400px) {
-  .container {
-    max-width: 1400px;
-  }
-}
-
-/* Exact WICID LED Animation Keyframes */
-@keyframes led-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
-}
-
-@keyframes led-ring {
-  0%, 100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-
-/* Smaller WICID LED Circle for banner */
-.logo-circle {
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgb(var(--weather-radar-400)), rgb(var(--weather-radar-500)));
-  animation: led-pulse 1.5s ease-in-out infinite;
-  position: relative;
-}
-
-@media (min-width: 640px) {
-  .logo-circle {
-    width: 1.75rem;
-    height: 1.75rem;
-  }
-}
-
-.logo-circle::before {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  border: 2px solid rgb(var(--weather-radar-400) / 0.3);
-  animation: led-ring 1.5s ease-in-out infinite;
-  z-index: -1;
-}
-
-.logo-circle::after {
-  content: '';
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 1px solid rgb(var(--weather-radar-400) / 0.15);
-  animation: led-ring 1.5s ease-in-out infinite;
-  z-index: -2;
-}
-
-/* Exact WICID Button Styles */
-
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  white-space: nowrap;
-  border-radius: calc(var(--radius) - 2px);
-  font-size: 1.125rem;
-  line-height: 1.75rem;
-  font-weight: 700;
-  transition: all 0.2s ease;
-  border: none;
-  background: linear-gradient(135deg, rgb(var(--weather-radar-500)), rgb(var(--weather-radar-700)));
-  color: hsl(var(--primary-foreground));
-  padding: 1rem 2rem;
-  height: auto;
-  min-height: 2.75rem;
-  width: 100%;
-  cursor: pointer;
-  touch-action: manipulation;
-  box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.15), 0 4px 6px -4px rgba(15, 23, 42, 0.2);
-}
-
-@media (min-width: 640px) {
-  .btn-primary {
-    width: auto;
-    min-height: 3rem;
-  }
-}
-
-.btn-primary:hover {
-  background: linear-gradient(135deg, rgb(var(--weather-radar-400)), rgb(var(--weather-radar-600)));
-  transform: translateY(-1px);
-  box-shadow: 0 12px 20px -6px rgba(15, 23, 42, 0.22);
-}
-
-.btn-primary:active {
-  transform: translateY(0);
-  box-shadow: 0 4px 6px -4px rgba(15, 23, 42, 0.2);
-}
-
-.btn-primary:focus-visible {
-  outline: 2px solid rgb(var(--weather-warm-400));
-  outline-offset: 2px;
-}
-
-.btn-primary:disabled {
-  pointer-events: none;
-  opacity: 0.5;
-  transform: none;
-}
-
-/* Rich hero background matching WICID homepage */
+/* Hero BG (subtle) */
 .hero-background {
-  background: linear-gradient(135deg, 
-    rgb(var(--weather-radar-50)) 0%,
-    rgb(var(--weather-radar-100)) 25%,
-    rgb(var(--weather-retro-50)) 50%,
-    rgb(var(--weather-radar-100)) 75%,
-    rgb(var(--weather-radar-50)) 100%
-  );
-  min-height: 100vh;
-  min-height: 100svh;
-  position: relative;
+  background: radial-gradient(1200px 600px at 10% -20%, rgb(var(--weather-radar-50)) 0%, transparent 50%),
+              radial-gradient(1200px 600px at 110% -20%, rgb(var(--weather-radar-100)) 0%, transparent 50%),
+              hsl(var(--background));
 }
 
-/* Add subtle texture overlay for richness */
-.hero-background::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: radial-gradient(circle at 25% 25%, rgb(var(--weather-radar-300) / 0.1) 0%, transparent 50%),
-              radial-gradient(circle at 75% 75%, rgb(var(--weather-radar-400) / 0.05) 0%, transparent 50%);
-  pointer-events: none;
+/* Banner/Header */
+.banner {
+  position: sticky; top: 0; z-index: 20;
+  margin-bottom: 5px;
+  backdrop-filter: saturate(1.1) blur(6px);
+  background: hsl(var(--background) / 0.85);
+  border-bottom: 1px solid hsl(var(--border));
+}
+.banner-content {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .75rem; max-width: var(--container-lg); margin: 0 auto; padding: .75rem 1rem;
+}
+.brand-lockup {
+  display: inline-flex; align-items: center; gap: .6rem;
+  text-decoration: none; color: hsl(var(--foreground));
+}
+.logo-circle {
+  width: 22px; height: 22px; border-radius: 999px;
+  background: radial-gradient(90% 90% at 30% 30%, rgb(var(--weather-radar-400)) 0%, rgb(var(--weather-radar-500)) 70%);
+  box-shadow: 0 0 0 4px rgb(var(--weather-radar-400) / .12), 0 6px 24px rgb(0 0 0 / .05);
+}
+.brand-wordmark {
+  font-weight: 750;
+  letter-spacing: .2px;
+  font-size: 1.05rem;
+}
+.brand-spacer { min-width: 24px; }
+
+/* Main layout */
+.main-content { padding: 1rem 1rem 1.5rem; }
+.content-wrapper {
+  width: 100%;
+  max-width: var(--container-md);
+  margin: 0 auto;
 }
 
-/* Force light theme only - no dark mode */
-
-/* Rich Form Container matching WICID homepage aesthetic */
+/* Card-ish form container */
 .form-container {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   padding: 1rem;
-  box-shadow: 
-    0 20px 25px -5px rgb(0 0 0 / 0.1), 
-    0 10px 10px -5px rgb(0 0 0 / 0.04),
-    0 0 0 1px rgb(255 255 255 / 0.05);
-  width: 100%;
-  max-width: 100%;
-  margin: 0;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Subtle gradient overlay for depth */
-.form-container::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, 
-    transparent 0%, 
-    rgb(var(--weather-radar-400) / 0.3) 50%, 
-    transparent 100%);
-  pointer-events: none;
-}
-
-@media (min-width: 640px) {
-  .form-container {
-    padding: 1.5rem;
-    max-width: 500px;
-    margin: 0 auto;
-    border-radius: calc(var(--radius) + 4px);
-  }
-}
-
-@media (min-width: 768px) {
-  .form-container {
-    padding: 2rem;
-    max-width: 600px;
-    border-radius: calc(var(--radius) + 8px);
-  }
-}
-
-/* Light theme only - no dark mode overrides */
-
-/* Exact WICID banner styling */
-
-
-.banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(15, 23, 42, 0.95);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
-  padding: 0.25rem 1.5rem;
-  height: 56px;
-  box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.18), 0 4px 6px -4px rgba(15, 23, 42, 0.22);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@media (min-width: 640px) {
-  .banner {
-    padding: 0.6rem 3rem;
-    height: 56px;
-  }
-}
-
-
-
-
-.banner-content {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  justify-content: space-between;
-  width: 100%;
-  max-width: 1120px;
-}
-
-@media (min-width: 1024px) {
-  .banner-content {
-    gap: 0.75rem;
-  }
-}
-
-
-.banner-logo {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: white;
-  font-weight: 500;
-  font-size: 1.2rem;
-  line-height: 1.5rem;
-  letter-spacing: 0.06em;
-  text-transform: none;
-}
-
-@media (min-width: 640px) {
-  .banner-logo {
-    font-size: 1.2rem;
-    letter-spacing: 0.06em;
-  }
-}
-
-.banner-logo span {
-  display: inline-block;
-  line-height: 1.45rem;
-}
-
-.banner-text {
-  display: none !important;
-}
-
-/* Mobile-First Main Content */
-.main-content {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  width: 100%;
-  padding-top: 4.5rem; /* Account for mobile banner */
-  min-height: 100vh;
-  min-height: 100svh;
-}
-
-.content-wrapper {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 600px;
-}
-
-@media (min-width: 640px) {
-  .main-content {
-    padding: 1.5rem;
-    padding-top: 5rem;
-  }
-}
-
-/* Form Heading Styles */
-.form-heading {
-  text-align: center;
-  margin-bottom: 1.5rem;
-}
-
-@media (min-width: 640px) {
-  .form-heading {
-    margin-bottom: 2rem;
-  }
-}
-
-.form-heading h1 {
-  font-size: 2.25rem;
-  font-weight: 700;
-  color: hsl(var(--foreground));
-  margin: 0;
-  line-height: 2.5rem;
-  letter-spacing: -0.025em;
-  text-align: center;
-}
-
-@media (min-width: 768px) {
-  .form-heading h1 {
-    font-size: 2.5rem;
-    line-height: 1.2;
-  }
-}
-
-/* Mobile-First Form Styles matching WICID pre-order */
-.form-group {
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.06);
   margin-bottom: 1rem;
 }
-
-@media (min-width: 640px) {
-  .form-group {
-    margin-bottom: 1.25rem;
-  }
+.form-heading h1 {
+  font-size: 1.35rem;
+  line-height: 1.2;
+  margin: 0 0 .5rem 0;
+  letter-spacing: .2px;
 }
-
-@media (min-width: 768px) {
-  .form-group {
-    margin-bottom: 1.5rem;
-  }
-}
-
-.form-group + .form-group {
-  margin-top: 0.75rem;
-}
-
-@media (min-width: 768px) {
-  .form-group + .form-group {
-    margin-top: 1rem;
-  }
-}
-
-
-label {
-  display: block;
-  font-size: 0.95rem;
-  font-weight: 400;
-  line-height: 1.3;
-  letter-spacing: 0.01em;
-  text-transform: none;
-  color: hsl(var(--foreground));
-  margin-bottom: 0.5rem;
-}
-
-@media (min-width: 640px) {
-  label {
-    margin-bottom: 0.75rem;
-  }
-}
-
-.form-control {
-  display: flex;
-  width: 100%;
-  border-radius: calc(var(--radius) - 2px);
-  border: 1px solid hsl(var(--border));
-  background-color: hsl(var(--background));
-  padding: 0.75rem 1rem;
-  font-size: 1rem;
-  color: hsl(var(--foreground));
-  transition: all 0.2s ease;
-  min-height: 2.75rem;
-  -webkit-appearance: none;
-  appearance: none;
-  touch-action: manipulation;
-}
-
-@media (min-width: 640px) {
-  .form-control {
-    padding: 0.625rem 0.75rem;
-    font-size: 0.9375rem;
-    min-height: 2.5rem;
-  }
-}
-
-@media (min-width: 768px) {
-  .form-control {
-    padding: 0.5rem 0.75rem;
-    font-size: 0.875rem;
-    min-height: 2.25rem;
-  }
-}
-
-.form-control:focus {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
-  border-color: hsl(var(--ring));
-}
-
-.form-control::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.form-control:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-/* Mobile-optimized select styling */
-select.form-control {
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
-  background-position: right 0.75rem center;
-  background-repeat: no-repeat;
-  background-size: 1rem;
-  padding-right: 2.5rem;
-}
-
-/* Mobile-First Password container */
-.password-container {
-  position: relative;
-}
-
-.password-input {
-  padding-right: 3rem;
-}
-
-@media (min-width: 640px) {
-  .password-input {
-    padding-right: 2.5rem;
-  }
-}
-
-.password-toggle {
-  position: absolute;
-  right: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  padding: 0.5rem;
-  transition: color 0.2s ease;
-  touch-action: manipulation;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-@media (min-width: 640px) {
-  .password-toggle {
-    padding: 0.25rem;
-    min-width: 2rem;
-    min-height: 2rem;
-  }
-}
-
-.password-toggle:hover {
-  color: hsl(var(--foreground));
-}
-
-.password-toggle:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
-  border-radius: 0.25rem;
-}
-
-.password-toggle svg {
-  width: 1.5rem;
-  height: 1.5rem;
-  stroke: currentColor;
-}
-
-@media (min-width: 640px) {
-  .password-toggle svg {
-    width: 1.375rem;
-    height: 1.375rem;
-  }
-}
-
-/* Network Select */
-.network-select {
-  width: 100%;
-  cursor: pointer;
-}
-
-.network-option {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  padding: 0.5rem;
-}
-
-.network-option:hover {
-  background: hsl(var(--accent));
-}
-
-/* Status Messages */
-.status {
-  margin-top: 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: calc(var(--radius) - 2px);
-  font-size: 0.875rem;
-  display: none;
-}
-
-.status.show {
-  display: block;
-}
-
-.error {
-  background-color: hsl(var(--destructive) / 0.1);
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--destructive) / 0.2);
-}
-
-/* Error Container for Form Validation Errors */
-.error-container {
-  background-color: #fef2f2;
-  border: 2px solid #ef4444;
-  border-radius: calc(var(--radius) - 2px);
-  padding: 1rem 1rem 1rem 3rem;
-  margin-bottom: 1.5rem;
-  color: #991b1b;
-  font-size: 0.9375rem;
-  line-height: 1.5;
-  font-weight: 500;
-  position: relative;
-  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.1);
-}
-
-.error-container::before {
-  content: '';
-  position: absolute;
-  left: 1rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 1.25rem;
-  height: 1.25rem;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23dc2626'%3E%3Cpath fill-rule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z' clip-rule='evenodd'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-size: contain;
-  flex-shrink: 0;
-}
-
-@media (min-width: 640px) {
-  .error-container {
-    padding: 0.875rem 0.875rem 0.875rem 2.75rem;
-    font-size: 0.875rem;
-  }
-  
-  .error-container::before {
-    left: 0.875rem;
-    width: 1.125rem;
-    height: 1.125rem;
-  }
-}
-
-/* Form Fields with Errors */
-.form-control.error {
-  border-color: #ef4444;
-  border-width: 2px;
-  background-color: #fef2f2;
-}
-
-.form-control.error:focus {
-  outline: 2px solid #ef4444;
-  outline-offset: 2px;
-  border-color: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
-}
-
-.success {
-  background-color: rgb(var(--weather-green-500) / 0.1);
-  color: rgb(var(--weather-green-500));
-  border: 1px solid rgb(var(--weather-green-500) / 0.2);
-}
-
-
 .info {
   color: hsl(var(--muted-foreground));
-  font-size: 1.125rem;
-  margin-bottom: 1.5rem;
-  line-height: 1.625;
-  text-align: left;
-}
-
-/* Utility Classes */
-.hidden {
-  display: none !important;
-}
-
-.show {
-  display: block !important;
-}
-
-#ssid-manual {
-  display: none;
-  margin-top: 0.5rem;
-}
-
-#ssid-manual.show {
-  display: block !important;
-}
-
-.network-input-container {
-  position: relative;
-}
-
-/* Animations */
-@keyframes fadeIn {
-  from { 
-    opacity: 0; 
-    transform: translateY(10px); 
-  }
-  to { 
-    opacity: 1; 
-    transform: translateY(0); 
-  }
-}
-
-.animate-in {
-  animation: fadeIn 0.3s ease-out forwards;
-}
-
-@keyframes fadeOut {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-.fade-out {
-  animation: fadeOut 0.5s ease-out forwards;
-}
-
-/* Success Page Styles */
-.success-page {
-  background: linear-gradient(to bottom, 
-    rgb(var(--weather-retro-900)), 
-    rgb(var(--weather-retro-800)), 
-    rgb(var(--weather-retro-900))
-  );
-  color: hsl(var(--foreground));
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.success-container {
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  padding: 2rem;
-  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  max-width: 500px;
-  width: 100%;
-}
-
-.success-container h1 {
-  background: linear-gradient(to right, rgb(var(--weather-radar-400)), rgb(var(--weather-radar-500)));
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  margin-top: 0;
-  text-align: center;
-}
-
-.success-container .checkmark {
-  font-size: 4rem;
-  color: rgb(var(--weather-green-500));
+  font-size: 1rem;
   margin-bottom: 1rem;
-  display: block;
-  text-align: center;
-}
-
-.success-container p {
-  margin: 1rem 0;
   line-height: 1.6;
-  text-align: center;
 }
 
-.success-container .info {
-  background: rgb(var(--weather-radar-400) / 0.1);
-  border-left: 4px solid rgb(var(--weather-radar-400));
-  padding: 1rem;
-  margin: 1.5rem 0;
-  border-radius: 0.25rem;
-  text-align: left;
+/* Lists */
+.list-default { margin: 0; padding-left: 1.25rem; }
+.list-default li + li { margin-top: .35rem; }
+
+/* Inputs & Buttons */
+.form-group { margin: .9rem 0; }
+label { display:block; font-size:.92rem; margin:0 0 .4rem 0; }
+.form-control {
+  width:100%; appearance:none; outline:0;
+  border:1px solid hsl(var(--border));
+  background:hsl(var(--background));
+  color:hsl(var(--foreground));
+  border-radius:.65rem; padding:.6rem .75rem; font-size:1rem;
+}
+.form-control:focus { border-color: hsl(var(--ring)); box-shadow: 0 0 0 3px hsl(var(--ring) / .12); }
+.form-control.input-error {
+  border-color: hsl(var(--destructive));
+  box-shadow: 0 0 0 3px hsl(var(--destructive) / .16);
 }
 
-.success-container small {
-  color: hsl(var(--muted-foreground));
-  font-size: 0.875rem;
-  display: block;
-  text-align: center;
+.password-container { display:flex; gap:.5rem; align-items:center; }
+.password-input { flex:1; }
+.password-toggle {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:2.25rem; height:2.25rem; border-radius:.6rem;
+  border:1px solid hsl(var(--border)); background:hsl(var(--background));
+  cursor:pointer;
 }
+.password-toggle-icon { display:block; }
+.password-toggle-icon.hidden { display:none; }
+.password-toggle:hover { background:hsl(var(--muted)); }
 
-.spinner {
-  display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid hsl(var(--muted));
-  border-radius: 50%;
-  border-top-color: rgb(var(--weather-radar-400));
-  animation: spin 1s ease-in-out infinite;
-  margin-right: 0.5rem;
-  vertical-align: middle;
-}
-
-@keyframes spin {
-  to { 
-    transform: rotate(360deg); 
-  }
-}
-
-/* Enhanced Mobile Responsive Design matching WICID */
-@media (max-width: 640px) {
-  .banner-content {
-    padding: 0 0.75rem;
-  }
-  
-  .main-content {
-    padding: 0.75rem;
-    padding-top: 3.5rem;
-  }
-
-  .form-container,
-  .success-container {
-    padding: 1.25rem;
-    border-radius: calc(var(--radius) + 2px);
-    margin: 0.5rem;
-    max-width: calc(100% - 1rem);
-  }
-
-  .logo h1 {
-    font-size: 1.625rem;
-    letter-spacing: -0.025em;
-  }
-  
-  .logo p {
-    font-size: 0.8125rem;
-    line-height: 1.3;
-    margin-top: 0.25rem;
-  }
-  
-  /* Mobile typography enhancements */
-  label {
-    font-size: 0.8125rem;
-    font-weight: 600;
-  }
-  
-  .form-control {
-    font-size: 16px; /* Prevent zoom on iOS */
-    border-radius: calc(var(--radius) - 1px);
-  }
-  
-  /* Enhanced mobile touch targets */
-  .password-toggle {
-    min-width: 3rem;
-    min-height: 3rem;
-    font-size: 1.25rem;
-  }
-  
-  /* Mobile form spacing */
-  .form-group {
-    margin-bottom: 1.125rem;
-  }
-  
-  .info {
-    font-size: 0.9375rem;
-    line-height: 1.4;
-    margin-bottom: 1.25rem;
-  }
-}
-
-/* System Details Footer */
-.system-footer {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  text-align: center;
-}
-
-@media (min-width: 640px) {
-  .system-footer {
-    margin-top: 2.5rem;
-    padding-top: 2rem;
-  }
-}
-
-.system-details-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  color: hsl(var(--muted-foreground));
-  text-decoration: none;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  transition: color 0.2s ease;
+.btn-primary {
+  display:inline-flex; align-items:center; gap:.5rem; justify-content:center;
+  padding:.72rem 1rem; border-radius:.75rem; font-weight:650;
+  border:1px solid rgb(var(--weather-amber-600) / .2);
+  background: rgb(var(--weather-amber-500));
+  color: rgb(24 24 27);
   cursor: pointer;
-  padding: 0.5rem;
-  border-radius: 0.25rem;
+  transition: background-color .15s ease, transform .06s ease;
+}
+.btn-primary:hover { background: rgb(var(--weather-amber-600)); }
+.btn-primary:active { transform: translateY(1px); }
+.button-loader { display:none; }
+.button-loader.show { display:inline-flex; }
+
+/* Status & Errors */
+.status { margin-top:.75rem; }
+.error-container {
+  border:1px solid hsl(var(--destructive));
+  border-radius:.65rem; padding:.75rem; color:hsl(var(--destructive));
+  background: hsl(var(--destructive) / .05);
 }
 
-.system-details-link:hover {
-  color: hsl(var(--foreground));
-}
-
-.system-details-link:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
-}
-
-.system-details-link .chevron {
-  transition: transform 0.2s ease;
-  stroke: currentColor;
-}
-
-.system-details-link.expanded .chevron {
-  transform: rotate(180deg);
-}
-
-.system-details-content {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: rgba(255, 255, 255, 0.5);
-  border-radius: calc(var(--radius) - 2px);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  max-height: 500px;
-  overflow: hidden;
-  transition: all 0.3s ease;
-}
-
-.system-details-content.hidden {
-  max-height: 0;
-  padding: 0;
-  margin-top: 0;
-  border: none;
-  opacity: 0;
-}
-
-.system-details-grid {
-  display: grid;
-  gap: 0.75rem;
-}
-
-@media (min-width: 640px) {
-  .system-details-grid {
-    gap: 1rem;
-  }
-}
-
-.system-detail-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  text-align: left;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: calc(var(--radius) - 4px);
-  border: 1px solid rgba(0, 0, 0, 0.04);
-}
-
-@media (min-width: 640px) {
-  .system-detail-item {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.875rem 1rem;
-  }
-}
-
-.detail-label {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: hsl(var(--muted-foreground));
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-}
-
-@media (min-width: 640px) {
-  .detail-label {
-    font-size: 0.75rem;
-  }
-}
-
-.detail-value {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: hsl(var(--foreground));
-  word-break: break-word;
-}
-
-@media (min-width: 640px) {
-  .detail-value {
-    text-align: right;
-    max-width: 60%;
-  }
-}
-
-.system-details-loading,
-.system-details-error {
+/* CTA panel */
+.cta-panel {
+  margin-top: 2rem;
+  padding: 1.25rem;
+  border-radius: .65rem;
   text-align: center;
-  padding: 1rem;
-  color: hsl(var(--muted-foreground));
-  font-size: 0.875rem;
 }
 
-.system-details-error {
-  color: hsl(var(--destructive));
+/* System details footer */
+.system-footer {
+  color:hsl(var(--muted-foreground)); text-align:center; font-size:.9rem; padding:1.25rem 1rem;
+}
+.system-details-link {
+  display:inline-flex; align-items:center; gap:.35rem; color:inherit; text-decoration:none;
+}
+.system-details-link .chevron { transition: transform .2s ease; }
+.system-details-link.open .chevron { transform: rotate(180deg); }
+.system-details-content { margin-top:.75rem; }
+.system-details-content.hidden { display:none; }
+.system-details-loading { color:hsl(var(--muted-foreground)); }
+.system-details-list {
+  margin:.75rem auto 0; padding:0; text-align:left;
+  display:grid; grid-template-columns:max-content 1fr; gap:.35rem .75rem;
+  max-width:20rem; font-size:.88rem;
+}
+.system-details-list dt { font-weight:600; margin:0; color:hsl(var(--foreground)); }
+.system-details-list dd { margin:0; color:hsl(var(--muted-foreground)); }
+
+/* Helpers */
+.hidden { display: none !important; }
+.animate-in { animation: fadeIn .2s ease; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(2px); } to { opacity:1; transform:none; } }
+
+/* Semantic text colors */
+.text-success { color: rgb(var(--success-rgb)); }
+.text-info { color: rgb(var(--info-rgb)); }
+.text-error { color: hsl(var(--error-hsl)); }
+
+/* Soft backgrounds */
+.bg-info-soft {
+  background: rgb(var(--info-rgb) / .08);
+  border: 1px solid rgb(var(--info-rgb) / .18);
+}
+
+/* Network select combo */
+.network-input-container { display:flex; flex-direction:column; gap:.75rem; }
+.ssid-manual { width:100%; }
+
+/* Chevron */
+.chevron { transform: translateY(1px); }
+
+/* Small screen niceties */
+@media (max-width: 380px) {
+  .brand-wordmark { font-size: 1rem; }
 }
