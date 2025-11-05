@@ -30,7 +30,12 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.14'
+          cache: 'pipenv'
+      - name: Install pipenv
+        run: curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python3
+      - name: Install dependencies
+        run: pipenv sync --dev
       
       - name: Determine CircuitPython version from manifest
         id: cp_version
@@ -102,7 +107,7 @@ jobs:
       - name: Build release package
         run: |
           echo "→ Building release package with builder.py..."
-          python builder.py --build
+          pipenv run python builder.py --build
           echo "✓ Build complete"
       
       - name: Verify build artifacts
