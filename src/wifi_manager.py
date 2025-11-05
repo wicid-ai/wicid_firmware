@@ -16,6 +16,9 @@ import wifi
 import socketpool
 import ssl
 import time
+import json
+import os
+from logging_helper import get_logger
 from utils import is_button_pressed, interruptible_sleep
 
 
@@ -60,6 +63,9 @@ class WiFiManager:
             cls._instance = instance
         return cls._instance
     
+    # Retry state file
+    RETRY_STATE_FILE = "/wifi_retry_state.json"
+    
     def _init_singleton(self, button=None):
         """
         Internal initialization method for singleton.
@@ -71,6 +77,9 @@ class WiFiManager:
         self.session = None
         self._connected = False
         self._ap_active = False
+        self._credentials = None  # Cached credentials from secrets.json
+        self._pre_ap_connected = False  # Track connection state before AP mode
+        self.logger = get_logger('wicid.wifi')
     
     def __init__(self, button=None):
         """
@@ -89,14 +98,168 @@ class WiFiManager:
         Call this after exiting setup/AP mode to restore normal operation.
         """
         try:
-            print("Resetting WiFi radio to station mode...")
+            self.logger.debug("Resetting WiFi radio to station mode")
             wifi.radio.enabled = False
             time.sleep(0.3)
             wifi.radio.enabled = True
             time.sleep(0.3)
-            print("✓ WiFi radio reset complete")
+            self.logger.debug("WiFi radio reset complete")
         except Exception as e:
-            print(f"Warning: Error resetting radio: {e}")
+            self.logger.warning(f"Error resetting radio: {e}")
+    
+    # --- Retry State Management ---
+    
+    def load_retry_count(self):
+        """
+        Load the retry count from persistent storage.
+        
+        Returns:
+            int: Current retry count (0 if file doesn't exist or is corrupt)
+        """
+        try:
+            with open(self.RETRY_STATE_FILE, "r") as f:
+                data = json.load(f)
+                return int(data.get("retry_count", 0))
+        except (OSError, ValueError, KeyError):
+            return 0
+    
+    def increment_retry_count(self):
+        """
+        Increment the retry count and save to persistent storage.
+        
+        Returns:
+            int: New retry count value
+        """
+        current = self.load_retry_count()
+        new_count = current + 1
+        self._save_retry_count(new_count)
+        return new_count
+    
+    def clear_retry_count(self):
+        """Clear the retry count (set to 0) and save to persistent storage."""
+        self._save_retry_count(0)
+    
+    def _save_retry_count(self, count):
+        """
+        Save retry count to persistent storage.
+        
+        Args:
+            count: Integer retry count to save
+        """
+        try:
+            data = {"retry_count": count}
+            with open(self.RETRY_STATE_FILE, "w") as f:
+                json.dump(data, f)
+            os.sync()
+        except OSError as e:
+            self.logger.warning(f"Failed to save retry state: {e}")
+    
+    # --- Secrets/Credentials Management ---
+    
+    def load_credentials(self):
+        """
+        Load WiFi credentials from secrets.json.
+        
+        Returns:
+            dict: Credentials dict with 'ssid', 'password', 'weather_zip' keys
+                  Returns None if file doesn't exist or is invalid
+        """
+        try:
+            with open("/secrets.json", "r") as f:
+                secrets = json.load(f)
+            
+            # Validate required fields
+            if not secrets.get('ssid') or not secrets.get('password'):
+                return None
+            
+            self._credentials = secrets
+            return secrets
+            
+        except (OSError, ValueError, KeyError):
+            self._credentials = None
+            return None
+    
+    def get_credentials(self):
+        """
+        Get cached credentials or load from file if not cached.
+        
+        Returns:
+            dict: Credentials dict or None if not available
+        """
+        if self._credentials is None:
+            return self.load_credentials()
+        return self._credentials
+    
+    def clear_credentials_cache(self):
+        """Clear the cached credentials (forces reload from file on next access)."""
+        self._credentials = None
+    
+    def ensure_connected(self, timeout=None):
+        """
+        Ensure WiFi is connected using credentials from secrets.json.
+        
+        High-level method that:
+        1. Checks if already connected
+        2. Loads credentials from secrets.json
+        3. Attempts connection with backoff retry
+        4. Returns success/failure status
+        
+        This method handles all connection logic internally and returns status
+        rather than raising exceptions (except for unrecoverable errors).
+        
+        Args:
+            timeout: Optional timeout in seconds for connection attempts
+                     None means retry indefinitely
+        
+        Returns:
+            tuple: (success: bool, error_message: str or None)
+        
+        Raises:
+            KeyboardInterrupt: If button pressed during connection
+            Exception: Only for unrecoverable errors (hardware failure, etc.)
+        """
+        # Check if already connected
+        if self.is_connected():
+            self.logger.info(f"Already connected to WiFi")
+            return True, None
+        
+        # Load credentials
+        credentials = self.get_credentials()
+        if not credentials:
+            error_msg = "No credentials found"
+            self.logger.error(error_msg)
+            return False, error_msg
+        
+        ssid = credentials.get('ssid', '').strip()
+        password = credentials.get('password', '')
+        
+        if not ssid or not password:
+            error_msg = "Invalid credentials"
+            self.logger.error(error_msg)
+            return False, error_msg
+        
+        self.logger.info(f"Connecting to '{ssid}'...")
+        
+        # Attempt connection with backoff
+        try:
+            success, error_msg = self.connect_with_backoff(
+                ssid, 
+                password, 
+                timeout=timeout
+            )
+            
+            if success:
+                self.logger.info(f"Connected to '{ssid}'")
+                self.clear_retry_count()
+                return True, None
+            else:
+                self.logger.error(f"Connection failed: {error_msg}")
+                return False, error_msg
+                
+        except AuthenticationError as e:
+            error_msg = f"Authentication failed: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
     
     def connect_with_backoff(self, ssid, password, timeout=None, on_retry=None):
         """
@@ -135,7 +298,7 @@ class WiFiManager:
             attempts += 1
             
             try:
-                print(f"WiFi connection attempt #{attempts} to '{ssid}'...")
+                self.logger.debug(f"Connection attempt #{attempts} to '{ssid}'")
                 
                 # Check for button interrupt before attempting connection
                 if self.button and is_button_pressed(self.button):
@@ -150,7 +313,7 @@ class WiFiManager:
                 
                 # Verify connection
                 if wifi.radio.connected and wifi.radio.ipv4_address:
-                    print(f"✓ WiFi connected successfully! IP: {wifi.radio.ipv4_address}")
+                    self.logger.info(f"WiFi connected - IP: {wifi.radio.ipv4_address}")
                     self._connected = True
                     
                     # Create socket pool and session
@@ -159,7 +322,7 @@ class WiFiManager:
                     
                     return True, None
                 else:
-                    print("✗ Connection failed - no IP address obtained")
+                    self.logger.error("Connection failed - no IP address")
                     raise ConnectionError("Failed to obtain IP address")
                     
             except KeyboardInterrupt:
@@ -170,7 +333,7 @@ class WiFiManager:
                 # Timeout indicates network unreachable, not authentication failure
                 # Reset auth failure counter and retry with backoff
                 auth_failure_count = 0
-                print(f"Connection attempt #{attempts} timed out: {e}")
+                self.logger.warning(f"Attempt #{attempts} timed out")
                 result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
                 if result:  # Timeout exceeded
                     return result
@@ -178,19 +341,19 @@ class WiFiManager:
             
             except RuntimeError as e:
                 error_msg = str(e)
-                print(f"Connection attempt #{attempts} failed: RuntimeError - {e}")
+                self.logger.debug(f"Attempt #{attempts} failed: {e}")
                 
                 # Check for explicit authentication failure message
                 # Note: Can be transient even with valid credentials (router/radio states)
                 if "authentication failure" in error_msg.lower():
                     auth_failure_count += 1
-                    print(f"Authentication failure detected ({auth_failure_count}/3)")
+                    self.logger.debug(f"Auth failure #{auth_failure_count}/3")
                     
                     # Only raise after 3 consecutive auth failures to avoid false positives
                     # Total time: ~6-7 seconds with short backoff between attempts
                     if auth_failure_count >= 3:
-                        print("Persistent authentication failure - credentials likely invalid")
-                        raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                        self.logger.error("Authentication failed - invalid credentials")
+                        raise AuthenticationError("Invalid password")
                 else:
                     # Reset counter on non-auth errors
                     auth_failure_count = 0
@@ -204,14 +367,13 @@ class WiFiManager:
             except ConnectionError as e:
                 errno_code = getattr(e, 'errno', None)
                 error_msg = str(e)
-                print(f"Connection attempt #{attempts} failed: ConnectionError - {e}")
-                print(f"Error errno: {errno_code}")
+                self.logger.debug(f"Attempt #{attempts} failed: {e}")
                 
                 # Check for explicit authentication failure message
                 # Note: Can be transient even with valid credentials (router/radio states)
                 if "authentication failure" in error_msg.lower():
                     auth_failure_count += 1
-                    print(f"Authentication failure detected ({auth_failure_count}/3)")
+                    self.logger.debug(f"Auth failure #{auth_failure_count}/3")
                     
                     # Only raise after 3 consecutive auth failures to avoid false positives
                     # Intermittent auth failures can occur with valid credentials due to:
@@ -220,8 +382,8 @@ class WiFiManager:
                     # - Router rate limiting
                     # Total time to fail: ~6-7 seconds with short backoff between attempts
                     if auth_failure_count >= 3:
-                        print("Persistent authentication failure - credentials likely invalid")
-                        raise AuthenticationError("WiFi authentication failure. Please check your password.")
+                        self.logger.error("Authentication failed - invalid credentials")
+                        raise AuthenticationError("Invalid password")
                 else:
                     # Reset counter on non-auth errors
                     auth_failure_count = 0
@@ -239,7 +401,7 @@ class WiFiManager:
             
             except Exception as e:
                 error_msg = str(e)
-                print(f"Connection attempt #{attempts} failed: {error_msg}")
+                self.logger.debug(f"Connection attempt #{attempts} failed: {error_msg}")
                 
                 # Reset auth failure counter for generic errors
                 auth_failure_count = 0
@@ -268,7 +430,7 @@ class WiFiManager:
         # Check if we've exceeded the timeout (if specified)
         elapsed_time = time.monotonic() - start_time
         if timeout is not None and elapsed_time >= timeout:
-            print(f"Retry timeout exceeded ({elapsed_time:.1f}s). Giving up.")
+            self.logger.warning(f"Retry timeout exceeded ({elapsed_time:.1f}s). Giving up.")
             return False, f"Unable to connect to WiFi after {attempts} attempts over {elapsed_time:.1f} seconds."
         
         # Calculate exponential backoff time: base * (2^(attempts-1))
@@ -278,13 +440,13 @@ class WiFiManager:
         # Cap wait time at maximum backoff (30 minutes)
         if wait_time > self.MAX_BACKOFF_TIME:
             wait_time = self.MAX_BACKOFF_TIME
-            print(f"Backoff capped at {self.MAX_BACKOFF_TIME}s ({self.MAX_BACKOFF_TIME/60:.0f} minutes)")
+            self.logger.debug(f"Backoff capped at {self.MAX_BACKOFF_TIME}s ({self.MAX_BACKOFF_TIME/60:.0f} minutes)")
         
         # Call retry callback if provided
         if on_retry:
             on_retry(attempts, wait_time)
         
-        print(f"Waiting {wait_time:.1f}s before retry...")
+        self.logger.debug(f"Waiting {wait_time:.1f}s before retry...")
         
         # Wait with button interrupt checking
         if not interruptible_sleep(wait_time, self.button):
@@ -304,7 +466,7 @@ class WiFiManager:
         Returns:
             tuple: (success: bool, error_dict or None)
         """
-        print(f"Testing connection to '{ssid}'...")
+        self.logger.debug(f"Testing connection to '{ssid}'")
         
         # Convert to bytes to satisfy buffer protocol requirement
         ssid_b = bytes(ssid, 'utf-8')
@@ -318,31 +480,30 @@ class WiFiManager:
         try:
             wifi.radio.connect(ssid_b, password_b, timeout=self.CONNECTION_TIMEOUT)
             elapsed = time.monotonic() - start_time
-            print(f"Connection attempt completed in {elapsed:.1f}s")
+            self.logger.debug(f"Connection completed in {elapsed:.1f}s")
             
             # Verify connection success
             if wifi.radio.connected and wifi.radio.ipv4_address:
-                print(f"✓ Connected successfully! IP: {wifi.radio.ipv4_address}")
+                self.logger.info(f"Connected - IP: {wifi.radio.ipv4_address}")
                 self._connected = True
                 connection_success = True
                 return True, None
             else:
                 # Connection method returned but no connection established
-                print("✗ Connection failed - no IP address obtained")
+                self.logger.error("Connection failed - no IP address")
                 error_result = (False, {"message": "Failed to obtain IP address", "field": "ssid"})
         
         except TimeoutError as e:
             # Explicit timeout during connection
             elapsed = time.monotonic() - start_time
-            print(f"Connection timed out after {elapsed:.1f}s: {e}")
+            self.logger.error(f"Connection timed out ({elapsed:.1f}s)")
             error_result = (False, {"message": "Connection timed out. Please check your password and network.", "field": "password"})
         
         except RuntimeError as e:
             # RuntimeError often indicates authentication or connection failures
             elapsed = time.monotonic() - start_time
             error_msg = str(e).lower()
-            print(f"Connection failed after {elapsed:.1f}s: RuntimeError - {e}")
-            print(f"Error type: RuntimeError, errno: {getattr(e, 'errno', 'N/A')}")
+            self.logger.error(f"Connection failed: {e}")
             
             # Check for authentication failure
             if "auth" in error_msg or "password" in error_msg:
@@ -357,8 +518,7 @@ class WiFiManager:
             elapsed = time.monotonic() - start_time
             errno_code = getattr(e, 'errno', None)
             error_msg = str(e).lower()
-            print(f"Connection failed after {elapsed:.1f}s: ConnectionError - {e}")
-            print(f"Error type: ConnectionError, errno: {errno_code}")
+            self.logger.error(f"Connection failed: {e}")
             
             # Check for authentication failure by errno or message
             if errno_code in (-3, 7, 15, 202) or "auth" in error_msg or "password" in error_msg:
@@ -372,27 +532,17 @@ class WiFiManager:
             # OSError can indicate various system-level connection problems
             elapsed = time.monotonic() - start_time
             errno_code = getattr(e, 'errno', None)
-            print(f"Connection failed after {elapsed:.1f}s: OSError - {e}")
-            print(f"Error type: OSError, errno: {errno_code}")
+            self.logger.error(f"Connection failed: {e}")
             error_result = (False, {"message": "WiFi connection error. Please try again.", "field": "ssid"})
         
         except Exception as e:
             # Catch-all for unexpected exceptions
             elapsed = time.monotonic() - start_time
-            print(f"Connection failed after {elapsed:.1f}s: Unexpected {type(e).__name__} - {e}")
-            print(f"Error type: {type(e).__name__}, errno: {getattr(e, 'errno', 'N/A')}")
+            self.logger.error(f"Connection failed: {type(e).__name__} - {e}")
             error_result = (False, {"message": "Unable to connect to WiFi. Please check your settings.", "field": "ssid"})
         
-        finally:
-            # Only reset radio if connection failed - ensures clean state for AP restart
-            if not connection_success and error_result:
-                try:
-                    wifi.radio.enabled = False
-                    time.sleep(0.1)
-                    wifi.radio.enabled = True
-                    print("WiFi radio reset after failed connection")
-                except Exception as e:
-                    print(f"Warning: Error resetting WiFi after failure: {e}")
+        # Note: No radio reset on failure - caller handles cleanup as needed
+        # Radio reset would disconnect any active AP in concurrent AP+STA mode
         
         return error_result if error_result else (False, {"message": "Unknown connection failure", "field": "ssid"})
     
@@ -403,9 +553,9 @@ class WiFiManager:
                 wifi.radio.enabled = False
                 wifi.radio.enabled = True
                 self._connected = False
-                print("WiFi disconnected")
+                self.logger.info("WiFi disconnected")
         except Exception as e:
-            print(f"Error disconnecting WiFi: {e}")
+            self.logger.warning(f"Error disconnecting WiFi: {e}")
     
     def is_connected(self):
         """Check if currently connected to WiFi."""
@@ -427,7 +577,7 @@ class WiFiManager:
         Returns:
             tuple: (success: bool, error_message: str or None)
         """
-        print("Reconnecting to WiFi after setup mode exit...")
+        self.logger.info("Reconnecting to WiFi after setup mode exit")
         
         # Reset radio to station mode (clears any AP mode state)
         self.reset_radio_to_station_mode()
@@ -471,6 +621,7 @@ class WiFiManager:
         """
         Start WiFi access point for setup mode.
         Handles all necessary radio state transitions and configuration.
+        Saves current connection state for later restoration.
         
         Args:
             ssid: Access point SSID
@@ -482,16 +633,21 @@ class WiFiManager:
         Raises:
             RuntimeError: If AP fails to start
         """
-        print("Starting access point...")
+        self.logger.info("Starting access point")
+        
+        # Save current connection state for later restoration
+        self._pre_ap_connected = self.is_connected()
+        if self._pre_ap_connected:
+            self.logger.debug("Saving connection state before AP mode")
         
         # Disconnect from any existing WiFi connection before starting AP
         try:
             if wifi.radio.connected:
-                print("Disconnecting from current network...")
+                self.logger.debug("Disconnecting from current network")
                 wifi.radio.stop_station()
                 time.sleep(0.3)
         except Exception as e:
-            print(f"Warning during disconnect: {e}")
+            self.logger.warning(f"Warning during disconnect: {e}")
         
         # Initialize/reset WiFi radio to ensure it's in a known good state
         try:
@@ -499,9 +655,9 @@ class WiFiManager:
             time.sleep(0.2)
             wifi.radio.enabled = True
             time.sleep(0.2)
-            print("WiFi radio initialized")
+            self.logger.debug("WiFi radio initialized")
         except Exception as e:
-            print(f"WiFi radio initialization warning: {e}")
+            self.logger.warning(f"WiFi radio initialization warning: {e}")
         
         # Use bytes for SSID/password to satisfy older firmware buffer requirements
         ssid_b = bytes(ssid, "utf-8")
@@ -516,9 +672,9 @@ class WiFiManager:
                     netmask=ipaddress.IPv4Address("255.255.255.0"),
                     gateway=ipaddress.IPv4Address("192.168.4.1")
                 )
-                print("AP IP configured: 192.168.4.1")
+                self.logger.debug("AP IP configured: 192.168.4.1")
             except Exception as ip_err:
-                print(f"Could not set AP IP (will use default): {ip_err}")
+                self.logger.warning(f"Could not set AP IP (will use default): {ip_err}")
             
             # Start the access point
             if pwd_b:
@@ -530,10 +686,10 @@ class WiFiManager:
                 except TypeError:
                     wifi.radio.start_ap(ssid_b, None)
         except Exception as e:
-            print(f"start_ap failed: {e}")
+            self.logger.error(f"start_ap failed: {e}")
             raise RuntimeError(f"Failed to start access point: {e}")
         
-        print(f"AP Mode Active. Connect to: {ssid}")
+        self.logger.info(f"AP Mode Active. Connect to: {ssid}")
         self._ap_active = True
         self._connected = False  # Not in station mode
         
@@ -548,21 +704,173 @@ class WiFiManager:
         if not ap_ip:
             ap_ip = "192.168.4.1"
         
-        print(f"IP address: {ap_ip}")
+        self.logger.debug(f"AP IP address: {ap_ip}")
         return str(ap_ip)
     
-    def stop_access_point(self):
+    def stop_access_point(self, restore_connection=True):
         """
-        Stop access point and reset radio to station mode.
-        Called when exiting setup mode.
+        Stop access point and optionally restore previous WiFi connection.
+        
+        Args:
+            restore_connection: If True and WiFi was connected before AP mode,
+                               automatically attempt to reconnect
+        
+        Behavior:
+        - If currently connected in station mode (concurrent AP+STA): stops AP, preserves connection
+        - If not connected but was connected before AP: attempts to reconnect (if restore_connection=True)
+        - Otherwise: resets radio to station mode
         """
         if not self._ap_active:
             return
         
-        print("Stopping access point...")
-        self.reset_radio_to_station_mode()
+        self.logger.debug("Stopping access point")
+        
+        # If we're connected in station mode, just stop the AP
+        # Don't reset the radio - that would disconnect us!
+        if self.is_connected():
+            self.logger.debug(f"Stopping AP while preserving connection (connected={wifi.radio.connected}, _connected={self._connected})")
+            try:
+                wifi.radio.stop_ap()
+                # Verify connection preserved
+                time.sleep(0.2)  # Brief pause for radio state to stabilize
+                still_connected = wifi.radio.connected
+                self.logger.info(f"AP stopped - connection {'preserved' if still_connected else 'LOST'} (radio.connected={still_connected})")
+                if not still_connected:
+                    self.logger.error("Connection lost after stopping AP - ESP32 firmware issue?")
+                    self._connected = False
+            except Exception as e:
+                self.logger.warning(f"Error stopping AP: {e}")
+        else:
+            # Not currently connected - check if we should restore previous connection
+            if restore_connection and self._pre_ap_connected:
+                self.logger.info("Restoring WiFi connection after AP mode")
+                credentials = self.get_credentials()
+                if credentials and credentials.get('ssid'):
+                    success, error_msg = self.ensure_connected(timeout=30)
+                    if not success:
+                        self.logger.warning(f"Failed to restore connection: {error_msg}")
+                    else:
+                        self.logger.info("Connection restored successfully")
+                else:
+                    self.logger.warning("Cannot restore connection - no valid credentials")
+            else:
+                # Not restoring - reset radio to station mode
+                self.logger.debug("Not connected - resetting radio to station mode")
+                self.reset_radio_to_station_mode()
+        
         self._ap_active = False
-        print("✓ Access point stopped")
+        self._pre_ap_connected = False  # Reset saved state
+    
+    def test_credentials_from_ap(self, ssid, password, max_attempts=3):
+        """
+        Test WiFi credentials while in AP mode with retry logic.
+        Uses concurrent AP+STA mode - AP stays running so clients remain connected.
+        
+        Retries connection attempts to handle transient errors (e.g., "Unknown failure 2").
+        
+        Args:
+            ssid: WiFi network SSID to test
+            password: WiFi network password to test
+            max_attempts: Maximum connection attempts for transient error handling (default: 3)
+        
+        Returns:
+            tuple: (success: bool, error_message: str or None)
+        """
+        self.logger.info(f"Testing credentials for '{ssid}' in concurrent AP+STA mode")
+        
+        if not self._ap_active:
+            return False, "Not in AP mode"
+        
+        # Store AP config to restart if needed
+        ap_ssid = "WICID-Setup"  # Known from setup_portal
+        ap_password = None
+        ap_ip = "192.168.4.1"
+        
+        try:
+            # Try connecting in station mode while AP is still running
+            # ESP32 supports concurrent AP+STA mode
+            self.logger.debug("AP remains active during test - clients stay connected")
+            
+            # Try connection with retries for transient errors
+            success = False
+            last_error_msg = None
+            
+            for attempt in range(1, max_attempts + 1):
+                if attempt > 1:
+                    self.logger.debug(f"Retry attempt {attempt}/{max_attempts} after transient error")
+                    time.sleep(1.5)  # Short delay between retries
+                
+                self.logger.debug(f"Testing connection to '{ssid}' (attempt {attempt}/{max_attempts})")
+                success, error_msg = self.connect_once(ssid, password)
+                last_error_msg = error_msg
+                
+                if success:
+                    self.logger.info(f"Credentials validated on attempt {attempt}/{max_attempts}")
+                    # Connected in station mode while AP still running
+                    # Caller will stop AP and continue with station mode
+                    return True, None
+                
+                # Check if this is a permanent failure (auth error) or transient
+                if isinstance(error_msg, dict):
+                    msg_text = error_msg.get('message', '').lower()
+                    # Authentication failures are permanent - don't retry
+                    if 'authentication' in msg_text or 'password' in msg_text:
+                        self.logger.warning("Authentication failure detected - stopping retries")
+                        break
+                
+                self.logger.debug(f"Attempt {attempt} failed: {error_msg}")
+            
+            # All attempts failed - AP is still running, just disconnect station attempt
+            self.logger.info("Credential test failed - AP remains active for client")
+            
+            # Disconnect from failed station connection attempt
+            try:
+                # Don't use disconnect() as it would affect AP state
+                # Just let the failed connection state clear naturally
+                pass
+            except Exception as e:
+                self.logger.debug(f"Note: {e}")
+            
+            # Extract error message from error dict if present
+            if isinstance(last_error_msg, dict):
+                error_message = last_error_msg.get('message', 'Connection test failed')
+            else:
+                error_message = str(last_error_msg) if last_error_msg else 'Connection test failed'
+            
+            return False, error_message
+                
+        except Exception as e:
+            self.logger.error(f"Error during credential test: {e}")
+            # AP is still running, just return error
+            return False, f"Credential test error: {e}"
+    
+    def shutdown_access_point(self):
+        """
+        Shutdown access point and disable WiFi radio completely.
+        Used before rebooting to ensure clients detect network disconnection.
+        Does NOT reset radio back to station mode - just disables it.
+        """
+        if not self._ap_active:
+            return
+        
+        self.logger.info("Shutting down access point")
+        
+        # Stop AP if running
+        try:
+            wifi.radio.stop_ap()
+            self.logger.debug("AP stopped")
+        except Exception as e:
+            self.logger.warning(f"Warning stopping AP: {e}")
+        
+        # Disable radio completely (no re-enable)
+        try:
+            wifi.radio.enabled = False
+            self.logger.debug("WiFi radio disabled")
+        except Exception as e:
+            self.logger.warning(f"Warning disabling radio: {e}")
+        
+        self._ap_active = False
+        self.logger.debug("Access point shutdown complete")
     
     def is_ap_active(self):
         """Check if access point mode is currently active."""
@@ -602,7 +910,7 @@ class WiFiManager:
             try:
                 wifi.radio.stop_scanning_networks()
             except Exception as e:
-                print(f"Warning: Error stopping network scan: {e}")
+                self.logger.warning(f"Error stopping network scan: {e}")
     
     def validate_ssid_exists(self, ssid):
         """
@@ -629,10 +937,10 @@ class WiFiManager:
             
             return found
         except Exception as e:
-            print(f"Error during SSID validation scan: {e}")
+            self.logger.error(f"Error during SSID validation scan: {e}")
             return False
         finally:
             try:
                 wifi.radio.stop_scanning_networks()
             except Exception as e:
-                print(f"Warning: Error stopping scan: {e}")
+                self.logger.warning(f"Error stopping scan: {e}")

@@ -31,6 +31,7 @@ import json
 import traceback
 import microcontroller
 import adafruit_hashlib as hashlib
+from logging_helper import get_logger
 from utils import (
     get_machine_type,
     get_os_version_string,
@@ -62,6 +63,7 @@ class UpdateManager:
         "/manifest.json",        # Update metadata, validated during installation
         "/utils.mpy",            # Compatibility checks, device identification
         "/pixel_controller.mpy", # LED feedback during boot and updates
+        "/system_monitor.mpy",   # Periodic system checks (update checks, reboots)
         
         # Network-critical: Required to download updates
         "/wifi_manager.mpy",     # WiFi connection for OTA downloads
@@ -87,6 +89,7 @@ class UpdateManager:
         self.session = session
         self.next_update_check = None
         self._download_flash_start = None
+        self.logger = get_logger('wicid.update_manager')
         
         # Access singleton for LED feedback (optional, gracefully handles if unavailable)
         try:
@@ -171,9 +174,10 @@ class UpdateManager:
         """
         try:
             # Create recovery directory if it doesn't exist
+            logger = get_logger('wicid.update_manager')
             try:
                 os.mkdir(UpdateManager.RECOVERY_DIR)
-                print(f"Created recovery directory: {UpdateManager.RECOVERY_DIR}")
+                logger.debug(f"Created recovery directory: {UpdateManager.RECOVERY_DIR}")
             except OSError:
                 pass  # Directory already exists
             
@@ -227,20 +231,22 @@ class UpdateManager:
             # Sync filesystem
             os.sync()
             
+            logger = get_logger('wicid.update_manager')
             if failed_files:
                 message = f"Partial backup: {backed_up_count} files backed up, {len(failed_files)} failed"
-                print(f"⚠ {message}")
+                logger.warning(message)
                 for failure in failed_files:
-                    print(f"  - {failure}")
+                    logger.warning(f"  - {failure}")
                 return (False, message)
             else:
                 message = f"Recovery backup complete: {backed_up_count} critical files backed up"
-                print(f"✓ {message}")
+                logger.info(message)
                 return (True, message)
                 
         except Exception as e:
+            logger = get_logger('wicid.update_manager')
             message = f"Recovery backup failed: {e}"
-            print(f"✗ {message}")
+            logger.error(message)
             traceback.print_exception(e)
             return (False, message)
     
@@ -256,12 +262,13 @@ class UpdateManager:
             tuple: (bool, str) - (success, message)
         """
         try:
+            logger = get_logger('wicid.update_manager')
             if not UpdateManager.recovery_exists():
                 return (False, "No recovery backup found")
             
-            print("=" * 50)
-            print("CRITICAL: Restoring from recovery backup")
-            print("=" * 50)
+            logger.critical("=" * 50)
+            logger.critical("CRITICAL: Restoring from recovery backup")
+            logger.critical("=" * 50)
             
             restored_count = 0
             failed_files = []
@@ -311,7 +318,7 @@ class UpdateManager:
                         dst.write(content)
                     
                     restored_count += 1
-                    print(f"  Restored: {file_path}")
+                    logger.info(f"Restored: {file_path}")
                     
                 except Exception as e:
                     failed_files.append(f"{file_path}: {e}")
@@ -319,22 +326,23 @@ class UpdateManager:
             # Sync filesystem
             os.sync()
             
-            print("=" * 50)
+            logger.info("=" * 50)
             
             if failed_files:
                 message = f"Partial recovery: {restored_count} files restored, {len(failed_files)} failed"
-                print(f"⚠ {message}")
+                logger.warning(message)
                 for failure in failed_files:
-                    print(f"  - {failure}")
+                    logger.warning(f"  - {failure}")
                 return (False, message)
             else:
                 message = f"Recovery complete: {restored_count} critical files restored"
-                print(f"✓ {message}")
+                logger.info(message)
                 return (True, message)
                 
         except Exception as e:
+            logger = get_logger('wicid.update_manager')
             message = f"Recovery restoration failed: {e}"
-            print(f"✗ {message}")
+            logger.error(message)
             traceback.print_exception(e)
             return (False, message)
     
@@ -409,7 +417,7 @@ class UpdateManager:
         try:
             # Get file size for progress indication
             file_size = os.stat(file_path)[6]  # st_size
-            print(f"  File size: {file_size / 1024:.1f} KB")
+            self.logger.debug(f"File size: {file_size / 1024:.1f} KB")
             
             start_time = time.monotonic()
             sha256 = hashlib.sha256()
@@ -429,13 +437,13 @@ class UpdateManager:
                     self._update_download_led()
             
             elapsed = time.monotonic() - start_time
-            print(f"  Checksum calculated in {elapsed:.1f} seconds")
-            print(f"  Total tick() calls during checksum: {tick_count}")
-            print(f"  Average time per chunk: {elapsed / tick_count:.2f} seconds")
+            self.logger.debug(f"Checksum calculated in {elapsed:.1f} seconds")
+            self.logger.debug(f"Total tick() calls during checksum: {tick_count}")
+            self.logger.debug(f"Average time per chunk: {elapsed / tick_count:.2f} seconds")
             
             return sha256.hexdigest()
         except Exception as e:
-            print(f"Error calculating checksum: {e}")
+            self.logger.error(f"Error calculating checksum: {e}")
             traceback.print_exception(e)
             return None
     
@@ -487,7 +495,7 @@ class UpdateManager:
                          if update is available, otherwise None
         """
         if not self.session:
-            print("No HTTP session available for update check")
+            self.logger.warning("No HTTP session available for update check")
             return None
         
         try:
@@ -498,13 +506,11 @@ class UpdateManager:
             manifest_url = os.getenv("SYSTEM_UPDATE_MANIFEST_URL")
             
             if not manifest_url:
-                print("No update manifest URL configured")
+                self.logger.warning("No update manifest URL configured")
                 return None
             
-            print(f"Checking for updates:")
-            print(f"  Machine: {device_machine}")
-            print(f"  OS: {device_os}")
-            print(f"  Version: {current_version}")
+            self.logger.info("Checking for updates")
+            self.logger.debug(f"Machine: {device_machine}, OS: {device_os}, Version: {current_version}")
             
             # Get weather_zip for user-agent
             try:
@@ -523,7 +529,7 @@ class UpdateManager:
             
             # Check if response is successful
             if response.status_code != 200:
-                print(f"Update check failed: HTTP {response.status_code}")
+                self.logger.error(f"Update check failed: HTTP {response.status_code}")
                 response.close()
                 return None
             
@@ -531,7 +537,7 @@ class UpdateManager:
             try:
                 manifest = response.json()
             except (ValueError, AttributeError) as json_err:
-                print(f"Invalid JSON response from manifest URL")
+                self.logger.error("Invalid JSON response from manifest URL")
                 response.close()
                 return None
             
@@ -539,7 +545,7 @@ class UpdateManager:
             
             # Determine which release channel to use
             channel = self._determine_release_channel()
-            print(f"Using release channel: {channel}")
+            self.logger.debug(f"Using release channel: {channel}")
             
             # Find compatible releases
             releases_array = manifest.get("releases", [])
@@ -562,7 +568,7 @@ class UpdateManager:
                 is_compatible, error_msg = check_release_compatibility(release_data, current_version)
                 
                 if is_compatible:
-                    print(f"Update available: {current_version} -> {release_info['version']}")
+                    self.logger.info(f"Update available: {current_version} -> {release_info['version']}")
                     return {
                         "version": release_info["version"],
                         "zip_url": release_info.get("zip_url"),
@@ -572,13 +578,13 @@ class UpdateManager:
                         "target_operating_systems": release_entry.get("target_operating_systems", [])
                     }
                 else:
-                    print(f"Skipping {release_info['version']}: {error_msg}")
+                    self.logger.debug(f"Skipping {release_info['version']}: {error_msg}")
             
-            print("No compatible updates available")
+            self.logger.debug("No compatible updates available")
             return None
                 
         except Exception as e:
-            print(f"Error checking for updates: {e}")
+            self.logger.error(f"Error checking for updates: {e}")
             traceback.print_exception(e)
             return None
     
@@ -611,7 +617,7 @@ class UpdateManager:
             bool: True if download and extraction successful, False otherwise
         """
         if not self.session:
-            print("No HTTP session available for download")
+            self.logger.warning("No HTTP session available for download")
             return False
         
         # Start LED flashing for download phase
@@ -619,17 +625,17 @@ class UpdateManager:
             self._download_flash_start = time.monotonic()
             # Use semantic operation to indicate downloading
             self.pixel_controller.indicate_downloading()
-            print("LED indicator: flashing blue/green during download and verification")
+            self.logger.debug("LED indicator: flashing blue/green during download and verification")
         
         try:
             # Check disk space before download
             # Require MIN_FREE_SPACE_BYTES as buffer for operations
             space_ok, space_msg = self.check_disk_space(self.MIN_FREE_SPACE_BYTES)
-            print(f"Disk space check: {space_msg}")
+            self.logger.debug(f"Disk space check: {space_msg}")
             
             if not space_ok:
-                print("✗ Insufficient disk space for update")
-                print(f"  Please free up space and try again")
+                self.logger.error("Insufficient disk space for update")
+                self.logger.error("Please free up space and try again")
                 return False
             
             self._update_download_led()
@@ -648,8 +654,8 @@ class UpdateManager:
             # Download to a temporary ZIP file
             zip_path = f"{self.PENDING_UPDATE_DIR}/update.zip"
             
-            print(f"Downloading update: {zip_url}")
-            print(f"Saving to: {zip_path}")
+            self.logger.info(f"Downloading update: {zip_url}")
+            self.logger.debug(f"Saving to: {zip_path}")
             
             self._update_download_led()
             
@@ -670,12 +676,12 @@ class UpdateManager:
             # Sync to ensure file is written
             os.sync()
             
-            print("✓ Download complete")
+            self.logger.info("Download complete")
             self._update_download_led()
             
             # Verify checksum if provided
             if expected_checksum:
-                print("Verifying download integrity...")
+                self.logger.info("Verifying download integrity")
                 # Switch to verifying indicator (same pattern as downloading)
                 if self.pixel_controller:
                     self.pixel_controller.indicate_verifying()
@@ -683,11 +689,11 @@ class UpdateManager:
                 checksum_valid, checksum_msg = self.verify_checksum(zip_path, expected_checksum)
                 
                 if not checksum_valid:
-                    print(f"✗ Checksum verification failed: {checksum_msg}")
+                    self.logger.error(f"Checksum verification failed: {checksum_msg}")
                     
                     # If checksum was provided but doesn't match, this is a security issue
                     if "mismatch" in checksum_msg.lower():
-                        print("SECURITY WARNING: Downloaded file may be corrupted or tampered with")
+                        self.logger.critical("SECURITY WARNING: Downloaded file may be corrupted or tampered with")
                     
                     # Clean up corrupted download
                     try:
@@ -697,16 +703,16 @@ class UpdateManager:
                     
                     return False
                 
-                print(f"✓ {checksum_msg}")
+                self.logger.info(checksum_msg)
                 self._update_download_led()
             else:
-                print("⚠ No checksum in manifest - update may be from older release")
+                self.logger.warning("No checksum in manifest - update may be from older release")
             
             # Extract ZIP to /pending_update/root/
             try:
                 from zipfile_lite import ZipFile
                 
-                print("Extracting update files...")
+                self.logger.info("Extracting update files")
                 self._update_download_led()
                 
                 with ZipFile(zip_path) as zf:
@@ -714,9 +720,9 @@ class UpdateManager:
                     # Filter out hidden files (starting with .)
                     files_to_extract = [f for f in all_files if not any(part.startswith('.') for part in f.split('/'))]
                     
-                    print(f"ZIP contains {len(all_files)} files")
+                    self.logger.debug(f"ZIP contains {len(all_files)} files")
                     if len(files_to_extract) < len(all_files):
-                        print(f"Skipping {len(all_files) - len(files_to_extract)} hidden files")
+                        self.logger.debug(f"Skipping {len(all_files) - len(files_to_extract)} hidden files")
                     
                     # Extract each file individually to filter out dotfiles
                     file_count = 0
@@ -730,7 +736,7 @@ class UpdateManager:
                 
                 # Sync filesystem immediately after extraction to prevent corruption
                 os.sync()
-                print("✓ Extraction complete")
+                self.logger.info("Extraction complete")
                 self._update_download_led()
                 
                 # Validate the extracted manifest.json
@@ -738,33 +744,33 @@ class UpdateManager:
                 try:
                     with open(manifest_path, "r") as f:
                         manifest = json.load(f)
-                    print(f"✓ Manifest validated (version: {manifest.get('version', 'unknown')})")
+                    self.logger.info(f"Manifest validated (version: {manifest.get('version', 'unknown')})")
                     self._update_download_led()
                 except (OSError, ValueError, KeyError) as e:
-                    print(f"✗ Extracted manifest.json is corrupted or invalid: {e}")
+                    self.logger.error(f"Extracted manifest.json is corrupted or invalid: {e}")
                     # Clean up corrupted extraction
                     os.remove(zip_path)
                     return False
                 
                 # Validate that all critical files are present in extracted update
-                print("Validating extracted update contains all critical files...")
+                self.logger.debug("Validating extracted update contains all critical files")
                 self._update_download_led()
                 all_present, missing_files = self.validate_extracted_update(self.PENDING_ROOT_DIR)
                 
                 if not all_present:
-                    print(f"✗ Update package is incomplete")
-                    print(f"  Missing {len(missing_files)} critical files:")
+                    self.logger.error("Update package is incomplete")
+                    self.logger.error(f"Missing {len(missing_files)} critical files:")
                     for missing in missing_files[:10]:
-                        print(f"    - {missing}")
+                        self.logger.error(f"  - {missing}")
                     if len(missing_files) > 10:
-                        print(f"    ... and {len(missing_files) - 10} more")
-                    print("  Installation would brick the device - aborting")
+                        self.logger.error(f"  ... and {len(missing_files) - 10} more")
+                    self.logger.error("Installation would brick the device - aborting")
                     
                     # Clean up incomplete extraction
                     os.remove(zip_path)
                     return False
                 
-                print(f"✓ All critical files present in update")
+                self.logger.info("All critical files present in update")
                 
                 # Remove the ZIP file (we only need the extracted files)
                 os.remove(zip_path)
@@ -772,11 +778,11 @@ class UpdateManager:
                 # Final sync
                 os.sync()
                 
-                print(f"✓ Update ready for installation")
+                self.logger.info("Update ready for installation")
                 return True
                 
             except Exception as e:
-                print(f"Error extracting update: {e}")
+                self.logger.error(f"Error extracting update: {e}")
                 traceback.print_exception(e)
                 
                 # Clean up on error
@@ -788,7 +794,7 @@ class UpdateManager:
                 return False
             
         except Exception as e:
-            print(f"Error downloading update: {e}")
+            self.logger.error(f"Error downloading update: {e}")
             traceback.print_exception(e)
             
             # Clean up partial download
@@ -820,11 +826,11 @@ class UpdateManager:
             seconds_until = interval_hours * 3600
             next_check = time.monotonic() + seconds_until
             
-            print(f"Next update check scheduled in {interval_hours} hours")
+            self.logger.debug(f"Next update check scheduled in {interval_hours} hours")
             return next_check
             
         except Exception as e:
-            print(f"Error scheduling update check: {e}")
+            self.logger.error(f"Error scheduling update check: {e}")
             # Fallback: check again in 24 hours
             return time.monotonic() + (24 * 3600)
     
@@ -858,7 +864,7 @@ class UpdateManager:
                   False if no update or download failed (caller should continue normally)
         """
         if not self.session:
-            print("No HTTP session available for updates")
+            self.logger.warning("No HTTP session available for updates")
             return False
         
         try:
@@ -866,18 +872,18 @@ class UpdateManager:
             update_info = self.check_for_updates()
             
             if not update_info:
-                print("No updates available")
+                self.logger.debug("No updates available")
                 return False
             
             # Update available
-            print(f"Update available: {update_info['version']}")
-            print(f"Release notes: {update_info.get('release_notes', 'No release notes')}")
-            print("Downloading update...")
+            self.logger.info(f"Update available: {update_info['version']}")
+            self.logger.info(f"Release notes: {update_info.get('release_notes', 'No release notes')}")
+            self.logger.info("Downloading update")
             
             # Download and extract with checksum verification
             if self.download_update(update_info['zip_url'], update_info.get('sha256')):
-                print("✓ Update downloaded successfully")
-                print(f"Rebooting in {delay_seconds} seconds to install update...")
+                self.logger.info("Update downloaded successfully")
+                self.logger.info(f"Rebooting in {delay_seconds} seconds to install update")
                 time.sleep(delay_seconds)
                 
                 # CRITICAL: Hard reset required for boot.py to run and install update
@@ -886,10 +892,10 @@ class UpdateManager:
                 # Never reaches here - device reboots
                 
             else:
-                print("✗ Update download failed, continuing with current version")
+                self.logger.error("Update download failed, continuing with current version")
                 return False
                 
         except Exception as e:
-            print(f"Error during update check: {e}")
+            self.logger.error(f"Error during update check: {e}")
             traceback.print_exception(e)
             return False

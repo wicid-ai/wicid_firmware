@@ -1,13 +1,17 @@
 # WICID System Configuration
 # These settings are deployed with each firmware update
 
-VERSION = "0.4.3"
+VERSION = "0.5.0"
 SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
 SYSTEM_UPDATE_CHECK_INTERVAL = 4  # hours
+PERIODIC_REBOOT_INTERVAL = 24  # hours (0 to disable)
 WEATHER_UPDATE_INTERVAL = 1200  # seconds
 
+# Logging Configuration
+LOG_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
 # WiFi Connection Retry Configuration
-WIFI_RETRY_TIMEOUT = 60  # Seconds to retry before entering Setup Mode (non-auth failures)
-SETUP_IDLE_TIMEOUT = 300  # Seconds to wait for user in Setup Mode before reboot
+WIFI_RETRY_TIMEOUT = 259200  # Seconds to retry before entering Setup Mode (non-auth failures)
+SETUP_IDLE_TIMEOUT = 600  # Seconds to wait for user in Setup Mode before reboot
 MAX_RETRY_CYCLES = 1200  # Boot cycles before indefinite Setup Mode (5 days worth)
 

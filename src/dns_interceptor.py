@@ -14,6 +14,7 @@ all DNS traffic and redirecting it to the setup portal.
 
 import struct
 import time
+from logging_helper import get_logger
 
 
 class DNSInterceptor:
@@ -61,12 +62,13 @@ class DNSInterceptor:
         self.max_errors = 10  # Maximum consecutive errors before disabling
         self.last_error_time = 0
         self.error_backoff = 1.0  # Seconds to wait after errors
+        self.logger = get_logger('wicid.dns')
         
         # Convert IP address to bytes for DNS response
         try:
             self.local_ip_bytes = self._ip_to_bytes(local_ip)
         except ValueError as e:
-            print(f"DNS Interceptor initialization failed: {e}")
+            self.logger.error(f"DNS Interceptor initialization failed: {e}")
             raise
     
     def _ip_to_bytes(self, ip_str):
@@ -105,7 +107,7 @@ class DNSInterceptor:
             
             # Socket pool must be provided
             if not self.socket_pool:
-                print("DNSInterceptor: No socket pool provided")
+                self.logger.warning("No socket pool provided")
                 return False
             
             # Create UDP socket using CircuitPython API
@@ -127,7 +129,7 @@ class DNSInterceptor:
             
             self.running = True
             
-            print(f"✓ DNS interceptor started successfully on port {self.DNS_PORT}")
+            self.logger.info(f"DNS interceptor started successfully on port {self.DNS_PORT}")
             
             return True
             
@@ -143,20 +145,20 @@ class DNSInterceptor:
             elif errno:
                 error_msg += f" (errno: {errno})"
             
-            print(f"✗ {error_msg}")
-            print("→ Captive portal will use HTTP-only detection")
+            self.logger.warning(error_msg)
+            self.logger.info("Captive portal will use HTTP-only detection")
             self._cleanup_socket()
             return False
             
         except AttributeError as e:
-            print(f"✗ DNS interceptor failed: socketpool API not available: {e}")
-            print("→ Captive portal will use HTTP-only detection")
+            self.logger.warning(f"DNS interceptor failed: socketpool API not available: {e}")
+            self.logger.info("Captive portal will use HTTP-only detection")
             self._cleanup_socket()
             return False
             
         except Exception as e:
-            print(f"✗ Unexpected error starting DNS interceptor: {e}")
-            print("→ Captive portal will use HTTP-only detection")
+            self.logger.error(f"Unexpected error starting DNS interceptor: {e}")
+            self.logger.info("Captive portal will use HTTP-only detection")
             self._cleanup_socket()
             return False
     
@@ -172,10 +174,10 @@ class DNSInterceptor:
             self.error_count = 0
             self.last_error_time = 0
             
-            print("DNS interceptor stopped successfully")
+            self.logger.debug("DNS interceptor stopped successfully")
                 
         except Exception as e:
-            print(f"Error stopping DNS interceptor: {e}")
+            self.logger.warning(f"Error stopping DNS interceptor: {e}")
             # Force cleanup even if there are errors
             try:
                 self._cleanup_socket()
@@ -267,8 +269,8 @@ class DNSInterceptor:
         self.last_error_time = time.time()
         
         if self.error_count >= self.max_errors:
-            print(f"DNS interceptor disabled due to errors")
-            print("Captive portal will continue with HTTP-only detection")
+            self.logger.warning("DNS interceptor disabled due to errors")
+            self.logger.info("Captive portal will continue with HTTP-only detection")
             # Don't stop completely, just enter backoff mode
             self.error_backoff = min(self.error_backoff * 2, 30.0)  # Exponential backoff, max 30s
     
@@ -290,7 +292,7 @@ class DNSInterceptor:
             # Check if processing took too long
             processing_time = time.time() - start_time
             if processing_time > 1.0:  # Warn if processing takes more than 1 second
-                print(f"Warning: DNS query processing took {processing_time:.2f}s")
+                self.logger.warning(f"DNS query processing took {processing_time:.2f}s")
                 
         except Exception as e:
             raise Exception(f"DNS query processing failed: {e}")

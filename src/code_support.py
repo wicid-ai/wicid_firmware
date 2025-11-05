@@ -1,15 +1,25 @@
+"""
+WICID Main Entry Point
+Orchestrates system initialization and mode execution using manager classes.
+"""
+
+import os
 import time
 import board
 import digitalio
-import os
-import json
-import storage
-import supervisor
+import microcontroller
 from pixel_controller import PixelController
-from utils import trigger_safe_mode, check_button_hold_duration
+from configuration_manager import ConfigurationManager
+from mode_manager import ModeManager
+from modes import WeatherMode, TempDemoMode, PrecipDemoMode
+from logging_helper import configure_logging, get_logger
+
+# Configure logging from settings
+log_level = os.getenv("LOG_LEVEL", "INFO")
+configure_logging(log_level)
+logger = get_logger('wicid')
 
 # Initialize hardware
-pixel_controller = PixelController()  # Singleton handles NeoPixel initialization
 button = digitalio.DigitalInOut(board.BUTTON)
 button.switch_to_input(pull=digitalio.Pull.UP)
 
@@ -19,337 +29,40 @@ print("BOOT LOG")
 print("=" * 60)
 try:
     with open("/boot_log.txt", "r") as f:
-        log_content = f.read()
-        print(log_content)
-    # Delete the log after displaying it
-    try:
-        os.remove("/boot_log.txt")
-    except:
-        pass
+        print(f.read())
+    os.remove("/boot_log.txt")
 except OSError:
     print("(no boot log available)")
 print("=" * 60 + "\n")
 
-# Load secrets from secrets.json
-try:
-    with open("/secrets.json", "r") as f:
-        secrets = json.load(f)
-except (OSError, ValueError):
-    secrets = {}
-
-# Load WiFi retry state
-from wifi_retry_state import load_retry_count, clear_retry_count
-retry_count = load_retry_count()
-max_retry_cycles = int(os.getenv("MAX_RETRY_CYCLES", "1200"))
-
-# Check if we've exceeded maximum retry cycles (5 days worth)
-if retry_count >= max_retry_cycles:
-    print(f"Maximum retry cycles exceeded ({retry_count}/{max_retry_cycles})")
-    print("Entering Setup Mode indefinitely. Clearing retry counter.")
-    clear_retry_count()
-    import modes
-    modes.run_setup_mode(button)
-    # If we get here, setup is complete or was cancelled
-    supervisor.reload()  # Reboot to apply new settings
-
-# Check if we should enter setup mode (button pressed on boot or no valid secrets)
-enter_setup = False
-
-if not button.value:  # Button is pressed
-    print("Button pressed on boot, entering setup mode...")
-    enter_setup = True
-else:
-    # Check if required secrets exist
-    required_secrets = ["ssid", "password", "weather_zip"]
-    missing_secrets = [key for key in required_secrets if not secrets.get(key)]
-    
-    if missing_secrets:
-        print(f"Configuration incomplete (missing: {missing_secrets}), entering setup mode...")
-        enter_setup = True
-
-if enter_setup:
-    import modes
-    modes.run_setup_mode(button)
-    # If we get here, setup is complete or was cancelled
-    supervisor.reload()  # Reboot to apply new settings
-
-# If we get here, we have valid settings
-from weather import Weather
-from wifi_manager import WiFiManager, AuthenticationError
-from wifi_retry_state import increment_retry_count, clear_retry_count as clear_retry
-from utils import check_button_held
-from update_manager import UpdateManager
-import modes
 
 def main():
+    """Main entry point. Catches fatal errors and reboots."""
     try:
-        # Initialize WiFi Manager singleton and connect with interruptible backoff
-        wifi_manager = WiFiManager.get_instance(button)
+        # Initialize configuration and ensure WiFi ready
+        # Blocks until complete. Restarts internally on user cancel/timeout.
+        # Raises exception only on unrecoverable errors.
+        logger.info("Initializing configuration...")
+        config_mgr = ConfigurationManager.get_instance(button)
+        config_mgr.initialize()
         
-        # Get WiFi retry timeout from settings
-        wifi_retry_timeout = int(os.getenv("WIFI_RETRY_TIMEOUT", "60"))
+        logger.info("Configuration complete - starting mode loop")
         
-        try:
-            # Connect with exponential backoff (timeout configured in settings.toml)
-            # User can interrupt by pressing button at any time
-            success, error_msg = wifi_manager.connect_with_backoff(
-                secrets["ssid"],
-                secrets["password"],
-                timeout=wifi_retry_timeout
-            )
-            
-            if not success:
-                # Connection failed after timeout - increment retry counter and enter setup mode
-                print(f"Could not connect to WiFi: {error_msg}")
-                new_count = increment_retry_count()
-                print(f"Incrementing retry counter to {new_count}")
-                print("Entering setup mode...")
-                pixel_controller.blink_error()
-                time.sleep(2)
-                wifi_error = {
-                    "message": f"Unable to connect to WiFi. Network may be unreachable. (Retry cycle {new_count})",
-                    "field": "ssid"
-                }
-                if modes.run_setup_mode(button, error=wifi_error):
-                    # Setup completed, reboot to apply new settings
-                    supervisor.reload()
-                else:
-                    # Setup cancelled, reboot to retry
-                    print("Setup cancelled. Rebooting to retry...")
-                    time.sleep(2)
-                    supervisor.reload()
-            
-            # Connection successful - clear retry counter and continue
-            clear_retry()
-            print("✓ WiFi connected - retry counter cleared")
-                
-        except AuthenticationError as e:
-            # Authentication failure detected - network reachable but credentials invalid
-            # Fail fast and enter setup mode immediately (do NOT increment counter)
-            print(f"WiFi authentication failure: {e}")
-            print("Entering setup mode immediately (no retry increment)...")
-            pixel_controller.blink_error()
-            time.sleep(2)
-            wifi_error = {
-                "message": "WiFi authentication failed. Please check your password.",
-                "field": "password"
-            }
-            if modes.run_setup_mode(button, error=wifi_error):
-                # Setup completed, reboot to apply new settings
-                supervisor.reload()
-            else:
-                # Setup cancelled, reboot to retry
-                print("Setup cancelled. Rebooting to retry...")
-                time.sleep(2)
-                supervisor.reload()
-                
-        except KeyboardInterrupt:
-            # User pressed button during connection attempts
-            print("Connection attempt interrupted by button press.")
-            
-            # Check button hold duration: 10s = Safe Mode, 3s = Setup mode, short = skip WiFi
-            hold_result = check_button_hold_duration(button, pixel_controller)
-            
-            if hold_result == 'safe_mode':
-                print("Safe Mode requested (10 second hold)")
-                trigger_safe_mode()
-                # This will reboot, so we never reach here
-            elif hold_result == 'setup':
-                print("Setup mode requested during WiFi connection")
-                if modes.run_setup_mode(button):
-                    # Setup completed, reboot to apply new settings
-                    supervisor.reload()
-                else:
-                    # Setup cancelled, reboot to retry connection
-                    print("Setup cancelled. Rebooting to retry connection...")
-                    time.sleep(1)
-                    supervisor.reload()
-            else:  # 'short'
-                # Short press - user wants to skip WiFi for now
-                # Continue to main loop without WiFi (only demo modes will work)
-                print("Skipping WiFi connection. Only demo modes available.")
-                pixel_controller.set_color((255, 165, 0))  # Orange to indicate no WiFi
-                time.sleep(2)
-                wifi_manager = None  # Signal that WiFi is not available
-
-        # Initialize weather service and update manager with an active session (if WiFi connected)
-        weather = None
-        update_manager = None
+        # At this point: WiFiManager guaranteed connected (or available)
+        # Modes handle their own service initialization
         
-        if wifi_manager and wifi_manager.is_connected():
-            try:
-                session = wifi_manager.create_session()
-                weather = Weather(session, secrets["weather_zip"])
-                
-                # Check if ZIP code validation failed
-                if weather.lat is None or weather.lon is None:
-                    print("✗ ZIP code validation failed")
-                    print("Entering setup mode to update ZIP code...")
-                    pixel_controller.blink_error()
-                    time.sleep(2)
-                    zip_error = {
-                        "message": "Could not find location data for ZIP code. Please verify and try again.",
-                        "field": "zip_code"
-                    }
-                    if modes.run_setup_mode(button, error=zip_error):
-                        # Setup completed, reboot to apply new settings
-                        supervisor.reload()
-                    else:
-                        # Setup cancelled, reconnect WiFi and continue without weather
-                        print("Setup cancelled. Reconnecting to WiFi...")
-                        try:
-                            success, error = wifi_manager.reconnect(
-                                secrets["ssid"],
-                                secrets["password"],
-                                timeout=wifi_retry_timeout
-                            )
-                            if success:
-                                print("✓ WiFi reconnected. Continuing without weather service.")
-                                # Recreate session for future use
-                                session = wifi_manager.create_session()
-                            else:
-                                print(f"✗ Failed to reconnect: {error}")
-                                print("Rebooting to recover...")
-                                supervisor.reload()
-                        except Exception as e:
-                            print(f"Error reconnecting: {e}")
-                            print("Rebooting to recover...")
-                            supervisor.reload()
-                        weather = None
-                else:
-                    # All checks passed - WiFi connected and ZIP validated
-                    print("✓ Boot successful - all checks passed")
-                    pixel_controller.blink_success()
-                
-                # Initialize update manager and check for updates on boot
-                # UpdateManager accesses PixelController singleton internally for LED feedback
-                try:
-                    print("Initializing update manager...")
-                    update_manager = UpdateManager(session)
-                    
-                    print("Checking for firmware updates...")
-                    # Use centralized update workflow - handles check, download, and reboot
-                    update_manager.check_download_and_reboot(delay_seconds=2)
-                    # If we reach here, no update was available or download failed
-                    
-                    # Schedule next update check
-                    update_manager.next_update_check = update_manager.schedule_next_update_check()
-                    
-                except Exception as e:
-                    print(f"Error with update manager: {e}")
-                    print("Continuing without update checks")
-                    
-            except Exception as e:
-                print(f"Error initializing services: {e}")
-                print("Continuing without weather service")
-                weather = None
-        else:
-            print("Weather service unavailable (no WiFi connection)")
-
-        # Define available modes
-        modes_list = [
-            modes.run_current_weather_mode,
-            modes.run_temp_demo_mode,
-            modes.run_precip_demo_mode
-        ]
-        mode_index = 0
-
-        # Get weather update interval from settings
-        UPDATE_INTERVAL = int(os.getenv("WEATHER_UPDATE_INTERVAL", "1200"))
-
-        while True:
-            # Check if it's time for a scheduled firmware update check
-            if update_manager and update_manager.should_check_now():
-                print("Scheduled update check triggered")
-                try:
-                    # Use centralized update workflow - handles check, download, and reboot
-                    update_manager.check_download_and_reboot(delay_seconds=1)
-                    # If we reach here, no update was available or download failed
-                    
-                    # Reschedule next check
-                    update_manager.next_update_check = update_manager.schedule_next_update_check()
-                    
-                except Exception as e:
-                    print(f"Error during scheduled update check: {e}")
-            
-
-            # Call the selected mode function (runs until user presses button)
-            current_mode = modes_list[mode_index]
-            try:
-                if current_mode == modes.run_current_weather_mode:
-                    # Skip weather mode if no WiFi available
-                    if weather is None:
-                        print("Skipping weather mode (no WiFi connection)")
-                        mode_index = (mode_index + 1) % len(modes_list)
-                        time.sleep(0.5)
-                        continue
-                    current_mode(button, weather, UPDATE_INTERVAL)
-                else:
-                    current_mode(button)
-            except Exception as e:
-                print(f"Error in {current_mode.__name__}: {e}")
-                # Blink red to indicate error
-                pixel_controller.blink_error()
-                # Move to next mode on error
-                mode_index = (mode_index + 1) % len(modes_list)
-                continue
-
-            # Mode exited due to button press - check button hold duration
-            # 10+ seconds = Safe Mode (for development)
-            # 3+ seconds = Setup mode
-            # Short press = next mode
-            
-            hold_result = check_button_hold_duration(button, pixel_controller)
-            
-            if hold_result == 'safe_mode':
-                print("Safe Mode requested (10 second hold)")
-                trigger_safe_mode()
-                # This will reboot, so we never reach here
-            elif hold_result == 'setup':
-                print("Setup mode requested via button hold")
-                if modes.run_setup_mode(button):
-                    # If setup was successful, reboot to apply new settings
-                    supervisor.reload()
-                else:
-                    # If setup was cancelled, reconnect WiFi and continue
-                    print("Setup cancelled. Reconnecting to WiFi...")
-                    if wifi_manager:
-                        try:
-                            success, error = wifi_manager.reconnect(
-                                secrets["ssid"],
-                                secrets["password"],
-                                timeout=wifi_retry_timeout
-                            )
-                            if success:
-                                print("✓ WiFi reconnected. Resuming normal operation.")
-                            else:
-                                print(f"✗ Failed to reconnect: {error}")
-                                print("Continuing without WiFi...")
-                                # Reset wifi_manager to indicate no connection
-                                wifi_manager._connected = False
-                        except Exception as e:
-                            print(f"Error reconnecting: {e}")
-                            print("Continuing without WiFi...")
-                            wifi_manager._connected = False
-                    time.sleep(0.5)  # Debounce
-                    continue
-            else:  # 'short'
-                # Short press: move to next mode
-                mode_index = (mode_index + 1) % len(modes_list)
-
-            # Brief delay so we don't bounce immediately into next mode
-            time.sleep(0.2)
-
+        # Run mode loop (never returns normally)
+        mode_mgr = ModeManager(button)
+        mode_mgr.register_modes([WeatherMode, TempDemoMode, PrecipDemoMode])
+        mode_mgr.run()  # Handles setup re-entry, safe mode, mode switching
+        
     except Exception as e:
-        print("Fatal error in main loop:", e)
-        # Blink red rapidly to indicate fatal error
-        while True:
-            pixel_controller.set_color((255, 0, 0))
-            time.sleep(0.25)
-            pixel_controller.set_color((0, 0, 0))
-            time.sleep(0.25)
+        logger.critical(f"Fatal error: {e}", exc_info=True)
+        pixel = PixelController()
+        pixel.blink_error()
+        time.sleep(2)
+        microcontroller.reset()  # Reboot on unrecoverable error
+
 
 if __name__ == "__main__":
     main()
-
-

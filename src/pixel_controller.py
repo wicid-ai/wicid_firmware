@@ -1,6 +1,7 @@
 import time
 import board
 import neopixel
+from logging_helper import get_logger
 
 class _OperationContext:
     """Context manager for LED operations that auto-restores previous state."""
@@ -55,6 +56,7 @@ class PixelController:
     
     def __init__(self):
         if not PixelController._initialized:
+            self.logger = get_logger('wicid.pixel')
             # Initialize the NeoPixel hardware
             self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.3, auto_write=True)
             
@@ -89,7 +91,7 @@ class PixelController:
             if hasattr(self.pixels, 'show'):
                 self.pixels.show()
         except Exception as e:
-            print(f"PixelController.set_color error: {e}")
+            self.logger.warning(f"set_color error: {e}")
 
     def off(self):
         self.set_color((0, 0, 0))
@@ -346,7 +348,7 @@ class PixelController:
             elif previous_mode == self._MODE_FLASHING:
                 self._start_flashing(self._flash_colors, self._flash_rate)
         except Exception as e:
-            print(f"PixelController.blink_success error: {e}")
+            self.logger.warning(f"blink_success error: {e}")
 
     def blink_error(self, times=3, on_time=0.5, off_time=0.2):
         """Blocking blink red for error indication."""
@@ -367,7 +369,7 @@ class PixelController:
             elif previous_mode == self._MODE_FLASHING:
                 self._start_flashing(self._flash_colors, self._flash_rate)
         except Exception as e:
-            print(f"PixelController.blink_error error: {e}")
+            self.logger.warning(f"blink_error error: {e}")
 
     def flash_blue_green(self, start_time):
         """
@@ -388,4 +390,4 @@ class PixelController:
                 # Already flashing, just update
                 self.tick()
         except Exception as e:
-            print(f"PixelController.flash_blue_green error: {e}")
+            self.logger.warning(f"flash_blue_green error: {e}")

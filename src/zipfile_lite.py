@@ -7,6 +7,7 @@ Supports stored (uncompressed) and deflated files.
 
 import struct
 import zlib
+from logging_helper import get_logger
 
 
 class ZipFile:
@@ -30,6 +31,7 @@ class ZipFile:
         """
         self.filename = filename
         self.file_list = []
+        self.logger = get_logger('wicid.zipfile')
         self._find_central_directory()
     
     def __enter__(self):
@@ -187,7 +189,7 @@ class ZipFile:
         with open(dest_path, 'wb') as f:
             f.write(data)
         
-        print(f"  Extracted: {filename} ({len(data)} bytes)")
+        self.logger.debug(f"Extracted: {filename} ({len(data)} bytes)")
     
     def extractall(self, path='/'):
         """

@@ -7,6 +7,7 @@ eventual fallback to indefinite Setup Mode.
 """
 
 import json
+from logging_helper import get_logger
 
 STATE_FILE = "/wifi_retry_state.json"
 
@@ -59,5 +60,6 @@ def _save_retry_count(count):
         with open(STATE_FILE, "w") as f:
             json.dump(data, f)
     except OSError as e:
-        print(f"Warning: Failed to save retry state: {e}")
+        logger = get_logger('wicid.wifi_retry')
+        logger.warning(f"Failed to save retry state: {e}")
 

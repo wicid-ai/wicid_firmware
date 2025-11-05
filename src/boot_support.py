@@ -148,11 +148,11 @@ def cleanup_pending_update(installer=None):
     Args:
         installer: Optional UpdateInstaller instance for LED feedback
     """
-    print("Cleaning up pending update...")
+    log_boot_message("Cleaning up pending update...")
     
     try:
         remove_directory_recursive(PENDING_UPDATE_DIR, installer)
-        print("✓ Cleanup complete")
+        log_boot_message("✓ Cleanup complete")
     except Exception as e:
         log_boot_message(f"Warning: Cleanup error: {e}")
 
@@ -165,7 +165,7 @@ def delete_all_except(preserve_paths, installer=None):
         preserve_paths: List of paths to preserve (e.g., ['/secrets.json', '/pending_update'])
         installer: Optional UpdateInstaller instance for LED feedback
     """
-    print("Performing full reset (deleting all existing files)...")
+    log_boot_message("Performing full reset (deleting all existing files)...")
     
     # Normalize preserve paths (case-insensitive for FAT32 filesystem)
     preserve_set = set(path.rstrip('/').lower() for path in preserve_paths)
@@ -182,7 +182,7 @@ def delete_all_except(preserve_paths, installer=None):
         
         # Skip preserved paths (case-insensitive comparison for FAT32)
         if item_path.lower() in preserve_set:
-            print(f"  Preserved: {item_path}")
+            log_boot_message(f"  Preserved: {item_path}")
             continue
         
         # Skip system files/directories
@@ -193,19 +193,17 @@ def delete_all_except(preserve_paths, installer=None):
             # Try to remove as file first
             try:
                 os.remove(item_path)
-                print(f"  Deleted file: {item_path}")
                 continue
             except OSError:
                 pass
             
             # If not a file, try as directory - force recursive deletion
             remove_directory_recursive(item_path, installer)
-            print(f"  Deleted directory: {item_path}")
         
         except Exception as e:
             log_boot_message(f"  Error processing {item_path}: {e}")
     
-    print("✓ Full reset complete")
+    log_boot_message("✓ Full reset complete")
 
 def move_directory_contents(src_dir, dest_dir, installer=None):
     """
@@ -219,7 +217,7 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
         dest_dir: Destination directory path
         installer: Optional UpdateInstaller instance for LED feedback
     """
-    print(f"Moving files from {src_dir} to {dest_dir}...")
+    log_boot_message(f"Moving files from {src_dir} to {dest_dir}...")
     
     # Define preserved files that should NEVER be overwritten
     # These must match the preservation list used during deletion
@@ -238,7 +236,7 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
         # Skip preserved files - never overwrite them during OTA updates
         # Use case-insensitive comparison for FAT32 filesystem compatibility
         if dest_dir == "/" and item.lower() in [f.lower() for f in PRESERVED_FILES]:
-            print(f"  Skipping preserved file: {item}")
+            log_boot_message(f"  Skipping preserved file: {item}")
             # Remove from pending_update to avoid confusion
             try:
                 os.remove(src_path)
@@ -292,15 +290,13 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
                     
                     # Remove source
                     os.remove(src_path)
-                    
-                    print(f"  Moved: {item}")
                 except Exception as e:
                     log_boot_message(f"  Could not move {src_path}: {e}")
         
         except Exception as e:
             log_boot_message(f"  Error processing {item}: {e}")
     
-    print("✓ File move complete")
+    log_boot_message("✓ File move complete")
 
 def configure_storage():
     """
@@ -314,21 +310,19 @@ def configure_storage():
         storage.disable_usb_drive()
         storage.remount("/", readonly=False)
         
-        print("=" * 50)
-        print("PRODUCTION MODE")
-        print("Filesystem writable from code")
-        print("USB mass storage disabled")
-        print("USB serial console ENABLED for debugging")
-        print("")
-        print("To enable USB for development:")
-        print("Hold button for 10 seconds to enter Safe Mode")
-        print("=" * 50)
+        log_boot_message("=" * 50)
+        log_boot_message("PRODUCTION MODE")
+        log_boot_message("Filesystem writable from code")
+        log_boot_message("USB mass storage disabled")
+        log_boot_message("USB serial console ENABLED for debugging")
+        log_boot_message("To enable USB for development: Hold button for 10 seconds to enter Safe Mode")
+        log_boot_message("=" * 50)
     except Exception as e:
-        print("=" * 50)
-        print(f"ERROR: Storage configuration failed: {e}")
-        print("Device may be in inconsistent state")
-        print("Continuing boot to allow recovery...")
-        print("=" * 50)
+        log_boot_message("=" * 50)
+        log_boot_message(f"ERROR: Storage configuration failed: {e}")
+        log_boot_message("Device may be in inconsistent state")
+        log_boot_message("Continuing boot to allow recovery...")
+        log_boot_message("=" * 50)
 
 def process_pending_update():
     """
@@ -363,7 +357,7 @@ def process_pending_update():
         installer = UpdateInstaller()
         installer.update_led()
         if installer.pixel_controller:
-            print("LED indicator: flashing blue/green during update")
+            log_boot_message("LED indicator: flashing blue/green during update")
         
         # Step 1: Load manifest from extracted update
         manifest_path = f"{PENDING_ROOT_DIR}/manifest.json"
@@ -601,7 +595,7 @@ def check_and_restore_from_recovery():
         bool: True if recovery was needed and performed, False otherwise
     """
     if not UpdateManager:
-        print("UpdateManager not available, skipping recovery check")
+        log_boot_message("UpdateManager not available, skipping recovery check")
         return False
     
     # Check if all critical files are present
@@ -612,27 +606,27 @@ def check_and_restore_from_recovery():
         return False
     
     # Critical files missing - check if recovery backup exists
-    print("=" * 50)
-    print("CRITICAL: Missing critical files detected")
-    print("=" * 50)
-    print(f"Missing {len(missing_files)} critical files:")
+    log_boot_message("=" * 50)
+    log_boot_message("CRITICAL: Missing critical files detected")
+    log_boot_message("=" * 50)
+    log_boot_message(f"Missing {len(missing_files)} critical files:")
     for missing in missing_files[:10]:  # Show first 10
-        print(f"  - {missing}")
+        log_boot_message(f"  - {missing}")
     if len(missing_files) > 10:
-        print(f"  ... and {len(missing_files) - 10} more")
+        log_boot_message(f"  ... and {len(missing_files) - 10} more")
     
     if not UpdateManager.recovery_exists():
-        print("\n✗ No recovery backup available")
-        print("Device may not boot correctly")
-        print("Manual intervention required")
+        log_boot_message("\n✗ No recovery backup available")
+        log_boot_message("Device may not boot correctly")
+        log_boot_message("Manual intervention required")
         return False
     
     # Attempt recovery
-    print("\n→ Attempting recovery from backup...")
+    log_boot_message("\n→ Attempting recovery from backup...")
     success, message = UpdateManager.restore_from_recovery()
     
     if success:
-        print(f"✓ {message}")
+        log_boot_message(f"✓ {message}")
         
         # Try to determine what version caused the failure
         try:
@@ -646,7 +640,7 @@ def check_and_restore_from_recovery():
                         failed_version, 
                         "Automatic recovery triggered - update left device in unbootable state"
                     )
-                print(f"Marked version {failed_version} as incompatible")
+                log_boot_message(f"Marked version {failed_version} as incompatible")
         except:
             pass  # Couldn't determine version, continue anyway
         
@@ -656,12 +650,12 @@ def check_and_restore_from_recovery():
         except:
             pass
         
-        print("\n→ Device recovered successfully")
-        print("Continuing with normal boot")
+        log_boot_message("\n→ Device recovered successfully")
+        log_boot_message("Continuing with normal boot")
         return True
     else:
-        print(f"✗ {message}")
-        print("Manual intervention required")
+        log_boot_message(f"✗ {message}")
+        log_boot_message("Manual intervention required")
         return False
 
 def main():
@@ -678,7 +672,7 @@ def main():
     
     if recovery_performed:
         # Recovery was needed - reboot to ensure clean state
-        print("\n→ Rebooting after recovery...")
+        log_boot_message("\n→ Rebooting after recovery...")
         time.sleep(2)
         os.sync()
         microcontroller.reset()

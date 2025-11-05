@@ -4,6 +4,7 @@ import digitalio
 import json
 import storage
 import os
+from logging_helper import get_logger
 from pixel_controller import PixelController
 
 def temperature_color(temp_f):
@@ -92,13 +93,20 @@ def blink_for_precip(pixel_controller, color, precip_percent, button=None):
 
     return True
 
-def run_current_weather_mode(button, weather, update_interval=600):
+def run_current_weather_mode(button, weather, update_interval=600, system_monitor=None):
     """
     The default 'current_weather_mode':
       - Periodically fetches current temperature & near-future precip chance.
       - Continuously shows blink_for_precip based on that data.
       - Returns to code.py when the user presses the button.
+    
+    Args:
+        button: Button instance
+        weather: Weather service instance
+        update_interval: Seconds between weather updates
+        system_monitor: Optional SystemMonitor instance for periodic system checks
     """
+    logger_func = get_logger('wicid.modes.weather')
     pixel_controller = PixelController()  # Get singleton instance
     
     # Ensure button is released before starting
@@ -113,12 +121,11 @@ def run_current_weather_mode(button, weather, update_interval=600):
         now = time.monotonic()
 
         if last_update is None or (now - last_update) >= update_interval:
-            print(f"Updating weather data for zip code {weather.zip_code}")
+            logger_func.debug(f"Updating weather data for zip code {weather.zip_code}")
             current_temp = weather.get_current_temperature()
             precip_chance_in_window = weather.get_precip_chance_in_window(0, 4)
             last_update = now
-            print("Current temp (°F):", current_temp)
-            print("Precip chance next 4h (%):", precip_chance_in_window)
+            logger_func.info(f"Weather update: {current_temp}°F, {precip_chance_in_window}% precip chance")
 
         current_color = temperature_color(current_temp)
 
@@ -130,6 +137,10 @@ def run_current_weather_mode(button, weather, update_interval=600):
         if not button.value:
             break  # Return immediately while button still pressed
 
+        # Allow system monitor to perform periodic checks (update checks, reboots)
+        if system_monitor:
+            system_monitor.tick()
+
         time.sleep(0.05)
 
 def run_temp_demo_mode(button):
@@ -138,6 +149,7 @@ def run_temp_demo_mode(button):
     then goes dark 2s, repeats.
     Returns when user presses button.
     """
+    logger_func = get_logger('wicid.modes.temp_demo')
     pixel_controller = PixelController()  # Get singleton instance
     
     # Ensure button is released before starting
@@ -145,7 +157,7 @@ def run_temp_demo_mode(button):
         time.sleep(0.05)
 
     while True:
-        print("Temp Demo Mode: 0->100°F cycle")
+        logger_func.debug("Temp Demo Mode: 0->100°F cycle")
 
         # Slower step time
         step_time = 0.15
@@ -173,6 +185,7 @@ def run_precip_demo_mode(button):
     Forces a color corresponding to 10°F, uses blink_for_precip with 30%,
     loops continuously until the user presses button to exit.
     """
+    logger_func = get_logger('wicid.modes.precip_demo')
     pixel_controller = PixelController()  # Get singleton instance
     
     # Ensure button is released before starting
@@ -180,7 +193,7 @@ def run_precip_demo_mode(button):
         time.sleep(0.05)
 
     while True:
-        print("Precip Demo Mode: color=10°F, precip=30%")
+        logger_func.debug("Precip Demo Mode: color=10°F, precip=30%")
 
         color_for_10f = temperature_color(10)
         # If the user presses button mid-blink, exit
@@ -199,9 +212,10 @@ def run_setup_mode(button, error=None):
         button: The button instance to check for user input
         error: Optional error dict to display in the portal (with 'message' and 'field')
     """
-    from setup_portal import SetupPortal
+    from configuration_manager import ConfigurationManager
     
-    print("Entering setup mode...")
+    logger = get_logger('wicid.modes.setup')
+    logger.info("Entering setup mode")
     
     # Begin pulsing immediately to indicate setup entry
     pixel_controller = PixelController()
@@ -220,34 +234,203 @@ def run_setup_mode(button, error=None):
         pixel_controller.tick()
         time.sleep(0.05)
     
-    # Create and run the setup portal
-    portal = SetupPortal(button)
-    
-    # Set error message if provided
-    if error:
-        portal.last_connection_error = error
+    # Get ConfigurationManager singleton and run portal
+    config_mgr = ConfigurationManager.get_instance(button)
     
     try:
-        # LED already pulsing; start access point infrastructure
-        portal.start_access_point()
-        
-        # Run web server
-        setup_complete = portal.run_web_server()
-        
-        if setup_complete:
-            # Blink green to indicate success
-            portal.blink_success()
-            print("Setup completed successfully")
-            return True
-        else:
-            print("Setup cancelled by user")
-            # Brief delay to prevent immediate re-entry
-            time.sleep(1)
-            return False
+        # run_portal handles setup indicator, AP, web server, and lifecycle
+        return config_mgr.run_portal(error=error)
             
     except Exception as e:
-        print(f"Error in setup mode: {e}")
+        logger.error(f"Error in setup mode: {e}")
         # Blink red to indicate error
         pixel_controller = PixelController()  # Get singleton instance
         pixel_controller.blink_error()
         return False
+
+
+# ============================================================================
+# Mode Classes (New Architecture)
+# ============================================================================
+
+from mode_interface import Mode
+
+
+class WeatherMode(Mode):
+    """
+    Main weather mode showing current temperature and precipitation probability.
+    
+    Displays:
+    - LED color based on current temperature
+    - Blinks to indicate precipitation probability (0-100%, rounded to nearest 10%)
+    """
+    
+    name = "Weather"
+    requires_wifi = True
+    order = 0  # Primary mode
+    
+    def __init__(self, button):
+        super().__init__(button)
+        self.weather = None
+        self.system_monitor = None
+        self.update_interval = int(os.getenv("WEATHER_UPDATE_INTERVAL", "600"))
+        self.last_update = None
+        self.current_temp = None
+        self.precip_chance = None
+    
+    def initialize(self) -> bool:
+        """Initialize weather service."""
+        if not super().initialize():
+            return False
+        
+        try:
+            # Load weather ZIP from credentials
+            credentials = self.wifi_manager.get_credentials()
+            if not credentials or not credentials.get('weather_zip'):
+                self.logger.warning("No weather ZIP configured")
+                return False
+            
+            zip_code = credentials['weather_zip']
+            
+            # Create weather service
+            from weather import Weather
+            session = self.wifi_manager.create_session()
+            self.weather = Weather(session, zip_code)
+            
+            # Create system monitor
+            from system_monitor import SystemMonitor
+            self.system_monitor = SystemMonitor()
+            
+            self.logger.info(f"Initialized for ZIP {zip_code}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Initialization error: {e}")
+            return False
+    
+    def run(self) -> None:
+        """Run weather display loop."""
+        self._running = True
+        
+        # Wait for button release
+        while not self.button.value:
+            time.sleep(0.05)
+        
+        self.logger.info("Starting display loop")
+        
+        while self._running:
+            now = time.monotonic()
+            
+            # Update weather data periodically
+            if self.last_update is None or (now - self.last_update) >= self.update_interval:
+                self.logger.debug(f"Updating weather data for ZIP {self.weather.zip_code}")
+                self.current_temp = self.weather.get_current_temperature()
+                self.precip_chance = self.weather.get_precip_chance_in_window(0, 4)
+                self.last_update = now
+                self.logger.info(f"Weather update: {self.current_temp}°F, {self.precip_chance}% precip chance")
+            
+            # Display temperature color with precipitation blinks
+            current_color = temperature_color(self.current_temp)
+            
+            if not blink_for_precip(self.pixel, current_color, self.precip_chance, self.button):
+                # Button pressed during blink
+                break
+            
+            # Check button after blink cycle
+            if not self.button.value:
+                break
+            
+            # System monitor checks (updates, periodic reboot)
+            if self.system_monitor:
+                self.system_monitor.tick()
+            
+            time.sleep(0.05)
+        
+        self.logger.info("Exiting")
+    
+    def cleanup(self) -> None:
+        """Clean up weather mode resources."""
+        super().cleanup()
+        self.weather = None
+        self.system_monitor = None
+
+
+class TempDemoMode(Mode):
+    """
+    Temperature demo mode - cycles through 0°F to 100°F showing color gradient.
+    """
+    
+    name = "TempDemo"
+    requires_wifi = False
+    order = 10  # Secondary mode
+    
+    def run(self) -> None:
+        """Run temperature demo loop."""
+        self._running = True
+        
+        # Wait for button release
+        while not self.button.value:
+            time.sleep(0.05)
+        
+        self.logger.info("Starting demo")
+        
+        while self._running:
+            self.logger.debug("Temp Demo: 0->100°F cycle")
+            
+            # Cycle through temperatures
+            step_time = 0.15
+            for temp_f in range(101):
+                color = temperature_color(temp_f)
+                self.pixel.set_color(color)
+                
+                # Check button in small increments
+                for _ in range(int(step_time / 0.05)):
+                    if not self.button.value:
+                        self._running = False
+                        return
+                    time.sleep(0.05)
+            
+            # Pause with LED off
+            self.pixel.off()
+            pause_time = 2.0
+            for _ in range(int(pause_time / 0.05)):
+                if not self.button.value:
+                    self._running = False
+                    return
+                time.sleep(0.05)
+        
+        self.logger.info("Exiting")
+
+
+class PrecipDemoMode(Mode):
+    """
+    Precipitation demo mode - shows blink pattern for 30% precipitation chance at 10°F.
+    """
+    
+    name = "PrecipDemo"
+    requires_wifi = False
+    order = 20  # Secondary mode
+    
+    def run(self) -> None:
+        """Run precipitation demo loop."""
+        self._running = True
+        
+        # Wait for button release
+        while not self.button.value:
+            time.sleep(0.05)
+        
+        self.logger.info("Starting demo (10°F, 30% precip)")
+        
+        color_for_10f = temperature_color(10)
+        
+        while self._running:
+            # Show precipitation blink pattern
+            if not blink_for_precip(self.pixel, color_for_10f, 30, self.button):
+                # Button pressed during blink
+                break
+            
+            # Check button after blink cycle
+            if not self.button.value:
+                break
+        
+        self.logger.debug("Exiting")

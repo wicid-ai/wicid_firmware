@@ -28,24 +28,45 @@ See the product website at: https://www.wicid.ai
 
 ### Software Architecture
 
-The firmware is organized into several key components:
+WICID uses a manager-based architecture with clear separation of concerns:
 
-1. **Main Loop** (`code.py`):
-   - Initializes hardware components
-   - Manages mode switching
-   - Handles error recovery
+1. **Main Orchestrator** (`code_support.py`):
+   - Coordinates system initialization and startup
+   - Handles fatal error recovery
+   - Delegates responsibilities to specialized managers
 
-2. **Weather Module** (`weather.py`):
-   - Manages WiFi connectivity
-   - Fetches weather data from Open-Meteo API
-   - Handles geocoding of ZIP codes
-   - Provides weather data to other components
+2. **Configuration Manager**:
+   - Manages the complete configuration lifecycle
+   - Automatically enters setup mode when configuration is missing or invalid
+   - Validates WiFi credentials before committing changes
+   - Integrates firmware update checks after successful connection
 
-3. **Modes** (`modes.py`):
-   - `run_current_weather_mode`: Shows live weather data
-   - `run_temp_demo_mode`: Demonstrates temperature color range
-   - `run_precip_demo_mode`: Demonstrates precipitation indication
-   - `run_setup_mode`: Handles Wi-Fi and location configuration via setup portal
+3. **WiFi Manager**:
+   - Centralizes all WiFi operations (station mode and access point)
+   - Manages connection retry logic with exponential backoff
+   - Provides HTTP sessions for weather and update services
+
+4. **Mode Manager**:
+   - Orchestrates user-selectable operating modes (weather display, demos)
+   - Handles button-based mode switching
+   - Provides consistent error recovery across modes
+   - Extensible design for adding new display modes
+
+5. **Update Manager**:
+   - Checks for firmware updates on boot and daily intervals
+   - Downloads and verifies update packages
+   - Performs full-reset installations to ensure consistency
+
+6. **System Monitor**:
+   - Performs periodic health checks
+   - Coordinates scheduled maintenance operations
+
+7. **Shared Resources** (singletons):
+   - **Pixel Controller**: LED animations and visual feedback
+   - **Logging**: Structured logging with configurable verbosity
+   - **Weather Service**: Fetches data from Open-Meteo API
+
+The architecture emphasizes encapsulation, error resilience, and extensibility. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for detailed design documentation.
 
 ### Weather Data
 
@@ -270,21 +291,27 @@ User-specific credentials, preserved across firmware updates:
 **Note**: `secrets.json` is created by Setup Mode and preserved during OTA updates.
 
 ### Code Structure
-- `code.py`: Main application loop and mode switching
-- `boot.py`: Bootloader with compatibility checks and full-reset installation
+- `code_support.py`: Main orchestrator and system initialization
+- `boot_support.py`: Bootloader with compatibility checks and update installation
+- `configuration_manager.py`: Configuration lifecycle and setup portal orchestration
+- `wifi_manager.py`: WiFi connectivity and credential management
+- `mode_manager.py`: Mode orchestration and button handling
+- `mode_interface.py`: Base class defining mode contract
+- `modes.py`: Mode implementations (weather display, demos)
 - `update_manager.py`: OTA update logic with device self-identification
-- `zipfile_lite.py`: Custom ZIP extraction using zlib
-- `modes.py`: LED behavior and display modes
+- `system_monitor.py`: Periodic health checks and maintenance
 - `weather.py`: Weather data fetching and processing
-- `wifi_manager.py`: WiFi connection management with retry logic
-- `setup_portal.py`: Web-based setup interface
 - `pixel_controller.py`: LED control and animations
+- `dns_interceptor.py`: Captive portal DNS for setup interface
+- `logging_helper.py`: Structured logging configuration
+- `wifi_retry_state.py`: Connection retry state tracking
+- `zipfile_lite.py`: Custom ZIP extraction using zlib
 - `utils.py`: Device detection, compatibility checks, and shared utilities
 - `settings.toml`: System configuration (version controlled)
 - `secrets.json`: User credentials (device-specific, preserved during updates)
 - `lib/`: CircuitPython libraries
 - `www/`: Web interface files for the setup portal
-- `docs/`: Documentation including build and update server specifications
+- `docs/`: Architecture and build process documentation
 - `wicid_circuitpy_requirements.txt`: CircuitPython library dependencies
 
 ### Flashing and Building

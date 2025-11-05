@@ -11,6 +11,7 @@ import time
 import board
 import microcontroller
 import json
+from logging_helper import get_logger
 
 
 def get_os_name():
@@ -243,9 +244,11 @@ def mark_incompatible_release(version, reason="Unknown"):
         os.sync()
         
         attempts = incompatible["releases"][version]["attempts"]
-        print(f"Marked {version} as incompatible (attempt {attempts}): {reason}")
+        logger = get_logger('wicid.utils')
+        logger.warning(f"Marked {version} as incompatible (attempt {attempts}): {reason}")
     except Exception as e:
-        print(f"Warning: Could not mark incompatible release: {e}")
+        logger = get_logger('wicid.utils')
+        logger.warning(f"Could not mark incompatible release: {e}")
 
 
 def is_release_incompatible(version, max_attempts=3):
@@ -319,8 +322,9 @@ def check_release_compatibility(release_data, current_version):
     if is_blocked:
         return (False, f"Blocked after {attempts} attempts: {reason}")
     elif attempts > 0:
-        print(f"Warning: Version had {attempts} failed attempts: {reason}")
-        print("Retrying compatibility check...")
+        logger = get_logger('wicid.utils')
+        logger.warning(f"Version had {attempts} failed attempts: {reason}")
+        logger.debug("Retrying compatibility check")
     
     return (True, None)
 
@@ -472,13 +476,15 @@ def check_button_hold_duration(button, pixel_controller=None):
             # At 3 seconds, start pulsing white for Setup Mode indicator
             if elapsed >= 3.0 and not setup_indicated and pixel_controller:
                 setup_indicated = True
-                print("3 second threshold reached - pulsing Setup Mode indicator")
+                logger = get_logger('wicid.utils')
+                logger.debug("3 second threshold reached - pulsing Setup Mode indicator")
                 pixel_controller.indicate_setup_mode()
             
             # At 10 seconds, start flashing blue/green for Safe Mode indicator
             if elapsed >= 10.0 and not safe_mode_indicated and pixel_controller:
                 safe_mode_indicated = True
-                print("10 second threshold reached - flashing Safe Mode indicator")
+                logger = get_logger('wicid.utils')
+                logger.debug("10 second threshold reached - flashing Safe Mode indicator")
                 pixel_controller.indicate_safe_mode()
             
             # Keep animation running
@@ -514,8 +520,9 @@ def trigger_safe_mode():
     Trigger Safe Mode on next reboot.
     This enables USB mass storage for development.
     """
-    print("Triggering Safe Mode for development access...")
-    print("Device will reboot with USB enabled")
+    logger = get_logger('wicid.utils')
+    logger.info("Triggering Safe Mode for development access")
+    logger.info("Device will reboot with USB enabled")
     microcontroller.on_next_reset(microcontroller.RunMode.SAFE_MODE)
     microcontroller.reset()
 
@@ -539,8 +546,9 @@ def get_location_data_from_zip(session, zip_code):
         tuple: (latitude, longitude, timezone) or (None, None, None) if all attempts fail
     """
     # Check cache first
+    logger = get_logger('wicid.utils.geocoding')
     if zip_code in _location_cache:
-        print(f"Using cached location data for ZIP: {zip_code}")
+        logger.debug(f"Using cached location data for ZIP: {zip_code}")
         return _location_cache[zip_code]
     
     zip_attempts = [
@@ -569,10 +577,10 @@ def get_location_data_from_zip(session, zip_code):
             _location_cache[zip_code] = location_data
             
             if zip_attempt != zip_code:
-                print(f"Location found using {len(zip_attempt)}-digit prefix: {zip_attempt}")
+                logger.debug(f"Location found using {len(zip_attempt)}-digit prefix: {zip_attempt}")
             return location_data
     
     # Cache the failure result too to avoid repeated failed lookups
-    print("No geocoding results found for ZIP code:", zip_code)
+    logger.warning(f"No geocoding results found for ZIP code: {zip_code}")
     _location_cache[zip_code] = (None, None, None)
     return None, None, None

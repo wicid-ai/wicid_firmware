@@ -1,4 +1,5 @@
 from utils import get_location_data_from_zip
+from logging_helper import get_logger
 
 
 class Weather:
@@ -14,6 +15,7 @@ class Weather:
         self.session = session
         self.zip_code = weather_zip
 
+        self.logger = get_logger('wicid.weather')
         # Get coordinates first, then detect timezone from them
         self.lat, self.lon, raw_tz = get_location_data_from_zip(self.session, self.zip_code)
 
@@ -22,7 +24,7 @@ class Weather:
             self.timezone = raw_tz.replace("/", "%2F")
         else:
             # Fallback to default timezone if coordinates not available
-            print("Warning: Could not get location data, using default timezone")
+            self.logger.warning("Could not get location data, using default timezone")
             self.timezone = "America%2FNew_York"
 
     def get_current_temperature(self):
@@ -100,10 +102,8 @@ class Weather:
                 current_index = i
                 break
 
-        #print(current_index)
-
         if current_index is None:
-            print("Warning: Could not match current_weather hour in hourly data.")
+            self.logger.warning("Could not match current_weather hour in hourly data")
             return 0
 
         start_hour = current_index + int(start_time_offset)
