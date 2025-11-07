@@ -7,8 +7,13 @@ extracting them to /pending_update/root/, and managing the update process.
 CRITICAL: This module is the SINGLE SOURCE OF TRUTH for all OTA update operations.
 
 Usage:
-    update_manager = UpdateManager(session)
+    update_manager = UpdateManager(progress_callback=my_callback)
     update_manager.check_download_and_reboot()  # Handles everything, reboots if update found
+    
+    # Or for manual control:
+    update_info = update_manager.check_for_updates()
+    if update_info:
+        update_manager.download_update()  # Uses cached info from check_for_updates()
 
 LED Feedback:
     - UpdateManager accesses PixelController singleton internally
@@ -79,16 +84,30 @@ class UpdateManager:
         "/lib/adafruit_hashlib/__init__.mpy",  # Required by update_manager.mpy for checksum verification
     }
     
-    def __init__(self, session=None):
+    def __init__(self, progress_callback=None, wifi_manager=None, service_callback=None):
         """
         Initialize the update manager.
         
         Args:
-            session: Optional HTTP session for making requests
+            progress_callback: Optional callback function(state, message, progress_pct) for progress updates
+                              state: str - 'downloading', 'verifying', 'unpacking', 'complete', 'error'
+                              message: str - Human-readable progress message
+                              progress_pct: float - Completion percentage (0-100), may be None
+            wifi_manager: Optional WiFiManager instance for testing/DI (gets singleton if None)
         """
-        self.session = session
+        # Get WiFiManager singleton if not provided (for testing/DI)
+        if wifi_manager is None:
+            from wifi_manager import WiFiManager
+            self.wifi_manager = WiFiManager.get_instance()
+        else:
+            self.wifi_manager = wifi_manager
+        
+        self._session = None  # Lazy-created HTTP session
+        self._cached_update_info = None  # Store check_for_updates() results
         self.next_update_check = None
         self._download_flash_start = None
+        self.progress_callback = progress_callback
+        self.service_callback = service_callback
         self.logger = get_logger('wicid.update_manager')
         
         # Access singleton for LED feedback (optional, gracefully handles if unavailable)
@@ -423,7 +442,6 @@ class UpdateManager:
             sha256 = hashlib.sha256()
             bytes_processed = 0
             tick_count = 0
-            
             with open(file_path, 'rb') as f:
                 while True:
                     chunk = f.read(chunk_size)
@@ -435,6 +453,11 @@ class UpdateManager:
                     # Update LED based on time - ensures consistent animation
                     tick_count += 1
                     self._update_download_led()
+                    self._service_timeslice()
+                    
+                    progress_pct = int((bytes_processed / file_size) * 100)
+                    progress_pct = max(0, min(progress_pct, 100))
+                    self._notify_progress('verifying', 'Verifying download integrity...', progress_pct)
             
             elapsed = time.monotonic() - start_time
             self.logger.debug(f"Checksum calculated in {elapsed:.1f} seconds")
@@ -489,16 +512,14 @@ class UpdateManager:
         Check if a newer compatible version is available for this device.
         
         Uses device self-identification and multi-platform manifest format.
+        Caches result for use by download_update().
         
         Returns:
             dict or None: Update info dict with keys 'version', 'zip_url', 'release_notes'
                          if update is available, otherwise None
         """
-        if not self.session:
-            self.logger.warning("No HTTP session available for update check")
-            return None
-        
         try:
+            session = self._get_session()
             # Get device characteristics at runtime
             device_machine = get_machine_type()
             device_os = get_os_version_string()
@@ -525,7 +546,7 @@ class UpdateManager:
             headers = {"User-Agent": user_agent}
             
             # Fetch the releases manifest
-            response = self.session.get(manifest_url, headers=headers)
+            response = session.get(manifest_url, headers=headers)
             
             # Check if response is successful
             if response.status_code != 200:
@@ -569,7 +590,7 @@ class UpdateManager:
                 
                 if is_compatible:
                     self.logger.info(f"Update available: {current_version} -> {release_info['version']}")
-                    return {
+                    update_info = {
                         "version": release_info["version"],
                         "zip_url": release_info.get("zip_url"),
                         "sha256": release_info.get("sha256"),
@@ -577,6 +598,8 @@ class UpdateManager:
                         "target_machine_types": release_entry.get("target_machine_types", []),
                         "target_operating_systems": release_entry.get("target_operating_systems", [])
                     }
+                    self._cached_update_info = update_info  # Cache for download_update()
+                    return update_info
                 else:
                     self.logger.debug(f"Skipping {release_info['version']}: {error_msg}")
             
@@ -587,6 +610,41 @@ class UpdateManager:
             self.logger.error(f"Error checking for updates: {e}")
             traceback.print_exception(e)
             return None
+    
+    def _get_session(self):
+        """
+        Get or create HTTP session lazily.
+        
+        Returns:
+            HTTP session instance
+        """
+        if self._session is None:
+            self._session = self.wifi_manager.create_session()
+        return self._session
+    
+    def _notify_progress(self, state, message, progress_pct=None):
+        """
+        Notify progress callback if registered (Observer pattern).
+        
+        Args:
+            state: Current operation state ('downloading', 'verifying', 'unpacking', 'complete', 'error')
+            message: Human-readable progress message
+            progress_pct: Optional completion percentage (0-100)
+        """
+        if self.progress_callback:
+            try:
+                self.progress_callback(state, message, progress_pct)
+            except Exception as e:
+                self.logger.warning(f"Progress callback error: {e}")
+        self._service_timeslice()
+
+    def _service_timeslice(self):
+        """Allow caller to service HTTP/UI while long operations run."""
+        if self.service_callback:
+            try:
+                self.service_callback()
+            except Exception as e:
+                self.logger.debug(f"Service callback error: {e}")
     
     def _update_download_led(self, force=False):
         """
@@ -605,20 +663,30 @@ class UpdateManager:
         # We can call it frequently without performance penalty - it self-throttles
         self.pixel_controller.tick()
     
-    def download_update(self, zip_url, expected_checksum=None):
+    def download_update(self, zip_url=None, expected_checksum=None):
         """
         Download update package and extract to /pending_update/root/.
         
+        Uses cached update info from check_for_updates() if no explicit parameters provided.
+        
         Args:
-            zip_url: URL of the zip file to download
-            expected_checksum: Optional SHA-256 checksum to verify download
+            zip_url: Optional explicit URL (uses cached if None)
+            expected_checksum: Optional explicit SHA-256 checksum (uses cached if None)
         
         Returns:
             bool: True if download and extraction successful, False otherwise
+        
+        Raises:
+            ValueError: If no cached update info and no explicit parameters provided
         """
-        if not self.session:
-            self.logger.warning("No HTTP session available for download")
-            return False
+        # Use cached info if no explicit params
+        if zip_url is None:
+            if self._cached_update_info is None:
+                raise ValueError("No update info available. Call check_for_updates() first.")
+            zip_url = self._cached_update_info.get("zip_url")
+            expected_checksum = self._cached_update_info.get("sha256")
+        
+        session = self._get_session()
         
         # Start LED flashing for download phase
         if self.pixel_controller:
@@ -658,18 +726,76 @@ class UpdateManager:
             self.logger.debug(f"Saving to: {zip_path}")
             
             self._update_download_led()
+            self._notify_progress('downloading', 'Starting download...', 0)
+            self._service_timeslice()
+            
+            def _get_content_length(headers):
+                """Return Content-Length header ignoring case."""
+                if not headers:
+                    return None
+                try:
+                    # Common fast-path lookups
+                    for key in ("Content-Length", "content-length"):
+                        value = headers.get(key)
+                        if value:
+                            return value
+                except AttributeError:
+                    pass
+                try:
+                    for key, value in headers.items():
+                        if isinstance(key, str) and key.lower() == "content-length":
+                            return value
+                except Exception:
+                    pass
+                return None
+            
+            # Try HEAD request first to get Content-Length for progress tracking
+            content_length = None
+            try:
+                head_response = session.head(zip_url)
+                if hasattr(head_response, 'headers') and head_response.headers:
+                    content_length_str = _get_content_length(head_response.headers)
+                    if content_length_str:
+                        try:
+                            content_length = int(content_length_str)
+                            self.logger.debug(f"Content-Length from HEAD: {content_length} bytes")
+                        except (ValueError, TypeError):
+                            pass
+                head_response.close()
+            except Exception as e:
+                self.logger.debug(f"HEAD request failed (non-critical): {e}")
+                # Continue with download even if HEAD fails
             
             # Download the file
-            response = self.session.get(zip_url)
+            response = session.get(zip_url)
+            
+            # If HEAD didn't work, try GET response headers
+            if content_length is None and hasattr(response, 'headers') and response.headers:
+                content_length_str = _get_content_length(response.headers)
+                if content_length_str:
+                    try:
+                        content_length = int(content_length_str)
+                        self.logger.debug(f"Content-Length from GET: {content_length} bytes")
+                    except (ValueError, TypeError):
+                        pass
             
             # Save to file in chunks to handle large files reliably
             # Use larger chunks for faster download
+            bytes_downloaded = 0
             with open(zip_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=16384):
                     if chunk:  # filter out keep-alive chunks
                         f.write(chunk)
                         # Update LED based on time (every 0.1s), not chunks - smooth and fast
                         self._update_download_led()
+                        bytes_downloaded += len(chunk)
+
+                        progress_pct = None
+                        if content_length and content_length > 0:
+                            progress_pct = int((bytes_downloaded / content_length) * 100)
+                            progress_pct = max(0, min(progress_pct, 99))
+                        self._notify_progress('downloading', 'Download...', progress_pct)
+                        self._service_timeslice()
             
             response.close()
             
@@ -678,6 +804,8 @@ class UpdateManager:
             
             self.logger.info("Download complete")
             self._update_download_led()
+            self._notify_progress('downloading', 'Download complete', 100)
+            self._service_timeslice()
             
             # Verify checksum if provided
             if expected_checksum:
@@ -686,10 +814,12 @@ class UpdateManager:
                 if self.pixel_controller:
                     self.pixel_controller.indicate_verifying()
                 self._update_download_led()
+                self._notify_progress('verifying', 'Verifying download integrity...', None)
                 checksum_valid, checksum_msg = self.verify_checksum(zip_path, expected_checksum)
                 
                 if not checksum_valid:
                     self.logger.error(f"Checksum verification failed: {checksum_msg}")
+                    self._notify_progress('error', f'Verification failed: {checksum_msg}', None)
                     
                     # If checksum was provided but doesn't match, this is a security issue
                     if "mismatch" in checksum_msg.lower():
@@ -705,6 +835,8 @@ class UpdateManager:
                 
                 self.logger.info(checksum_msg)
                 self._update_download_led()
+                self._notify_progress('verifying', 'Verification complete', 100)
+                self._service_timeslice()
             else:
                 self.logger.warning("No checksum in manifest - update may be from older release")
             
@@ -714,6 +846,7 @@ class UpdateManager:
                 
                 self.logger.info("Extracting update files")
                 self._update_download_led()
+                self._notify_progress('unpacking', 'Extracting update files...', 0)
                 
                 with ZipFile(zip_path) as zf:
                     all_files = zf.namelist()
@@ -726,18 +859,24 @@ class UpdateManager:
                     
                     # Extract each file individually to filter out dotfiles
                     file_count = 0
+                    total_files = len(files_to_extract)
                     for filename in files_to_extract:
                         zf.extract(filename, self.PENDING_ROOT_DIR)
                         
-                        # Update LED every 3 files for visible feedback
+                        # Update LED and progress every 3 files for visible feedback
                         file_count += 1
                         if file_count % 3 == 0:
                             self._update_download_led()
+                            progress_pct = (file_count / total_files) * 100
+                            self._notify_progress('unpacking', f'Extracting files... ({file_count}/{total_files})', progress_pct)
+                            self._service_timeslice()
                 
                 # Sync filesystem immediately after extraction to prevent corruption
                 os.sync()
                 self.logger.info("Extraction complete")
                 self._update_download_led()
+                self._notify_progress('unpacking', 'Extraction complete', 100)
+                self._service_timeslice()
                 
                 # Validate the extracted manifest.json
                 manifest_path = f"{self.PENDING_ROOT_DIR}/manifest.json"
@@ -755,6 +894,7 @@ class UpdateManager:
                 # Validate that all critical files are present in extracted update
                 self.logger.debug("Validating extracted update contains all critical files")
                 self._update_download_led()
+                self._notify_progress('unpacking', 'Validating update package...', None)
                 all_present, missing_files = self.validate_extracted_update(self.PENDING_ROOT_DIR)
                 
                 if not all_present:
@@ -765,6 +905,7 @@ class UpdateManager:
                     if len(missing_files) > 10:
                         self.logger.error(f"  ... and {len(missing_files) - 10} more")
                     self.logger.error("Installation would brick the device - aborting")
+                    self._notify_progress('error', 'Update package incomplete', None)
                     
                     # Clean up incomplete extraction
                     os.remove(zip_path)
@@ -779,11 +920,13 @@ class UpdateManager:
                 os.sync()
                 
                 self.logger.info("Update ready for installation")
+                self._notify_progress('complete', 'Update ready for installation', 100)
                 return True
                 
             except Exception as e:
                 self.logger.error(f"Error extracting update: {e}")
                 traceback.print_exception(e)
+                self._notify_progress('error', f'Extraction failed: {e}', None)
                 
                 # Clean up on error
                 try:
@@ -793,9 +936,28 @@ class UpdateManager:
                 
                 return False
             
+        except (AttributeError, TypeError, NameError) as e:
+            # Code bugs - these indicate programming errors that need fixing
+            # Examples: 'Response' object has no attribute 'content_length'
+            self.logger.critical(f"Programming error in download_update: {e}")
+            traceback.print_exception(e)
+            self._notify_progress('error', f'Download failed: {e}', None)
+            
+            # Clean up partial download
+            try:
+                os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
+            except OSError:
+                pass
+            
+            # Re-raise as RuntimeError to propagate to main() and trigger reboot
+            raise RuntimeError(f"Unrecoverable error in update download: {e}") from e
+            
         except Exception as e:
+            # Ephemeral errors - network issues, HTTP errors, etc.
+            # These can be handled gracefully without crashing
             self.logger.error(f"Error downloading update: {e}")
             traceback.print_exception(e)
+            self._notify_progress('error', f'Download failed: {e}', None)
             
             # Clean up partial download
             try:
@@ -863,10 +1025,6 @@ class UpdateManager:
             bool: True if update is available and download succeeded (device will reboot),
                   False if no update or download failed (caller should continue normally)
         """
-        if not self.session:
-            self.logger.warning("No HTTP session available for updates")
-            return False
-        
         try:
             # Check for updates
             update_info = self.check_for_updates()
@@ -881,7 +1039,8 @@ class UpdateManager:
             self.logger.info("Downloading update")
             
             # Download and extract with checksum verification
-            if self.download_update(update_info['zip_url'], update_info.get('sha256')):
+            # download_update() uses cached info from check_for_updates()
+            if self.download_update():
                 self.logger.info("Update downloaded successfully")
                 self.logger.info(f"Rebooting in {delay_seconds} seconds to install update")
                 time.sleep(delay_seconds)

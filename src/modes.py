@@ -272,7 +272,6 @@ class WeatherMode(Mode):
     def __init__(self, button):
         super().__init__(button)
         self.weather = None
-        self.system_monitor = None
         self.update_interval = int(os.getenv("WEATHER_UPDATE_INTERVAL", "600"))
         self.last_update = None
         self.current_temp = None
@@ -297,9 +296,9 @@ class WeatherMode(Mode):
             session = self.wifi_manager.create_session()
             self.weather = Weather(session, zip_code)
             
-            # Create system monitor
+            # Get system monitor singleton
             from system_monitor import SystemMonitor
-            self.system_monitor = SystemMonitor()
+            self.system_monitor = SystemMonitor.get_instance()
             
             self.logger.info(f"Initialized for ZIP {zip_code}")
             return True

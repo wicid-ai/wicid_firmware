@@ -119,32 +119,55 @@
         <div id="status" class="status hidden"></div>
       </section>
 
-      <!-- Ready to Activate State -->
-      <section id="successState" class="form-container animate-in" style="display: none;">
+      <!-- Success State: No Update -->
+      <section id="successStateNoUpdate" class="form-container animate-in" style="display: none;">
         <div class="form-heading">
-          <h1>Ready to Activate</h1>
+          <h1>All Set!</h1>
         </div>
 
         <p>
-          When you tap <strong>Activate Now</strong>, WICID will restart and begin activation.
+          Your WICID configuration is complete and ready start delivering WICID awesome weather updates.
         </p>
-
-        <div class="info">
-          <p><strong>During activation, watch the device lights for status.</strong></p>
-          <ul class="list-default">
-            <li><strong>Success:</strong> WICID flashes <span class="text-success">green</span> 3 times and starts normally.</li>
-            <li><strong>Updating:</strong> If an update is needed, after the green flashes, WICID will alternate <span class="text-info">blue</span> and <span class="text-success">green</span> while installing (~5 minutes).</li>
-            <li><strong>Needs attention:</strong> WICID flashes <span class="text-error">red</span> 3 times, then pulses white. Reconnect to <strong>WICID-Setup</strong> to fix issues.</li>
-          </ul>
-        </div>
 
         <div class="cta-panel bg-info-soft">
           <p class="info cta-subcopy">
-            Tap below to activate, and watch the device lights for status.
+            Click below to get started.
           </p>
-          <button id="restartNowButton" class="btn-primary">
-            <span class="button-text">Activate Now</span>
+          <button id="activateButton" class="btn-primary">
+            <span class="button-text">Let's GO!</span>
           </button>
+        </div>
+      </section>
+
+      <!-- Success State: Update Required -->
+      <section id="successStateUpdate" class="form-container animate-in" style="display: none;">
+        <div class="form-heading">
+          <h1>Configuration Complete!</h1>
+        </div>
+
+        <p>
+          Now your WICID software needs updating to the latest version.
+        </p>
+
+        <div class="cta-panel bg-info-soft">
+          <p class="info cta-subcopy">
+            Tap Update Now to begin updating your device to the firmware version <div id="updateVersion"></div>.
+          </p>
+          <div class="update-button-container">
+            <button id="updateNowButton" class="btn-primary">
+              <span class="button-text">Update Now</span>
+            </button>
+            <span class="progress-text"></span>
+          </div>
+        </div>
+
+        <div class="info">
+          <p>What to expect:</p>
+          <ul class="list-default">
+            <li>Takes ~4–5 minutes</li>
+            <li>LED flashes <span class="text-info">blue</span> and <span class="text-success">green</span></li>
+            <li>Progress shows in the button: Downloading → Verifying → Unpacking → Restarting</li>
+          </ul>
         </div>
       </section>
 

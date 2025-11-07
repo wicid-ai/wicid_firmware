@@ -14,7 +14,7 @@ from logging_helper import get_logger
 
 class SystemMonitor:
     """
-    Manages periodic system maintenance tasks.
+    Singleton manager for periodic system maintenance tasks.
     
     Responsibilities:
     - Track boot time and schedule update checks
@@ -22,13 +22,38 @@ class SystemMonitor:
     - Execute checks when scheduled via tick()
     """
     
-    def __init__(self, update_manager=None):
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls, update_manager=None):
         """
-        Initialize system monitor.
+        Get singleton SystemMonitor instance.
         
         Args:
-            update_manager: Optional UpdateManager instance for update checks
+            update_manager: Optional UpdateManager for testing (only used on first call)
+        
+        Returns:
+            SystemMonitor: The singleton instance
         """
+        if cls._instance is None:
+            cls._instance = cls(update_manager)
+        return cls._instance
+    
+    def __init__(self, update_manager=None):
+        """
+        Private constructor. Use get_instance() instead.
+        
+        Args:
+            update_manager: Optional UpdateManager instance for testing
+        """
+        if SystemMonitor._instance is not None:
+            raise RuntimeError("Use SystemMonitor.get_instance() instead of direct instantiation")
+        
+        # Encapsulate UpdateManager creation - callers don't need to know about it
+        if update_manager is None:
+            from update_manager import UpdateManager
+            update_manager = UpdateManager()
+        
         self.update_manager = update_manager
         self.boot_time = time.monotonic()
         self.logger = get_logger('wicid.system_monitor')

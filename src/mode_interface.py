@@ -16,7 +16,8 @@ class Mode:
     
     Modes have access to shared singleton resources:
     - WiFiManager.get_instance() - for connectivity and session management
-    - PixelController() - for LED control
+    - PixelController() - for LED control (singleton via __new__)
+    - SystemMonitor.get_instance() - for update checks and periodic reboots
     
     Subclasses must implement:
     - name: str - Mode name for identification

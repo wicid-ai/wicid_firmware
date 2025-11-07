@@ -34,9 +34,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const buttonText = saveButton?.querySelector('.button-text');
   const buttonLoader = saveButton?.querySelector('.button-loader');
 
-  const successState = document.getElementById('successState');
   const setupState = document.getElementById('setupState');
-  const restartNowButton = document.getElementById('restartNowButton');
+  const successStateNoUpdate = document.getElementById('successStateNoUpdate');
+  const successStateUpdate = document.getElementById('successStateUpdate');
+  const activateButton = document.getElementById('activateButton');
+  const updateNowButton = document.getElementById('updateNowButton');
 
   const passwordToggle = document.getElementById('passwordToggle');
   const passwordToggleIconShow = passwordToggle?.querySelector('.password-toggle-icon-show');
@@ -75,6 +77,121 @@ document.addEventListener('DOMContentLoaded', () => {
   toggleManualSsid(isManualSelection());
 
   populateNetworks();
+  
+  // Poll validation status endpoint
+  async function pollValidationStatus(statusUrl, timeout = 120000) {
+    const startTime = Date.now();
+    const pollInterval = 2000; // 2 seconds
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 3;
+    
+    while (Date.now() - startTime < timeout) {
+      try {
+        // Update button text based on elapsed time
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        
+        const response = await fetch(statusUrl);
+        if (!response.ok) {
+          // Network error - retry with backoff
+          consecutiveErrors++;
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            return {
+              success: false,
+              error: {
+                message: 'Lost connection to device. Please check your connection to WICID-Setup.',
+                field: null
+              }
+            };
+          }
+          // Wait and retry
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        
+        // Reset error counter on successful response
+        consecutiveErrors = 0;
+        
+        const data = await response.json();
+        
+        // Update button text based on state
+        if (data.state === 'validating_wifi') {
+          if (buttonText) buttonText.textContent = 'Testing WiFi…';
+        } else if (data.state === 'checking_updates') {
+          if (buttonText) buttonText.textContent = 'Checking for updates…';
+        } else if (data.state === 'success') {
+          // Validation complete
+          return {
+            success: true,
+            updateAvailable: data.update_available || false,
+            updateInfo: data.update_info || null
+          };
+        } else if (data.state === 'error') {
+          // Validation failed - this is a real error, not a network issue
+          const error = data.error || { message: 'Validation failed', field: null };
+          return {
+            success: false,
+            error: {
+              message: error.message,
+              field: error.field || null
+            }
+          };
+        }
+        
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        
+      } catch (error) {
+        // Network/parsing error - retry with backoff
+        consecutiveErrors++;
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          return {
+            success: false,
+            error: {
+              message: 'Lost connection to device. Please check your connection to WICID-Setup.',
+              field: null
+            }
+          };
+        }
+        // Wait and retry
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
+    }
+    
+    // Timeout
+    return {
+      success: false,
+      error: {
+        message: 'Validation timed out. Please try again.',
+        field: null
+      }
+    };
+  }
+  
+  // Show success state with appropriate content
+  function showSuccessState(updateAvailable, updateInfo) {
+    // Hide setup form
+    if (setupState) setupState.classList.add('hidden');
+    
+    if (updateAvailable && updateInfo) {
+      // Show update state
+      if (successStateUpdate) {
+        // Update version number
+        const versionElement = successStateUpdate.querySelector('#updateVersion');
+        if (versionElement && updateInfo.version) {
+          versionElement.textContent = " to firmware version " + updateInfo.version;
+        }
+        
+        successStateUpdate.style.display = 'block';
+        scrollIntoViewWithOffset(successStateUpdate);
+      }
+    } else {
+      // Show no-update state
+      if (successStateNoUpdate) {
+        successStateNoUpdate.style.display = 'block';
+        scrollIntoViewWithOffset(successStateNoUpdate);
+      }
+    }
+  }
 
   if (systemDetailsToggle && systemDetailsContent) {
     systemDetailsToggle.setAttribute('aria-expanded', 'false');
@@ -101,6 +218,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (setupForm) {
     setupForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      
+      // Prevent multiple submissions
+      if (saveButton && saveButton.disabled) return;
+      
       hideError();
 
       const ssid = ssidSelect && ssidSelect.value && ssidSelect.value !== 'manual'
@@ -120,10 +241,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (buttonLoader) buttonLoader.classList.add('show');
 
       // Safety reset in case the request is lost by captive network
+      // Only re-enable if we're still in the setup state (not moved to success)
       let safetyReset = setTimeout(() => {
-        if (saveButton) saveButton.disabled = false;
-        if (buttonText) buttonText.textContent = 'Save & Connect';
-        if (buttonLoader) buttonLoader.classList.remove('show');
+        if (saveButton && setupState && !setupState.classList.contains('hidden')) {
+          saveButton.disabled = false;
+          if (buttonText) buttonText.textContent = 'Save & Continue';
+          if (buttonLoader) buttonLoader.classList.remove('show');
+        }
       }, 15000);
 
       try {
@@ -157,17 +281,36 @@ document.addEventListener('DOMContentLoaded', () => {
           throw err;
         }
 
-        // Show ready to activate state
-        if (setupState) setupState.classList.add('hidden');
-        if (successState) successState.style.display = 'block';
-        scrollIntoViewWithOffset(successState);
+        // Parse response to get status URL
+        const data = await res.json();
+        
+        if (data.status === 'validation_started' && data.status_url) {
+          // Start polling for validation status
+          const validationResult = await pollValidationStatus(data.status_url);
+          
+          if (validationResult.success) {
+            // Validation successful - show appropriate success state
+            // Button stays disabled - don't re-enable it
+            showSuccessState(validationResult.updateAvailable, validationResult.updateInfo);
+            return; // Exit early - button remains disabled
+          } else {
+            // Validation failed - show error
+            const err = new Error(validationResult.error.message || 'Validation failed');
+            if (validationResult.error && validationResult.error.field) {
+              err.field = validationResult.error.field;
+            }
+            throw err;
+          }
+        } else {
+          throw new Error('Unexpected response from server');
+        }
       } catch (error) {
         let msg = String(error && error.message ? error.message : error);
         let fieldName = (error && typeof error === 'object' && 'field' in error) ? error.field : null;
 
         // Friendlier copy for fetch/captive cases
         if ((error && error.name === 'TypeError') || /Failed to fetch|NetworkError/i.test(msg)) {
-          msg = 'Network error: Could not reach the device. Make sure you’re still connected to “WICID-Setup” and try again.';
+          msg = 'Network error: Could not reach the device. Make sure you\'re still connected to "WICID-Setup" and try again.';
         }
         // If the message still looks like JSON, attempt to parse
         if (/^\s*\{.*\}\s*$/.test(msg)) {
@@ -182,29 +325,158 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
         showError(msg, fieldName);
-      } finally {
-        // Restore button
+        // Only re-enable button on error
         if (saveButton) saveButton.disabled = false;
-        if (buttonText) buttonText.textContent = 'Save & Connect';
+        if (buttonText) buttonText.textContent = 'Save & Continue';
         if (buttonLoader) buttonLoader.classList.remove('show');
       }
     });
   }
 
-  // Restart / Activate
-  if (restartNowButton) {
-    restartNowButton.addEventListener('click', async () => {
+  // Activate button handler (no update scenario)
+  if (activateButton) {
+    activateButton.addEventListener('click', async () => {
+      // Prevent multiple clicks
+      if (activateButton.disabled) return;
+      
+      activateButton.disabled = true;
+      const buttonTextSpan = activateButton.querySelector('.button-text');
+      const originalText = buttonTextSpan?.textContent || '';
+      
       try {
-        restartNowButton.disabled = true;
-        const original = restartNowButton.textContent;
-        restartNowButton.textContent = 'Activating…';
-        await fetch('/restart-now', { method: 'POST' });
-        // Let the device take over; no further UI needed here
-        setTimeout(() => { restartNowButton.textContent = original; }, 4000);
-      } catch (_) {
-        restartNowButton.disabled = false;
+        if (buttonTextSpan) buttonTextSpan.textContent = 'Activating…';
+        await fetch('/activate', { method: 'POST' });
+        
+        // Wait for AP to shutdown (device will disconnect)
+        // Button stays disabled - device will disconnect
+        setTimeout(() => {
+          if (buttonTextSpan) buttonTextSpan.textContent = originalText;
+        }, 3000);
+      } catch (err) {
+        // Only re-enable on error
+        activateButton.disabled = false;
+        if (buttonTextSpan) buttonTextSpan.textContent = originalText;
+        showError('Activation failed. Please try again.');
       }
     });
+  }
+
+  // Update Now button handler (update available scenario)
+  if (updateNowButton) {
+    updateNowButton.addEventListener('click', async () => {
+      // Prevent multiple clicks
+      if (updateNowButton.disabled) return;
+      
+      updateNowButton.disabled = true;
+      const buttonTextSpan = updateNowButton.querySelector('.button-text');
+      const progressSpan = document.querySelector('.progress-text');
+      const originalText = buttonTextSpan?.textContent || '';
+      
+      try {
+        if (buttonTextSpan) buttonTextSpan.textContent = 'Starting update…';
+        if (progressSpan) progressSpan.textContent = '';
+        
+        // Trigger update and get status URL
+        const response = await fetch('/update-now', { method: 'POST' });
+        const data = await response.json();
+        
+        if (data.status === 'update_started' && data.status_url) {
+          // Poll for update progress
+          await pollUpdateProgress(data.status_url, buttonTextSpan, progressSpan);
+        }
+        
+        // Device will reboot after update completes - button stays disabled
+      } catch (err) {
+        // Only re-enable on error
+        updateNowButton.disabled = false;
+        if (buttonTextSpan) buttonTextSpan.textContent = originalText;
+        if (progressSpan) progressSpan.textContent = '';
+        showError('Update failed. Please try again.');
+      }
+    });
+  }
+  
+  function formatProgressLabel(baseText, progressValue) {
+    if (progressValue === null || progressValue === undefined) {
+      return `${baseText}...`;
+    }
+
+    if (typeof progressValue === 'string' && progressValue.trim() === '') {
+      return `${baseText}...`;
+    }
+
+    const numericProgress = Number(progressValue);
+    if (!Number.isFinite(numericProgress)) {
+      return `${baseText}...`;
+    }
+
+    const clampedProgress = Math.max(0, Math.min(100, Math.round(numericProgress)));
+    return `${baseText} ${clampedProgress}%`;
+  }
+
+  function setButtonProgress(buttonTextElement, progressElement, baseText, progressValue) {
+    if (buttonTextElement) {
+      buttonTextElement.textContent = formatProgressLabel(baseText, progressValue);
+    }
+
+    if (progressElement) {
+      progressElement.textContent = '';
+    }
+  }
+
+  // Poll update progress and update button text
+  async function pollUpdateProgress(statusUrl, buttonTextElement, progressElement) {
+    const pollInterval = 500; // Poll every 500ms for smoother updates
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 10; // Allow more retries before giving up
+    
+    while (true) {
+      try {
+        const response = await fetch(statusUrl);
+        if (!response.ok) {
+          consecutiveErrors++;
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            throw new Error('Failed to get update status');
+          }
+          // Wait and retry on transient errors
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        
+        // Reset error counter on successful response
+        consecutiveErrors = 0;
+        
+        const data = await response.json();
+        
+        // Update button text and progress based on state
+        if (data.state === 'downloading') {
+          setButtonProgress(buttonTextElement, progressElement, 'Downloading', data.progress);
+        } else if (data.state === 'verifying') {
+          setButtonProgress(buttonTextElement, progressElement, 'Verifying', data.progress);
+        } else if (data.state === 'unpacking') {
+          setButtonProgress(buttonTextElement, progressElement, 'Unpacking', data.progress);
+        } else if (data.state === 'restarting') {
+          if (buttonTextElement) buttonTextElement.textContent = 'Restarting...';
+          if (progressElement) progressElement.textContent = '';
+          // Device will reboot shortly, stop polling
+          return;
+        } else if (data.state === 'error') {
+          throw new Error('Update failed');
+        }
+        
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        
+      } catch (error) {
+        consecutiveErrors++;
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          // Too many consecutive errors - give up
+          throw error;
+        }
+        // Wait and retry on transient errors
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
+    }
   }
 
   async function populateNetworks() {

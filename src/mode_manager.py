@@ -130,39 +130,49 @@ class ModeManager:
                 except Exception as e:
                     self.logger.warning(f"Error cleaning up {mode.name}: {e}")
             
+            # Small delay before checking button to ensure stable state
+            # This prevents race conditions where mode exits while button is being released
+            time.sleep(0.1)
+            
             # Check button state for mode switching
             if not self.button.value:  # Button is pressed
-                hold_result = check_button_hold_duration(self.button, self.pixel)
+                # Give a brief moment for button state to stabilize
+                time.sleep(0.05)
                 
-                if hold_result == 'safe_mode':
-                    self.logger.info("Safe Mode requested (10 second hold)")
-                    trigger_safe_mode()
-                    # Never returns
-                
-                elif hold_result == 'setup':
-                    self.logger.info("Setup Mode requested (3 second hold)")
-                    # Enter setup mode through ConfigurationManager
-                    config_mgr = ConfigurationManager.get_instance(self.button)
-                    setup_success = config_mgr.run_portal()
+                # Re-check button is still pressed (not just a bounce)
+                if not self.button.value:
+                    hold_result = check_button_hold_duration(self.button, self.pixel)
                     
-                    if setup_success:
-                        # Configuration saved successfully - return to primary mode
-                        self.logger.info("Setup complete - returning to primary mode")
+                    if hold_result == 'safe_mode':
+                        self.logger.info("Safe Mode requested (10 second hold)")
+                        trigger_safe_mode()
+                        # Never returns
+                    
+                    elif hold_result == 'setup':
+                        self.logger.info("Setup Mode requested (3 second hold)")
+                        # Enter setup mode through ConfigurationManager
+                        config_mgr = ConfigurationManager.get_instance(self.button)
+                        setup_success = config_mgr.run_portal()
+                        
+                        # Always return to primary mode after setup, whether successful or cancelled
+                        if setup_success:
+                            self.logger.info("Setup complete - returning to primary mode")
+                        else:
+                            self.logger.info("Setup cancelled - returning to primary mode")
+                        
                         self._goto_primary_mode()
+                    
                     else:
-                        # User cancelled - advance to next mode
-                        self.logger.info("Setup cancelled - advancing to next mode")
+                        # Short press - switch to next mode
+                        self.logger.info("Switching to next mode")
                         self._next_mode()
-                
+                    
+                    # Debounce - wait for button release
+                    while not self.button.value:
+                        time.sleep(0.1)
+                    time.sleep(0.3)
                 else:
-                    # Short press - switch to next mode
-                    self.logger.info("Switching to next mode")
-                    self._next_mode()
-                
-                # Debounce
-                while not self.button.value:
-                    time.sleep(0.1)
-                time.sleep(0.3)
+                    self.logger.debug("Button bounce detected, ignoring")
             
             # Small delay before restarting mode loop
             time.sleep(0.1)
