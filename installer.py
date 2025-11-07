@@ -2,9 +2,9 @@
 """
 WICID Firmware Installer
 
-Provides SOFT (OTA-like), HARD (full replacement), and SIMULATED OTA 
-(local development testing) installation methods for WICID firmware 
-packages to CIRCUITPY devices.
+Provides INCREMENTAL (default, updates only changed files), SOFT (OTA-like), 
+HARD (full replacement), and SIMULATED OTA (local development testing) 
+installation methods for WICID firmware packages to CIRCUITPY devices.
 """
 
 import os
@@ -19,6 +19,7 @@ import re
 import json
 import time
 import threading
+import filecmp
 from pathlib import Path
 
 # Load environment variables from .env if present
@@ -724,6 +725,168 @@ def modify_circuitpy_settings(circuitpy_path, local_wicid_web_url):
         raise
 
 
+def copy_file_safely(src_path, dst_path):
+    """
+    Safely copy a file to destination using a two-step process for FAT32.
+    
+    Args:
+        src_path: Source file path
+        dst_path: Destination file path
+    
+    Raises:
+        OSError: If filesystem is read-only or copy fails
+    """
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Use a safer two-step copy for FAT32 filesystems to avoid file handle confusion
+    # Copy to temporary name first, then rename
+    temp_dst = dst_path.parent / f".tmp_{dst_path.name}_{os.getpid()}"
+    try:
+        # Copy to temporary file
+        shutil.copyfile(src_path, temp_dst)
+        # Rename to final destination (atomic operation)
+        temp_dst.rename(dst_path)
+    except Exception as e:
+        # Clean up temp file if something failed
+        try:
+            temp_dst.unlink()
+        except:
+            pass
+        raise e
+
+
+def incremental_update(circuitpy_path, zip_path):
+    """
+    Perform an INCREMENTAL update (only replace outdated files or add missing files).
+    
+    Args:
+        circuitpy_path: Path to CIRCUITPY drive
+        zip_path: Path to firmware ZIP file
+    
+    Returns:
+        bool: True if update completed successfully, False otherwise
+    """
+    print_header("INCREMENTAL UPDATE MODE")
+    print("\nThis will update only changed or missing files:")
+    print("1. Extract firmware package locally")
+    print("2. Compare files with existing CIRCUITPY contents")
+    print("3. Update only files that are missing or different")
+    print("4. No files will be deleted")
+    print("\nUser data (secrets.json) will be preserved.")
+    
+    # Extract to temporary directory
+    try:
+        temp_dir = extract_zip_to_temp(zip_path)
+    except Exception as e:
+        print_error(f"Failed to extract firmware package: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
+    try:
+        print_step("Comparing files and preparing updates...")
+        
+        updated_count = 0
+        added_count = 0
+        skipped_count = 0
+        
+        # Walk through all files in the extracted firmware
+        for root, dirs, files in os.walk(temp_dir):
+            # Skip hidden files and directories
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            files = [f for f in files if not f.startswith('.')]
+            
+            for file in files:
+                # Get relative path from temp_dir
+                rel_path = Path(root).relative_to(temp_dir) / file
+                
+                # Skip preserved files
+                if file.lower() in [f.lower() for f in PRESERVED_FILES]:
+                    print(f"  Skipping preserved file: {rel_path}")
+                    skipped_count += 1
+                    continue
+                
+                src_path = Path(root) / file
+                dst_path = circuitpy_path / rel_path
+                
+                # Check if file exists on CIRCUITPY
+                if dst_path.exists():
+                    # File exists - compare content
+                    try:
+                        # Use filecmp for content comparison (shallow=False does byte-by-byte)
+                        if filecmp.cmp(src_path, dst_path, shallow=False):
+                            # Files are identical - skip
+                            skipped_count += 1
+                            continue
+                        else:
+                            # Files differ - update
+                            copy_file_safely(src_path, dst_path)
+                            print(f"  Updated: {rel_path}")
+                            updated_count += 1
+                    except Exception as e:
+                        # If comparison fails, update the file to be safe
+                        print(f"  Warning: Could not compare {rel_path}, updating anyway: {e}")
+                        copy_file_safely(src_path, dst_path)
+                        print(f"  Updated: {rel_path}")
+                        updated_count += 1
+                else:
+                    # File doesn't exist - add it
+                    copy_file_safely(src_path, dst_path)
+                    print(f"  Added: {rel_path}")
+                    added_count += 1
+        
+        # Handle directories - ensure they exist on CIRCUITPY
+        for root, dirs, files in os.walk(temp_dir):
+            # Skip hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            
+            for dir_name in dirs:
+                rel_dir_path = Path(root).relative_to(temp_dir) / dir_name
+                dst_dir_path = circuitpy_path / rel_dir_path
+                
+                # Create directory if it doesn't exist
+                if not dst_dir_path.exists():
+                    dst_dir_path.mkdir(parents=True, exist_ok=True)
+        
+        # Remove macOS metadata files from CIRCUITPY
+        cleanup_macos_artifacts(circuitpy_path)
+        
+        print_success(f"Incremental update completed: {added_count} added, {updated_count} updated, {skipped_count} unchanged")
+        return True
+    
+    except OSError as e:
+        # Check for read-only filesystem error
+        if e.errno == 30:  # EROFS - Read-only file system
+            print_error(
+                "CIRCUITPY drive is READ-ONLY. "
+                "The device must be in Safe Mode to allow file modifications.\n\n"
+                "To enter Safe Mode:\n"
+                "  1. Unplug the device from USB\n"
+                "  2. Hold the BOOT button (or button on the board)\n"
+                "  3. While holding the button, plug in USB\n"
+                "  4. Keep holding until the LED turns yellow/orange\n"
+                "  5. Release the button\n\n"
+                "The device is now in Safe Mode and the filesystem is writable.\n"
+                "Run this installer again."
+            )
+        else:
+            print_error(f"Incremental update failed: {e}")
+            import traceback
+            traceback.print_exc()
+        return False
+    except Exception as e:
+        print_error(f"Incremental update failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
+    finally:
+        # Clean up temporary directory
+        print_step("Cleaning up temporary files...")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        print_success("Cleanup complete")
+
+
 def soft_update(circuitpy_path, zip_path):
     """
     Perform a SOFT update (OTA-like installation).
@@ -1030,11 +1193,16 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Installation Modes:
+  INCREMENTAL UPDATE (Default)
+    • Updates only changed or missing files
+    • No files are deleted
+    • Fastest and safest for regular updates
+    • Preserves all existing files and data
+    
   SOFT UPDATE (OTA-like)
     • Safer installation method
     • Files are staged in /pending_update/
     • Installation completes on next reboot
-    • Recommended for most users
     
   HARD UPDATE (Full Replacement)
     • Immediate installation
@@ -1049,7 +1217,7 @@ Installation Modes:
     • Requires WICID Web repository at ../wicid_web (configurable via .env)
 
 Examples:
-  %(prog)s                    Run interactive installer
+  %(prog)s                    Run interactive installer (defaults to Incremental)
   %(prog)s --help             Show this help message
 
 Requirements:
@@ -1072,7 +1240,8 @@ def main():
     
     print("\nWelcome to the WICID Firmware Installer!")
     print("\nThis installer will help you update your WICID device with new firmware.")
-    print("\nThree installation modes are available:")
+    print("\nFour installation modes are available:")
+    print("  • INCREMENTAL: Updates only changed or missing files (default)")
     print("  • SOFT: OTA-like update (safer, requires reboot to complete)")
     print("  • HARD: Full replacement (immediate, deletes all files on device)")
     print("  • SIMULATED OTA: Local development testing (uses local web server)")
@@ -1111,19 +1280,24 @@ def main():
     
     # Prompt for installation mode
     print_header("Select Installation Mode")
-    print("\n1. SOFT Update (OTA-like)")
+    print("\n1. INCREMENTAL Update (Default)")
+    print("   • Updates only changed or missing files")
+    print("   • No files are deleted")
+    print("   • Fastest and safest for regular updates")
+    print("   • Preserves all existing files and data")
+    
+    print("\n2. SOFT Update (OTA-like)")
     print("   • Safer installation method")
     print("   • Files are staged in /pending_update/")
     print("   • Installation completes on next reboot")
-    print("   • Recommended for most users")
     
-    print("\n2. HARD Update (Full Replacement)")
+    print("\n3. HARD Update (Full Replacement)")
     print("   • Immediate installation")
     print("   • Deletes ALL files on CIRCUITPY drive")
     print("   • Preserves only secrets.json")
     print("   • Use for clean installations or troubleshooting")
     
-    print("\n3. Simulated OTA Update (Local Development)")
+    print("\n4. Simulated OTA Update (Local Development)")
     print("   • Starts local WICID Web application server")
     print("   • Points device to local server for updates")
     print("   • Tests OTA update flow in development")
@@ -1133,34 +1307,53 @@ def main():
     update_mode = None
     
     while True:
-        choice = input("\nEnter your choice (1, 2, or 3): ").strip()
+        choice = input("\nEnter your choice (1-4, or press Enter for default): ").strip()
+        
+        # Default to incremental if empty
+        if choice == "":
+            choice = "1"
         
         if choice == "1":
+            update_mode = "incremental"
+            update_successful = incremental_update(circuitpy_path, zip_path)
+            break
+        elif choice == "2":
             update_mode = "soft"
             update_successful = soft_update(circuitpy_path, zip_path)
             break
-        elif choice == "2":
+        elif choice == "3":
             update_mode = "hard"
             update_successful = hard_update(circuitpy_path, zip_path)
             break
-        elif choice == "3":
+        elif choice == "4":
             update_mode = "simulated_ota"
             update_successful = simulated_ota_update(circuitpy_path, zip_path)
             break
         else:
-            print("Invalid choice. Please enter 1, 2, or 3.")
+            print("Invalid choice. Please enter 1, 2, 3, or 4 (or press Enter for default).")
     
     # Only show completion message if update succeeded
     if update_successful:
         # Simulated OTA handles its own completion messages and instructions
         if update_mode != "simulated_ota":
             print_header("Installation Complete")
-            print("\nTo complete the update:")
-            print("  1. Press the RESET button on your WICID device")
-            print("  2. The device will reboot and apply the firmware")
             
-            if update_mode == "soft":
+            if update_mode == "incremental":
+                print("\nThe firmware has been updated incrementally.")
+                print("Changed and missing files have been updated.")
+                print("\nTo apply the update:")
+                print("  1. Press the RESET button on your WICID device")
+                print("  2. The device will reboot with the updated firmware")
+            elif update_mode == "soft":
+                print("\nThe update has been staged.")
+                print("\nTo complete the update:")
+                print("  1. Press the RESET button on your WICID device")
+                print("  2. The device will reboot and apply the firmware")
                 print("\nThe boot.py script will automatically install the update on next boot.")
+            else:
+                print("\nTo complete the update:")
+                print("  1. Press the RESET button on your WICID device")
+                print("  2. The device will reboot and apply the firmware")
             
             print("\nThank you for using WICID!")
         else:
