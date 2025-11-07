@@ -345,13 +345,12 @@ document.addEventListener('DOMContentLoaded', () => {
       
       try {
         if (buttonTextSpan) buttonTextSpan.textContent = 'Activating…';
-        await fetch('/activate', { method: 'POST' });
-        
-        // Wait for AP to shutdown (device will disconnect)
-        // Button stays disabled - device will disconnect
+        const response = await fetch('/activate', { method: 'POST' });
+        if (!response.ok) throw new Error('Activation failed.');
+
         setTimeout(() => {
-          if (buttonTextSpan) buttonTextSpan.textContent = originalText;
-        }, 3000);
+          if (buttonTextSpan) buttonTextSpan.textContent = 'Activated!';
+        }, 2000);
       } catch (err) {
         // Only re-enable on error
         activateButton.disabled = false;

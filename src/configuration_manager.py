@@ -763,7 +763,7 @@ class ConfigurationManager:
                 
                 # Set activation mode and schedule activation
                 self.activation_mode = "continue"
-                self.pending_ready_at = time.monotonic() + 2.0
+                self.pending_ready_at = time.monotonic() + 4.0
                 return self._json_ok(request, {"status": "activating"})
                 
             except Exception as e:
