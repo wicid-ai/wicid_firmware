@@ -23,6 +23,7 @@ class SystemMonitor:
     """
     
     _instance = None
+    SYSTEM_UPDATE_INITIAL_DELAY_SECONDS = 60
     
     @classmethod
     def get_instance(cls, update_manager=None):
@@ -65,10 +66,12 @@ class SystemMonitor:
             self.reboot_interval_hours = 0
         
         # Schedule next update check on boot
-        if self.update_manager:
-            self.update_manager.next_update_check = self.update_manager.schedule_next_update_check()
-            reboot_status = 'disabled' if self.reboot_interval_hours == 0 else f'{self.reboot_interval_hours}h'
-            self.logger.info(f"SystemMonitor initialized - periodic reboot: {reboot_status}")
+        self.update_manager.next_update_check = self.update_manager.schedule_next_update_check(
+                delay_seconds=SystemMonitor.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS
+            )
+        self.logger.info(f"First update check scheduled in {initial_delay} seconds")
+        reboot_status = 'disabled' if self.reboot_interval_hours == 0 else f'{self.reboot_interval_hours}h'
+        self.logger.info(f"SystemMonitor initialized - periodic reboot: {reboot_status}")
     
     def tick(self):
         """

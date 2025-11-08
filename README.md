@@ -14,7 +14,8 @@ See the product website at: https://www.wicid.ai
 - **Setup Portal**: Easy Wi-Fi network setup through a web interface
 - **Button Control**: Simple button interface to cycle through different modes and access setup
 - **Over-the-Air (OTA) Updates**: Automatic firmware updates from remote server
-  - Updates check on every restart and daily at 2am (configurable)
+  - First scheduled check runs shortly after startup
+  - Subsequent checks follow a configurable hourly cadence
   - Support for production and development release channels
   - Automatic download and installation with device restart
 
@@ -53,7 +54,8 @@ WICID uses a manager-based architecture with clear separation of concerns:
    - Extensible design for adding new display modes
 
 5. **Update Manager**:
-   - Checks for firmware updates on boot and daily intervals
+   - Schedules an initial post-boot update check (default 60 seconds after startup)
+   - Performs recurring checks using the configured interval
    - Downloads and verifies update packages
    - Performs full-reset installations to ensure consistency
 
@@ -270,9 +272,10 @@ WICID uses two configuration files:
 #### `settings.toml` - System Configuration
 System-level settings deployed with firmware updates:
 ```toml
-VERSION = "0.1.0"
+VERSION = "0.5.0"
 SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-SYSTEM_UPDATE_CHECK_INTERVAL = 24  # hours
+SYSTEM_UPDATE_CHECK_INTERVAL = 4  # hours
+PERIODIC_REBOOT_INTERVAL = 24  # hours (0 to disable)
 WEATHER_UPDATE_INTERVAL = 1200  # seconds
 ```
 

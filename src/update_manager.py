@@ -967,16 +967,31 @@ class UpdateManager:
             
             return False
     
-    def schedule_next_update_check(self, interval_hours=None):
+    def schedule_next_update_check(self, interval_hours=None, delay_seconds=None):
         """
         Calculate when the next scheduled update check should occur.
         
         Args:
             interval_hours: Hours until next check (default: from settings)
+            delay_seconds: Optional explicit delay in seconds for the next check.
+                            Overrides interval_hours when provided.
         
         Returns:
             float: Monotonic timestamp for next check
         """
+        if delay_seconds is not None:
+            try:
+                delay_seconds = float(delay_seconds)
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid delay_seconds '{delay_seconds}' supplied; falling back to interval.")
+                delay_seconds = None
+        
+        if delay_seconds is not None:
+            delay_seconds = max(0.0, delay_seconds)
+            next_check = time.monotonic() + delay_seconds
+            self.logger.debug(f"Next update check scheduled in {delay_seconds:.1f} seconds")
+            return next_check
+        
         if interval_hours is None:
             try:
                 interval_hours = int(os.getenv("SYSTEM_UPDATE_CHECK_INTERVAL", "24"))
