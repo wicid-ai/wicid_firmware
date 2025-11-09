@@ -69,7 +69,7 @@ class SystemMonitor:
         self.update_manager.next_update_check = self.update_manager.schedule_next_update_check(
                 delay_seconds=SystemMonitor.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS
             )
-        self.logger.info(f"First update check scheduled in {initial_delay} seconds")
+        self.logger.info(f"First update check scheduled in {SystemMonitor.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS} seconds")
         reboot_status = 'disabled' if self.reboot_interval_hours == 0 else f'{self.reboot_interval_hours}h'
         self.logger.info(f"SystemMonitor initialized - periodic reboot: {reboot_status}")
     
