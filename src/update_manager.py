@@ -602,8 +602,8 @@ class UpdateManager:
                     return update_info
                 else:
                     self.logger.debug(f"Skipping {release_info['version']}: {error_msg}")
-            
-            self.logger.debug("No compatible updates available")
+                              
+            self.logger.info("No compatible updates available")
             return None
                 
         except Exception as e:
