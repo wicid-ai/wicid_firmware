@@ -264,34 +264,6 @@ class PixelController:
         
         return _OperationContext(self, operation_method)
     
-    # Deprecated methods - kept for backward compatibility
-    
-    def start_pulsing(self, color=(255, 255, 255), min_b=0.3, max_b=1.0, step=0.02, interval=0.05, start_brightness=0.5):
-        """
-        DEPRECATED: Use semantic methods (indicate_setup_mode, etc.) instead.
-        Start pulsing animation. Updates automatically when tick() is called.
-        """
-        self._start_pulsing(color, min_b, max_b, step, interval, start_brightness)
-
-    def stop_pulsing(self):
-        """DEPRECATED: Use clear() or restore_previous() instead."""
-        self._mode = self._MODE_SOLID
-
-    def start_setup_mode_pulsing(self):
-        """DEPRECATED: Use indicate_setup_mode() instead."""
-        self.indicate_setup_mode()
-
-    def start_flashing(self, colors=None, rate=4):
-        """
-        DEPRECATED: Use semantic methods (indicate_downloading, etc.) instead.
-        Start flashing animation between colors.
-        """
-        self._start_flashing(colors, rate)
-    
-    def stop_flashing(self):
-        """DEPRECATED: Use clear() or restore_previous() instead."""
-        self._mode = self._MODE_SOLID
-    
     def _update_pulse(self):
         """Update pulsing animation based on time."""
         now = time.monotonic()
