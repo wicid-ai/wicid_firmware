@@ -375,6 +375,13 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
    circup --path src install -r wicid_circuitpy_requirements.txt
    ```
 
+   Note: To see the latest version of all libraries installed (for updating wicid_circuitpy_requirements.txt), while WICID is connected, run:
+
+   ```bash
+   circup --path src freeze
+   ```
+  
+
 6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package
 
 ### Installing Firmware with the Installer Script (Optional)
@@ -445,9 +452,9 @@ WICID uses **full reset** updates:
 - **Production** (default): Stable releases
 - **Development**: Beta/experimental releases
 
-To switch to development channel, create an empty `/development` file on the device:
+To switch to development channel, create an empty `/DEVELOPMENT` file on the device:
 ```python
-with open("/development", "w") as f:
+with open("/DEVELOPMENT", "w") as f:
     f.write("")
 ```
 

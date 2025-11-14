@@ -736,7 +736,49 @@ def copy_file_safely(src_path, dst_path):
     Raises:
         OSError: If filesystem is read-only or copy fails
     """
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    # Ensure parent directories exist, handling cases where a parent path exists as a file
+    # This can happen on FAT32 filesystems due to corruption or filesystem issues
+    parent = dst_path.parent
+    
+    # Walk up the path from parent to root, building list of all path components
+    path_components = []
+    check_path = parent
+    while check_path != check_path.parent:  # Stop when we reach root (root.parent == root)
+        path_components.append(check_path)
+        check_path = check_path.parent
+    
+    # Check each path component from root to parent (reverse order)
+    # This ensures we handle conflicts at the root level before deeper levels
+    for path_component in reversed(path_components):
+        if path_component.exists():
+            if path_component.is_file():
+                # Check if it's a preserved file - if so, we can't remove it
+                if path_component.name.lower() in [f.lower() for f in PRESERVED_FILES]:
+                    raise OSError(
+                        f"Cannot create directory {parent}: path component {path_component} exists as preserved file {path_component.name}. "
+                        f"This may indicate filesystem corruption. "
+                        f"Try removing {path_component} manually or use HARD update mode."
+                    )
+                # Remove the file so we can create it as a directory
+                try:
+                    path_component.unlink()
+                except Exception as e:
+                    raise OSError(
+                        f"Cannot create directory {parent}: path component {path_component} exists as file and could not be removed: {e}. "
+                        f"This may indicate filesystem corruption. "
+                        f"Try removing {path_component} manually or use HARD update mode."
+                    ) from e
+    
+    # Create parent directories (all path conflicts should now be resolved)
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError as e:
+        # This should not happen after the above checks, but handle it anyway
+        raise OSError(
+            f"Cannot create directory {parent}: {e}. "
+            f"This may indicate filesystem corruption. "
+            f"Try using HARD update mode."
+        ) from e
     
     # Use a safer two-step copy for FAT32 filesystems to avoid file handle confusion
     # Copy to temporary name first, then rename
@@ -755,13 +797,175 @@ def copy_file_safely(src_path, dst_path):
         raise e
 
 
-def incremental_update(circuitpy_path, zip_path):
+def _resolve_py_mpy_conflict(dst_path):
+    """
+    Ensure only one of the .py/.mpy variants exists at destination.
+    
+    Skips conflict resolution for files in lib/ directory, as library files
+    may legitimately exist in both formats.
+    
+    Args:
+        dst_path: Path where the new file will be written.
+    
+    Returns:
+        pathlib.Path or None: Path that was removed, if any.
+    """
+    # Skip conflict resolution for lib/ directory files
+    path_parts = dst_path.parts
+    if "lib" in path_parts:
+        return None
+    
+    suffix = dst_path.suffix.lower()
+    if suffix not in (".py", ".mpy"):
+        return None
+    
+    alt_suffix = ".mpy" if suffix == ".py" else ".py"
+    alt_path = dst_path.with_suffix(alt_suffix)
+    
+    if alt_path.exists():
+        try:
+            alt_path.unlink()
+            return alt_path
+        except Exception as e:
+            print(f"  Warning: Could not remove conflicting file {alt_path}: {e}")
+    
+    return None
+
+
+def _validate_boot_file(circuitpy_path):
+    """Ensure boot.py exists after installation."""
+    boot_path = circuitpy_path / "boot.py"
+    if not boot_path.exists() or not boot_path.is_file():
+        raise Exception(
+            "CRITICAL: boot.py missing after installation. "
+            "Device will not boot without this file."
+        )
+
+
+def copy_tests_incremental(circuitpy_path, tests_dir):
+    """
+    Copy tests directory to CIRCUITPY using incremental semantics.
+    
+    Only copies files that are missing or different from existing files.
+    
+    Args:
+        circuitpy_path: Path to CIRCUITPY drive
+        tests_dir: Path to tests directory (relative to project root)
+    
+    Returns:
+        tuple: (added_count, updated_count, skipped_count)
+    """
+    print_step("Copying tests directory (incremental)...")
+    
+    added_count = 0
+    updated_count = 0
+    skipped_count = 0
+    
+    tests_dest = circuitpy_path / "tests"
+    
+    # Convert tests_dir to absolute Path for proper path resolution
+    tests_dir = Path(tests_dir).resolve()
+    
+    # Walk through all files in the tests directory
+    for root, dirs, files in os.walk(tests_dir):
+        # Skip hidden files and directories
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        files = [f for f in files if not f.startswith('.')]
+        
+        for file in files:
+            # Get relative path from tests_dir
+            rel_path = Path(root).relative_to(tests_dir) / file
+            
+            src_path = Path(root) / file
+            dst_path = tests_dest / rel_path
+            
+            # Check if file exists on CIRCUITPY
+            if dst_path.exists():
+                # File exists - compare content
+                try:
+                    # Use filecmp for content comparison (shallow=False does byte-by-byte)
+                    if filecmp.cmp(src_path, dst_path, shallow=False):
+                        # Files are identical - skip
+                        skipped_count += 1
+                        continue
+                    else:
+                        # Files differ - update
+                        copy_file_safely(src_path, dst_path)
+                        print(f"  Updated: tests/{rel_path}")
+                        updated_count += 1
+                except Exception as e:
+                    # If comparison fails, update the file to be safe
+                    print(f"  Warning: Could not compare tests/{rel_path}, updating anyway: {e}")
+                    copy_file_safely(src_path, dst_path)
+                    print(f"  Updated: tests/{rel_path}")
+                    updated_count += 1
+            else:
+                # File doesn't exist - add it
+                copy_file_safely(src_path, dst_path)
+                print(f"  Added: tests/{rel_path}")
+                added_count += 1
+    
+    # Handle directories - ensure they exist on CIRCUITPY
+    for root, dirs, files in os.walk(tests_dir):
+        # Skip hidden directories
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        
+        for dir_name in dirs:
+            rel_dir_path = Path(root).relative_to(tests_dir) / dir_name
+            dst_dir_path = tests_dest / rel_dir_path
+            
+            # Create directory if it doesn't exist
+            if not dst_dir_path.exists():
+                dst_dir_path.mkdir(parents=True, exist_ok=True)
+    
+    if added_count > 0 or updated_count > 0:
+        print_success(f"Tests copied: {added_count} added, {updated_count} updated, {skipped_count} unchanged")
+    else:
+        print_success(f"Tests up to date: {skipped_count} files unchanged")
+    
+    return (added_count, updated_count, skipped_count)
+
+
+def copy_tests_hard(circuitpy_path, tests_dir):
+    """
+    Copy tests directory to CIRCUITPY using hard semantics.
+    
+    Deletes existing tests directory and copies all files fresh.
+    
+    Args:
+        circuitpy_path: Path to CIRCUITPY drive
+        tests_dir: Path to tests directory (relative to project root)
+    """
+    print_step("Copying tests directory (hard)...")
+    
+    tests_dest = circuitpy_path / "tests"
+    
+    # Convert tests_dir to absolute Path for proper path resolution
+    tests_dir = Path(tests_dir).resolve()
+    
+    # Delete existing tests directory if it exists
+    if tests_dest.exists():
+        try:
+            shutil.rmtree(tests_dest, ignore_errors=False)
+            print(f"  Deleted existing tests directory")
+        except Exception as e:
+            print_error(f"Could not delete existing tests directory: {e}")
+            raise
+    
+    # Copy entire tests directory to CIRCUITPY
+    copy_files_to_circuitpy(tests_dir, tests_dest, recursive=True)
+    
+    print_success("Tests directory copied")
+
+
+def incremental_update(circuitpy_path, zip_path, include_tests=False):
     """
     Perform an INCREMENTAL update (only replace outdated files or add missing files).
     
     Args:
         circuitpy_path: Path to CIRCUITPY drive
         zip_path: Path to firmware ZIP file
+        include_tests: If True, copy tests directory using incremental semantics
     
     Returns:
         bool: True if update completed successfully, False otherwise
@@ -809,6 +1013,14 @@ def incremental_update(circuitpy_path, zip_path):
                 src_path = Path(root) / file
                 dst_path = circuitpy_path / rel_path
                 
+                removed_conflict = _resolve_py_mpy_conflict(dst_path)
+                if removed_conflict:
+                    try:
+                        rel_removed = removed_conflict.relative_to(circuitpy_path)
+                    except ValueError:
+                        rel_removed = removed_conflict
+                    print(f"  Removed stale {rel_removed} to resolve .py/.mpy conflict")
+                
                 # Check if file exists on CIRCUITPY
                 if dst_path.exists():
                     # File exists - compare content
@@ -852,6 +1064,34 @@ def incremental_update(circuitpy_path, zip_path):
         cleanup_macos_artifacts(circuitpy_path)
         
         print_success(f"Incremental update completed: {added_count} added, {updated_count} updated, {skipped_count} unchanged")
+        
+        # Copy tests directory if requested
+        if include_tests:
+            tests_dir = Path("tests")
+            if tests_dir.exists() and tests_dir.is_dir():
+                try:
+                    copy_tests_incremental(circuitpy_path, tests_dir)
+                    
+                    # Create TESTMODE flag file in CIRCUITPY root
+                    testmode_flag = circuitpy_path / "TESTMODE"
+                    try:
+                        testmode_flag.touch()
+                        print_success("Created TESTMODE flag file")
+                    except Exception as e:
+                        print_error(f"Failed to create TESTMODE flag file: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        return False
+                except Exception as e:
+                    print_error(f"Failed to copy tests directory: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
+            else:
+                print_error(f"Tests directory not found: {tests_dir}")
+                return False
+        
+        _validate_boot_file(circuitpy_path)
         return True
     
     except OSError as e:
@@ -932,6 +1172,7 @@ def soft_update(circuitpy_path, zip_path):
         # Remove macOS metadata files from CIRCUITPY
         cleanup_macos_artifacts(circuitpy_path)
         
+        _validate_boot_file(circuitpy_path)
         print_success("SOFT update prepared successfully")
         return True
     
@@ -948,13 +1189,14 @@ def soft_update(circuitpy_path, zip_path):
         print_success("Cleanup complete")
 
 
-def hard_update(circuitpy_path, zip_path):
+def hard_update(circuitpy_path, zip_path, include_tests=False):
     """
     Perform a HARD update (full firmware replacement).
     
     Args:
         circuitpy_path: Path to CIRCUITPY drive
         zip_path: Path to firmware ZIP file
+        include_tests: If True, copy tests directory using hard semantics
     
     Returns:
         bool: True if update completed successfully, False if cancelled or failed
@@ -1061,7 +1303,35 @@ def hard_update(circuitpy_path, zip_path):
         # Remove any newly created macOS metadata files
         cleanup_macos_artifacts(circuitpy_path)
         
+        _validate_boot_file(circuitpy_path)
         print_success("HARD update completed successfully")
+        
+        # Copy tests directory if requested
+        if include_tests:
+            tests_dir = Path("tests")
+            if tests_dir.exists() and tests_dir.is_dir():
+                try:
+                    copy_tests_hard(circuitpy_path, tests_dir)
+                    
+                    # Create TESTMODE flag file in CIRCUITPY root
+                    testmode_flag = circuitpy_path / "TESTMODE"
+                    try:
+                        testmode_flag.touch()
+                        print_success("Created TESTMODE flag file")
+                    except Exception as e:
+                        print_error(f"Failed to create TESTMODE flag file: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        return False
+                except Exception as e:
+                    print_error(f"Failed to copy tests directory: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
+            else:
+                print_error(f"Tests directory not found: {tests_dir}")
+                return False
+        
         return True
     
     except OSError as e:
@@ -1198,17 +1468,19 @@ Installation Modes:
     • No files are deleted
     • Fastest and safest for regular updates
     • Preserves all existing files and data
-    
-  SOFT UPDATE (OTA-like)
-    • Safer installation method
-    • Files are staged in /pending_update/
-    • Installation completes on next reboot
+    • Optional: Include tests directory
     
   HARD UPDATE (Full Replacement)
     • Immediate installation
     • Deletes ALL files on CIRCUITPY drive
     • Preserves only secrets.json
     • Use for clean installations or troubleshooting
+    • Optional: Include tests directory
+    
+  SOFT UPDATE (OTA-like)
+    • Safer installation method
+    • Files are staged in /pending_update/
+    • Installation completes on next reboot
   
   SIMULATED OTA UPDATE (Local Development)
     • Starts local WICID Web application server
@@ -1242,8 +1514,8 @@ def main():
     print("\nThis installer will help you update your WICID device with new firmware.")
     print("\nFour installation modes are available:")
     print("  • INCREMENTAL: Updates only changed or missing files (default)")
-    print("  • SOFT: OTA-like update (safer, requires reboot to complete)")
     print("  • HARD: Full replacement (immediate, deletes all files on device)")
+    print("  • SOFT: OTA-like update (safer, requires reboot to complete)")
     print("  • SIMULATED OTA: Local development testing (uses local web server)")
     print("\nThe installer will:")
     print("  1. Detect your CIRCUITPY device")
@@ -1286,16 +1558,16 @@ def main():
     print("   • Fastest and safest for regular updates")
     print("   • Preserves all existing files and data")
     
-    print("\n2. SOFT Update (OTA-like)")
-    print("   • Safer installation method")
-    print("   • Files are staged in /pending_update/")
-    print("   • Installation completes on next reboot")
-    
-    print("\n3. HARD Update (Full Replacement)")
+    print("\n2. HARD Update (Full Replacement)")
     print("   • Immediate installation")
     print("   • Deletes ALL files on CIRCUITPY drive")
     print("   • Preserves only secrets.json")
     print("   • Use for clean installations or troubleshooting")
+    
+    print("\n3. SOFT Update (OTA-like)")
+    print("   • Safer installation method")
+    print("   • Files are staged in /pending_update/")
+    print("   • Installation completes on next reboot")
     
     print("\n4. Simulated OTA Update (Local Development)")
     print("   • Starts local WICID Web application server")
@@ -1315,15 +1587,21 @@ def main():
         
         if choice == "1":
             update_mode = "incremental"
-            update_successful = incremental_update(circuitpy_path, zip_path)
+            # Ask if user wants to include tests
+            include_tests_response = input("Include tests? [y/N]: ").strip().lower()
+            include_tests = include_tests_response in ["y", "yes"]
+            update_successful = incremental_update(circuitpy_path, zip_path, include_tests=include_tests)
             break
         elif choice == "2":
-            update_mode = "soft"
-            update_successful = soft_update(circuitpy_path, zip_path)
+            update_mode = "hard"
+            # Ask if user wants to include tests
+            include_tests_response = input("Include tests? [y/N]: ").strip().lower()
+            include_tests = include_tests_response in ["y", "yes"]
+            update_successful = hard_update(circuitpy_path, zip_path, include_tests=include_tests)
             break
         elif choice == "3":
-            update_mode = "hard"
-            update_successful = hard_update(circuitpy_path, zip_path)
+            update_mode = "soft"
+            update_successful = soft_update(circuitpy_path, zip_path)
             break
         elif choice == "4":
             update_mode = "simulated_ota"

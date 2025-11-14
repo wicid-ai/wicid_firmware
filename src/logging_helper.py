@@ -15,13 +15,15 @@ INFO = 20
 WARNING = 30
 ERROR = 40
 CRITICAL = 50
+TESTING = 60  # Suppresses all logs except test output
 
 _LEVEL_NAMES = {
     10: "DEBUG",
     20: "INFO",
     30: "WARNING",
     40: "ERROR",
-    50: "CRITICAL"
+    50: "CRITICAL",
+    60: "TESTING"
 }
 
 
@@ -68,8 +70,12 @@ class WicidLogger:
         """Internal logging method."""
         global _log_level
         if level >= _log_level:
-            level_name = _LEVEL_NAMES.get(level, "UNKNOWN")
-            print("[%s: %s] %s" % (level_name, self.module, msg))
+            # TESTING level outputs raw (no prefix) for clean test output
+            if level == TESTING:
+                print(msg)
+            else:
+                level_name = _LEVEL_NAMES.get(level, "UNKNOWN")
+                print("[%s: %s] %s" % (level_name, self.module, msg))
     
     def debug(self, msg, exc_info=False):
         """Log debug message."""
@@ -108,6 +114,15 @@ class WicidLogger:
                     traceback.print_exception(exc_type, exc_value, exc_tb)
             except:
                 pass
+
+    def testing(self, msg):
+        """
+        Log test message at TESTING level.
+
+        When global log level is set to TESTING, only testing() messages
+        will be displayed, suppressing all other log output (INFO, WARNING, etc.).
+        """
+        self._log(TESTING, msg)
 
 
 def get_logger(name='wicid'):
@@ -153,8 +168,9 @@ def configure_logging(log_level_str="INFO"):
         "INFO": INFO,
         "WARNING": WARNING,
         "ERROR": ERROR,
-        "CRITICAL": CRITICAL
+        "CRITICAL": CRITICAL,
+        "TESTING": TESTING
     }
-    
+
     _log_level = levels.get(log_level_str.upper(), INFO)
     return get_logger('wicid')

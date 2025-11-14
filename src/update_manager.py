@@ -497,12 +497,12 @@ class UpdateManager:
     def _determine_release_channel(self):
         """
         Determine which release channel to use.
-        
+
         Returns:
-            str: "development" if /development file exists, else "production"
+            str: "development" if /DEVELOPMENT file exists, else "production"
         """
         try:
-            with open("/development", "r"):
+            with open("/DEVELOPMENT", "r"):
                 return "development"
         except OSError:
             return "production"

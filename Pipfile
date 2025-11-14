@@ -4,11 +4,11 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-circup = "*"
 rcssmin = "*"
 rjsmin = "*"
 htmlmin2 = "*"
 beautifulsoup4 = "*"
+circup = "*"
 
 [dev-packages]
 

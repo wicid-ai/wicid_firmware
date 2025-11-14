@@ -617,16 +617,22 @@ def build_package(manifest, version):
 
         try:
             # Compile with mpy-cross
-            subprocess.run(
+            result = subprocess.run(
                 ['mpy-cross', str(py_file), '-o', str(mpy_file)],
                 check=True,
-                capture_output=True
+                capture_output=True,
+                text=True
             )
+            if result.stdout:
+                print(result.stdout.strip())
             print(f"  Compiled: {rel_path}")
         except subprocess.CalledProcessError as e:
-            print_warning(f"  Could not compile {rel_path}: {e}")
-            # Fall back to copying source file
-            shutil.copy2(py_file, build_dir / rel_path)
+            print_error(f"  Failed to compile {rel_path} with mpy-cross")
+            if e.stderr:
+                print(e.stderr.strip())
+            if e.stdout:
+                print(e.stdout.strip())
+            raise
     
     # Copy non-Python files (special-case www)
     for item in src_path.iterdir():
@@ -657,6 +663,8 @@ def build_package(manifest, version):
                 arcname = file.relative_to(build_dir)
                 zf.write(file, arcname)
                 print(f"  Added: {arcname}")
+
+    validate_build_artifacts(build_dir)
     
     # Clean up build directory
     shutil.rmtree(build_dir)
@@ -669,6 +677,40 @@ def build_package(manifest, version):
     print(f"  SHA-256: {checksum}")
     
     return package_path, checksum
+
+
+def validate_build_artifacts(build_dir: Path):
+    """Validate critical files exist and have expected formats after build."""
+    errors = []
+    
+    boot_py = build_dir / "boot.py"
+    if not boot_py.exists():
+        errors.append("boot.py missing")
+    elif boot_py.suffix != ".py":
+        errors.append("boot.py must remain source (.py)")
+    
+    code_py = build_dir / "code.py"
+    if not code_py.exists():
+        errors.append("code.py missing")
+    elif code_py.suffix != ".py":
+        errors.append("code.py must remain source (.py)")
+    
+    critical_mpy = [
+        "boot_support.mpy",
+        "code_support.mpy",
+        "utils.mpy",
+    ]
+    for filename in critical_mpy:
+        if not (build_dir / filename).exists():
+            errors.append(f"{filename} missing")
+    
+    for py_file in build_dir.glob("*.py"):
+        if py_file.name not in ("boot.py", "code.py"):
+            errors.append(f"Unexpected source file at root: {py_file.name}")
+    
+    if errors:
+        detail = "\n".join(f"  - {msg}" for msg in errors)
+        raise Exception(f"Build validation failed:\n{detail}")
 
 
 def show_preview(manifest, package_path, old_version):
