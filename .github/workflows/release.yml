@@ -104,6 +104,18 @@ jobs:
           echo "${PWD}" >> $GITHUB_PATH
           echo "✓ Added to PATH"
       
+      - name: Fetch latest releases.json from wicid_web
+        run: |
+          echo "→ Fetching latest releases.json from wicid_web..."
+          RELEASES_JSON_URL="https://raw.githubusercontent.com/wicid-ai/wicid_web/main/public/releases.json"
+          
+          if curl -fsSL -o releases.json "${RELEASES_JSON_URL}"; then
+            echo "✓ Successfully downloaded releases.json"
+            echo "File size: $(ls -lh releases.json | awk '{print $5}')"
+          else
+            echo "ℹ releases.json not found in wicid_web (builder.py will create it)"
+          fi
+      
       - name: Build release package
         run: |
           echo "→ Building release package with builder.py..."
@@ -118,6 +130,12 @@ jobs:
             exit 1
           fi
           echo "✓ Build artifact verified: $(ls -lh releases/wicid_install.zip)"
+          
+          if [ ! -f releases.json ]; then
+            echo "✗ Error: releases.json not generated"
+            exit 1
+          fi
+          echo "✓ releases.json verified: $(ls -lh releases.json | awk '{print $5}')"
       
       - name: Generate release notes
         run: |

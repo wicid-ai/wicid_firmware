@@ -379,6 +379,9 @@ def cleanup_macos_artifacts(circuitpy_path):
         for root, dirs, files in os.walk(circuitpy_path):
             for file in files:
                 if file.startswith('.'):
+                    # Never attempt to remove .Trashes (system-managed on macOS)
+                    if file == '.Trashes':
+                        continue
                     file_path = Path(root) / file
                     try:
                         file_path.unlink()
@@ -1199,7 +1202,7 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
         include_tests: If True, copy tests directory using hard semantics
     
     Returns:
-        bool: True if update completed successfully, False if cancelled or failed
+        bool: True if update completed successfully, False otherwise
     """
     print_header("HARD UPDATE MODE")
     print("\n⚠️  WARNING: This will DELETE ALL FILES on the CIRCUITPY drive!")
@@ -1216,18 +1219,6 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
             print(f"  - {item}")
     else:
         print("  (no files to delete)")
-    
-    # Confirm with user
-    print("\n" + "!" * 60)
-    print("This operation will DELETE files on CIRCUITPY drive ONLY.")
-    print("Your local files will NOT be affected.")
-    print("!" * 60)
-    
-    response = input("\nType 'yes' to continue with HARD update: ").strip().lower()
-    
-    if response != "yes":
-        print("\nHARD update cancelled.")
-        return False
     
     # Extract to temporary directory
     try:

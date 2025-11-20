@@ -289,7 +289,23 @@ def build_www_assets(src_www: Path, out_root: Path, mode: str = "single") -> Non
 
 
 def parse_version(version_str):
-    """Parse semantic version string into tuple."""
+    """
+    Validate and parse semantic version string.
+    
+    Pattern: INT.INT.INT[optional "-" + (a|b|rc|rtm|ga)[optional digits]]
+    Examples: "1.2.3", "1.2.3-b", "1.2.3-b2", "1.2.3-rc1"
+    
+    Returns:
+        tuple: (version_tuple, has_prerelease) or None if invalid
+    """
+    if not version_str:
+        return None
+    
+    # Validate format: ^\d+\.\d+\.\d+(?:-(?:a|b|rc|rtm|ga)(?:\d+)?)?$
+    pattern = r'^\d+\.\d+\.\d+(?:-(?:a|b|rc|rtm|ga)(?:\d+)?)?$'
+    if not re.match(pattern, version_str):
+        return None
+    
     # Split on '-' to separate version from pre-release tag
     parts = version_str.split('-')
     version_parts = parts[0].split('.')
@@ -302,15 +318,48 @@ def parse_version(version_str):
         return None
 
 
+def extract_base_version(version_str):
+    """
+    Extract base version (without suffix) from version string.
+    
+    Examples:
+        "1.2.3" -> "1.2.3"
+        "1.2.3-b2" -> "1.2.3"
+    """
+    if not version_str:
+        return None
+    parts = version_str.split('-')
+    return parts[0] if parts else None
+
+
+def extract_suffix(version_str):
+    """
+    Extract pre-release suffix from version string.
+    
+    Examples:
+        "1.2.3" -> None
+        "1.2.3-b2" -> "b2"
+        "1.2.3-rc" -> "rc"
+    """
+    if not version_str:
+        return None
+    parts = version_str.split('-', 1)
+    return parts[1] if len(parts) > 1 else None
+
+
 def suggest_versions(current_version):
     """Suggest patch, minor, and major version increments."""
-    parsed = parse_version(current_version)
+    # Extract base version (strip suffix) for suggestions
+    base_version = extract_base_version(current_version)
+    if not base_version:
+        return []
+    
+    parsed = parse_version(base_version)
     if not parsed:
         return []
     
-    version_tuple, has_prerelease = parsed
+    version_tuple, _ = parsed
     
-    # Remove prerelease suffix for suggestions
     if len(version_tuple) == 3:
         major, minor, patch = version_tuple
         return [
@@ -371,8 +420,11 @@ def interactive_build():
     # Load existing releases
     releases_data = load_releases_json()
     
-    # Read current version
-    current_version = read_current_version()
+    # Determine current version for display (prefer manifest, fallback to settings.toml)
+    if prev_manifest and 'version' in prev_manifest:
+        current_version = prev_manifest['version']
+    else:
+        current_version = read_current_version()
     print(f"\nCurrent version: {current_version}")
     
     # 1. Target Machine Types
@@ -401,22 +453,85 @@ def interactive_build():
     print("\n3. Release Type:")
     print("   a) Production")
     print("   b) Development")
-    release_type_input = input("   [Production]: ").strip().lower()
-    release_type = "development" if release_type_input in ['b', 'dev', 'development'] else "production"
+    if prev_manifest:
+        default_release_type = prev_manifest.get('release_type', 'production')
+        default_prompt = "Production" if default_release_type == "production" else "Development"
+    else:
+        default_release_type = "production"
+        default_prompt = "Production"
+    release_type_input = input(f"   [{default_prompt}]: ").strip().lower()
+    if not release_type_input:
+        release_type = default_release_type
+    else:
+        release_type = "development" if release_type_input in ['b', 'dev', 'development'] else "production"
     
     # 4. Version Number
     print("\n4. Version Number:")
-    suggestions = suggest_versions(current_version)
-    if suggestions:
-        print(f"   Suggestions: {suggestions[0]} (patch), {suggestions[1]} (minor), {suggestions[2]} (major)")
-    version = input(f"   Enter version [{suggestions[0] if suggestions else '0.2.0'}]: ").strip()
+    # Use manifest base version as default, or fallback to suggestions from settings.toml
+    if prev_manifest and 'version' in prev_manifest:
+        default_base_version = extract_base_version(prev_manifest['version'])
+        if default_base_version:
+            suggestions = suggest_versions(default_base_version)
+            if suggestions:
+                print(f"   Suggestions: {suggestions[0]} (patch), {suggestions[1]} (minor), {suggestions[2]} (major)")
+            default_version = default_base_version
+        else:
+            # Fallback if manifest version is invalid
+            current_settings_version = read_current_version()
+            suggestions = suggest_versions(current_settings_version)
+            default_version = suggestions[0] if suggestions else "0.2.0"
+    else:
+        current_settings_version = read_current_version()
+        suggestions = suggest_versions(current_settings_version)
+        default_version = suggestions[0] if suggestions else "0.2.0"
+    
+    version = input(f"   Enter version [{default_version}]: ").strip()
     if not version:
-        version = suggestions[0] if suggestions else "0.2.0"
+        version = default_version
     
     # Validate version format
     if not parse_version(version):
-        print_error("Invalid version format. Use semantic versioning (e.g., 1.2.3 or 1.2.3-beta.1)")
+        print_error("Invalid version format. Use format: X.Y.Z (e.g., 1.2.3)")
         return False
+    
+    # Extract any existing suffix from the entered version
+    entered_suffix = extract_suffix(version)
+    base_version_entered = extract_base_version(version)
+    
+    # 4a. Pre-release suffix (only for Development releases)
+    if release_type == "development":
+        print("\n4a. Pre-release Suffix:")
+        print("   Options: a, b, rc, rtm, or ga")
+        print("   You can add a number after the suffix (e.g., b2, rc1)")
+        
+        # Determine default suffix: use entered suffix if present, otherwise use manifest suffix
+        default_suffix = None
+        if entered_suffix:
+            default_suffix = entered_suffix
+        elif prev_manifest and 'version' in prev_manifest:
+            existing_suffix = extract_suffix(prev_manifest['version'])
+            if existing_suffix:
+                default_suffix = existing_suffix
+        
+        suffix_prompt = f"   [{default_suffix if default_suffix else 'none'}]: "
+        suffix_input = input(suffix_prompt).strip()
+        
+        if suffix_input:
+            # Validate suffix format: must be one of the allowed suffixes optionally followed by digits
+            suffix_pattern = r'^(a|b|rc|rtm|ga)(\d+)?$'
+            if not re.match(suffix_pattern, suffix_input.lower()):
+                print_error("Invalid suffix format. Use: a, b, rc, rtm, or ga (optionally followed by digits, e.g., b2)")
+                return False
+            # Use base version and append new suffix
+            version = f"{base_version_entered}-{suffix_input.lower()}"
+            # Re-validate full version
+            if not parse_version(version):
+                print_error("Invalid version format with suffix.")
+                return False
+        elif default_suffix:
+            # Use default suffix if user didn't provide one (either from entered version or manifest)
+            version = f"{base_version_entered}-{default_suffix}"
+        # If no suffix input and no default, version remains as base version (no suffix)
     
     # 5. Release Notes
     print("\n5. Release Notes:")
