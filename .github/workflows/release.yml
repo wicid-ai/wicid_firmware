@@ -104,13 +104,15 @@ jobs:
           echo "${PWD}" >> $GITHUB_PATH
           echo "✓ Added to PATH"
       
-      - name: Fetch latest releases.json from wicid_web
+      - name: Setup wicid_web repository
         run: |
-          echo "→ Fetching latest releases.json from wicid_web..."
-          RELEASES_JSON_URL="https://raw.githubusercontent.com/wicid-ai/wicid_web/main/public/releases.json"
+          echo "→ Cloning wicid_web repository..."
+          git clone https://x-access-token:${{ secrets.WICID_WEB_RELEASES_TOKEN }}@github.com/wicid-ai/wicid_web.git
           
-          if curl -fsSL -o releases.json "${RELEASES_JSON_URL}"; then
-            echo "✓ Successfully downloaded releases.json"
+          echo "→ Checking for existing releases.json..."
+          if [ -f wicid_web/public/releases.json ]; then
+            echo "✓ Found releases.json, copying to workspace root..."
+            cp wicid_web/public/releases.json .
             echo "File size: $(ls -lh releases.json | awk '{print $5}')"
           else
             echo "ℹ releases.json not found in wicid_web (builder.py will create it)"
@@ -156,19 +158,16 @@ jobs:
       
       - name: Sync releases.json to wicid_web
         run: |
-          echo "→ Cloning wicid_web repository..."
-          git clone https://x-access-token:${{ secrets.WICID_WEB_RELEASES_TOKEN }}@github.com/wicid-ai/wicid_web.git
           cd wicid_web
-          echo "✓ Repository cloned"
+          echo "→ Pulling latest changes..."
+          git pull origin main
           
           echo "→ Configuring git identity..."
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          echo "✓ Git configured"
           
-          echo "→ Copying releases.json..."
+          echo "→ Copying updated releases.json..."
           cp ../releases.json public/
-          echo "✓ File copied"
           
           echo "→ Checking for changes..."
           if git diff --quiet public/releases.json; then
@@ -176,23 +175,22 @@ jobs:
           else
             echo "✓ Changes detected in releases.json:"
             git diff public/releases.json
-          fi
-          
-          echo "→ Staging changes..."
-          git add public/releases.json
-          git status --short
-          
-          echo "→ Committing changes..."
-          if git commit -m "build: update releases.json from wicid_firmware"; then
-            echo "✓ Changes committed"
-            echo "→ Pushing to main branch..."
-            if git push origin main; then
-              echo "✓ Successfully pushed to wicid_web"
+            
+            echo "→ Staging changes..."
+            git add public/releases.json
+            
+            echo "→ Committing changes..."
+            if git commit -m "build: update releases.json from wicid_firmware"; then
+              echo "✓ Changes committed"
+              echo "→ Pushing to wicid_web..."
+              if git push origin main; then
+                echo "✓ Successfully pushed to wicid_web"
+              else
+                echo "✗ Failed to push changes to wicid_web"
+                exit 1
+              fi
             else
-              echo "✗ Failed to push changes to wicid_web"
-              exit 1
+              echo "ℹ No changes to commit - releases.json is already up to date"
             fi
-          else
-            echo "ℹ No changes to commit - releases.json is already up to date"
           fi
 
