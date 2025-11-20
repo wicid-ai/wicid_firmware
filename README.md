@@ -13,11 +13,10 @@ See the product website at: https://www.wicid.ai
 - **WiFi Connectivity**: Fetches real-time weather data using WiFi
 - **Setup Portal**: Easy Wi-Fi network setup through a web interface
 - **Button Control**: Simple button interface to cycle through different modes and access setup
-- **Over-the-Air (OTA) Updates**: Automatic firmware updates from remote server
-  - First scheduled check runs shortly after startup
-  - Subsequent checks follow a configurable hourly cadence
-  - Support for production and development release channels
-  - Automatic download and installation with device restart
+- **Over-the-Air (OTA) Updates**: Automatic firmware updates from a remote server
+  - Performs an initial self-check soon after startup, then follows the configured cadence
+  - Supports production and development release channels
+  - Downloads, verifies, and installs updates with automatic restart
 
 ## How It Works
 
@@ -31,8 +30,8 @@ See the product website at: https://www.wicid.ai
 
 WICID uses a manager-based architecture with clear separation of concerns:
 
-1. **Main Orchestrator** (`code_support.py`):
-   - Coordinates system initialization and startup
+1. **Main Orchestrator**:
+   - Coordinates system initialization and startup and delegates to specialized managers
    - Handles fatal error recovery
    - Delegates responsibilities to specialized managers
 
@@ -54,21 +53,25 @@ WICID uses a manager-based architecture with clear separation of concerns:
    - Extensible design for adding new display modes
 
 5. **Update Manager**:
-   - Schedules an initial post-boot update check (default 60 seconds after startup)
+   - Schedules an initial post-boot update check shortly after startup
    - Performs recurring checks using the configured interval
    - Downloads and verifies update packages
    - Performs full-reset installations to ensure consistency
 
-6. **System Monitor**:
+6. **System Management**:
    - Performs periodic health checks
-   - Coordinates scheduled maintenance operations
+   - Coordinates scheduled maintenance operations and periodic reboots
 
 7. **Shared Resources** (singletons):
-   - **Pixel Controller**: LED animations and visual feedback
+   - **LED controller**: LED animations and visual feedback
    - **Logging**: Structured logging with configurable verbosity
-   - **Weather Service**: Fetches data from Open-Meteo API
+   - **Weather data service**: Fetches data from the external weather API
+8. **Scheduler**:
+   - Cooperative task runner that wraps `asyncio` and enforces consistent timing semantics
+   - Coordinates periodic work (LED refresh, connectivity checks, OTA cadences) plus one-shot tasks
+   - Provides observability (execution counters, starvation tracking) and protects the rest of the system from low-level event-loop details
 
-The architecture emphasizes encapsulation, error resilience, and extensibility. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for detailed design documentation.
+The architecture emphasizes encapsulation, error resilience, and extensibility. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for broader design context and [`docs/SCHEDULER_ARCHITECTURE.md`](docs/SCHEDULER_ARCHITECTURE.md) for scheduler intent.
 
 ### Weather Data
 
@@ -221,7 +224,7 @@ pip install circup rcssmin rjsmin htmlmin beautifulsoup4
 
 ### Filesystem Modes
 
-The device uses `boot.py` to control filesystem access. By default, it runs in **Production Mode** which allows the setup portal to save configuration files but disables USB mass storage.
+The boot script controls filesystem access. By default, it runs in **Production Mode** which allows the setup portal to save configuration files but disables USB mass storage.
 
 **Production Mode** (default):
 - Filesystem is writable from code (setup portal can save credentials)
@@ -292,30 +295,6 @@ User-specific credentials, preserved across firmware updates:
 ```
 
 **Note**: `secrets.json` is created by Setup Mode and preserved during OTA updates.
-
-### Code Structure
-- `code_support.py`: Main orchestrator and system initialization
-- `boot_support.py`: Bootloader with compatibility checks and update installation
-- `configuration_manager.py`: Configuration lifecycle and setup portal orchestration
-- `wifi_manager.py`: WiFi connectivity and credential management
-- `mode_manager.py`: Mode orchestration and button handling
-- `mode_interface.py`: Base class defining mode contract
-- `modes.py`: Mode implementations (weather display, demos)
-- `update_manager.py`: OTA update logic with device self-identification
-- `system_monitor.py`: Periodic health checks and maintenance
-- `weather.py`: Weather data fetching and processing
-- `pixel_controller.py`: LED control and animations
-- `dns_interceptor.py`: Captive portal DNS for setup interface
-- `logging_helper.py`: Structured logging configuration
-- `wifi_retry_state.py`: Connection retry state tracking
-- `zipfile_lite.py`: Custom ZIP extraction using zlib
-- `utils.py`: Device detection, compatibility checks, and shared utilities
-- `settings.toml`: System configuration (version controlled)
-- `secrets.json`: User credentials (device-specific, preserved during updates)
-- `lib/`: CircuitPython libraries
-- `www/`: Web interface files for the setup portal
-- `docs/`: Architecture and build process documentation
-- `wicid_circuitpy_requirements.txt`: CircuitPython library dependencies
 
 ### Flashing and Building
 
@@ -528,40 +507,6 @@ The OTA update system is **fully functional**:
 - ✅ Automatic cleanup after installation
 - ✅ GitHub Actions automated build and deployment
 - ✅ Cross-repository manifest synchronization
-
-
-
-### Repository Structure
-Note this structure is subject to frequent changes. See the actual source for the most up-to-date information.
-
-```
-wicid_firmware/
-├── src/                    # Device firmware
-│   ├── settings.toml      # System configuration
-│   ├── manifest.json      # Build defaults (gitignored)
-│   ├── boot.py            # Bootloader with compatibility checks
-│   ├── code.py            # Main application loop
-│   ├── update_manager.py  # OTA update logic
-│   ├── zipfile_lite.py    # Custom ZIP extraction
-│   ├── weather.py         # Weather API integration
-│   ├── wifi_manager.py    # WiFi connectivity
-│   ├── modes.py           # Display modes
-│   ├── utils.py           # Device detection and utilities
-│   ├── pixel_controller.py # LED control
-│   ├── setup_portal.py    # Setup portal
-│   ├── lib/               # Device libraries
-│   └── www/               # Setup portal web UI
-├── builder.py             # Build tool (interactive + CI)
-├── installer.py           # Manual firmware installer (SOFT/HARD modes)
-├── releases.json          # Master update manifest
-├── releases/              # Build artifacts (gitignored)
-├── .github/
-│   ├── workflows/
-│   │   └── release.yml    # Automated build pipeline
-│   └── files-sync-config.yml # Cross-repo sync config
-└── docs/
-    └── BUILD_PROCESS.md   # Build guide
-```
 
 
 

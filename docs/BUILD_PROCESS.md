@@ -382,7 +382,8 @@ When a device downloads an update:
    - Extract all non-hidden files
    - Validate manifest.json is present and valid
    - Verify all critical files are present
-   
+   - Any failure during download, verification, or extraction records the offending version in `/incompatible_releases.json` so future update checks skip it automatically
+
 5. **Restart**: Device reboots immediately via hard reset
 
 6. **Recovery Check** (at boot, before everything):
