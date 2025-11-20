@@ -1,7 +1,7 @@
 """
-System Monitor for periodic system maintenance tasks.
+SystemManager for periodic system maintenance tasks.
 
-Encapsulates update checks and periodic reboot timing. Modes call tick() 
+Encapsulates update checks and periodic reboot timing. Modes call tick()
 to allow system checks without knowing implementation details.
 """
 
@@ -9,10 +9,12 @@ import os
 import time
 import microcontroller
 import traceback
-from logging_helper import get_logger
+from logging_helper import logger
+from manager_base import ManagerBase
+from scheduler import Scheduler
 
 
-class SystemMonitor:
+class SystemManager(ManagerBase):
     """
     Singleton manager for periodic system maintenance tasks.
     
@@ -28,28 +30,27 @@ class SystemMonitor:
     @classmethod
     def get_instance(cls, update_manager=None):
         """
-        Get singleton SystemMonitor instance.
+        Get singleton SystemManager instance.
         
         Args:
             update_manager: Optional UpdateManager for testing (only used on first call)
         
         Returns:
-            SystemMonitor: The singleton instance
+            SystemManager: The singleton instance
         """
         if cls._instance is None:
-            cls._instance = cls(update_manager)
+            obj = super().__new__(cls)
+            cls._instance = obj
+            obj._initialized = False
+            obj._init(update_manager)
         return cls._instance
     
-    def __init__(self, update_manager=None):
-        """
-        Private constructor. Use get_instance() instead.
+    def _init(self, update_manager=None):
+        """Internal initialization method.
         
         Args:
             update_manager: Optional UpdateManager instance for testing
         """
-        if SystemMonitor._instance is not None:
-            raise RuntimeError("Use SystemMonitor.get_instance() instead of direct instantiation")
-        
         # Encapsulate UpdateManager creation - callers don't need to know about it
         if update_manager is None:
             from update_manager import UpdateManager
@@ -57,7 +58,7 @@ class SystemMonitor:
         
         self.update_manager = update_manager
         self.boot_time = time.monotonic()
-        self.logger = get_logger('wicid.system_monitor')
+        self.logger = logger('wicid.system_manager')
         
         # Load configuration
         try:
@@ -67,13 +68,40 @@ class SystemMonitor:
         
         # Schedule next update check on boot
         self.update_manager.next_update_check = self.update_manager.schedule_next_update_check(
-                delay_seconds=SystemMonitor.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS
-            )
-        self.logger.info(f"First update check scheduled in {SystemMonitor.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS} seconds")
+            delay_seconds=SystemManager.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS
+        )
+        self.logger.info(
+            f"First update check scheduled in {SystemManager.SYSTEM_UPDATE_INITIAL_DELAY_SECONDS} seconds"
+        )
         reboot_status = 'disabled' if self.reboot_interval_hours == 0 else f'{self.reboot_interval_hours}h'
-        self.logger.info(f"SystemMonitor initialized - periodic reboot: {reboot_status}")
+        self.logger.info(f"SystemManager initialized - periodic reboot: {reboot_status}")
+        
+        self._initialized = True
+
+    def __init__(self, update_manager=None):
+        """Private constructor. Use get_instance() instead.
+        
+        Args:
+            update_manager: Optional UpdateManager instance for testing
+        """
+        # Guard against re-initialization
+        if getattr(self, "_initialized", False):
+            return
+        # If _instance is already set, don't override it
+        if SystemManager._instance is None:
+            SystemManager._instance = self
+        self._init(update_manager)
     
-    def tick(self):
+    def shutdown(self):
+        """
+        Release all resources owned by SystemManager.
+
+        Default implementation is no-op (SystemManager doesn't own external resources).
+        This method is idempotent (safe to call multiple times).
+        """
+        super().shutdown()
+    
+    async def tick(self):
         """
         Check if any system maintenance is needed.
         
@@ -86,17 +114,17 @@ class SystemMonitor:
         """
         try:
             # Check for scheduled reboot first (most critical)
-            self._check_for_reboot()
+            await self._check_for_reboot()
             
             # Check for update check if update manager available
             if self.update_manager:
-                self._check_for_updates()
+                await self._check_for_updates()
                 
         except Exception as e:
-            self.logger.error(f"Error in SystemMonitor.tick(): {e}")
+            self.logger.error(f"Error in SystemManager.tick(): {e}")
             traceback.print_exception(e)
     
-    def _check_for_reboot(self):
+    async def _check_for_reboot(self):
         """
         Check if periodic reboot interval has been reached.
         
@@ -120,12 +148,12 @@ class SystemMonitor:
             self.logger.info("=" * 50)
             
             # Small delay to allow message to be printed
-            time.sleep(1)
+            await Scheduler.sleep(1)
             
             # Hard reset to ensure boot.py runs
             microcontroller.reset()
     
-    def _check_for_updates(self):
+    async def _check_for_updates(self):
         """
         Check if scheduled update check time has been reached.
         
@@ -142,7 +170,7 @@ class SystemMonitor:
         self.logger.info("Scheduled update check triggered")
         try:
             # Use centralized update workflow - handles check, download, and reboot
-            self.update_manager.check_download_and_reboot(delay_seconds=1)
+            await self.update_manager.check_download_and_reboot(delay_seconds=1)
             
             # If we reach here, no update was available or download failed
             # Reschedule next check
@@ -153,4 +181,3 @@ class SystemMonitor:
             traceback.print_exception(e)
             # Reschedule to retry later
             self.update_manager.next_update_check = self.update_manager.schedule_next_update_check()
-

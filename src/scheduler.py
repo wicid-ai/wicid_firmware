@@ -1,0 +1,752 @@
+"""
+Scheduler subsystem for WICID firmware.
+
+Provides cooperative multitasking with priority-based scheduling, starvation prevention,
+and complete asyncio isolation. Only this module imports asyncio.
+
+Architecture: See docs/SCHEDULER_ARCHITECTURE.md
+Version: 0.1
+"""
+
+import asyncio
+import time
+from logging_helper import logger
+
+
+# Simple min-heap for CircuitPython (lacks heapq module)
+class _MinHeap:
+    """Minimal binary heap for priority queue operations."""
+
+    def __init__(self):
+        self.heap = []
+
+    def push(self, item):
+        """Add item and maintain heap property."""
+        self.heap.append(item)
+        self._sift_up(len(self.heap) - 1)
+
+    def pop(self):
+        """Remove and return smallest item."""
+        if not self.heap:
+            raise IndexError("pop from empty heap")
+        self.heap[0], self.heap[-1] = self.heap[-1], self.heap[0]
+        item = self.heap.pop()
+        if self.heap:
+            self._sift_down(0)
+        return item
+
+    def heapify(self):
+        """Rebuild heap after modifications."""
+        n = len(self.heap)
+        for i in range(n // 2 - 1, -1, -1):
+            self._sift_down(i)
+
+    def __len__(self):
+        """Return number of items in heap."""
+        return len(self.heap)
+
+    def _sift_up(self, idx):
+        while idx > 0:
+            parent = (idx - 1) // 2
+            if self.heap[idx] < self.heap[parent]:
+                self.heap[idx], self.heap[parent] = self.heap[parent], self.heap[idx]
+                idx = parent
+            else:
+                break
+
+    def _sift_down(self, idx):
+        n = len(self.heap)
+        while True:
+            smallest = idx
+            left = 2 * idx + 1
+            right = 2 * idx + 2
+            if left < n and self.heap[left] < self.heap[smallest]:
+                smallest = left
+            if right < n and self.heap[right] < self.heap[smallest]:
+                smallest = right
+            if smallest != idx:
+                self.heap[idx], self.heap[smallest] = self.heap[smallest], self.heap[idx]
+                idx = smallest
+            else:
+                break
+
+
+# Simple enum for CircuitPython (lacks enum module)
+class _EnumMember:
+    """Simple enum member for CircuitPython compatibility."""
+
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def __eq__(self, other):
+        return isinstance(other, _EnumMember) and self.value == other.value
+
+    def __hash__(self):
+        return hash(self.value)
+
+    def __repr__(self):
+        return f"{self.name}"
+
+
+# Exception types for error handling
+class TaskNonFatalError(Exception):
+    """Task cannot recover from this error, but system can continue.
+
+    The scheduler will:
+    - Log the error with task context
+    - Cancel the current execution
+    - For periodic/recurring tasks: Reschedule for next interval
+    - For one-shot tasks: Cancel entirely
+
+    Examples:
+    - HTTP 404 during update check
+    - Weather API rate limit exceeded
+    - Network timeout
+    - Invalid sensor reading
+    """
+    pass
+
+
+class TaskFatalError(Exception):
+    """Task cannot recover AND system integrity is compromised.
+
+    The scheduler will:
+    - Log the error with full traceback
+    - Propagate exception to main loop
+    - Main loop should trigger graceful shutdown and watchdog reboot
+
+    Examples:
+    - Out of memory (MemoryError)
+    - Hardware fault (I2C bus failure)
+    - Corrupted critical configuration
+    - File system corruption
+    """
+    pass
+
+
+class TaskType:
+    """Task scheduling type (CircuitPython-compatible)."""
+    PERIODIC = _EnumMember("PERIODIC", 1)   # Fixed-rate: next_run = last_scheduled + period
+    ONE_SHOT = _EnumMember("ONE_SHOT", 2)   # Run once after delay
+    RECURRING = _EnumMember("RECURRING", 3)  # Interval starts after task completes
+
+
+class TaskHandle:
+    """Opaque handle for task management.
+
+    Returned by schedule_* methods. Can be used to cancel tasks.
+    Do not construct directly.
+    """
+    _next_id = 0
+
+    def __init__(self, task_id):
+        self.task_id = task_id
+
+    def __repr__(self):
+        return f"TaskHandle({self.task_id})"
+
+    @classmethod
+    def _generate_id(cls):
+        """Generate unique task ID."""
+        task_id = cls._next_id
+        cls._next_id += 1
+        return task_id
+
+
+class Task:
+    """Task abstraction encapsulating scheduling metadata and execution state."""
+
+    def __init__(self, name, priority, coroutine_factory, task_type, timing_param):
+        """Create a new task.
+
+        Args:
+            name: Human-readable identifier
+            priority: Original priority (0-90, lower = higher priority)
+            coroutine_factory: Callable that returns a coroutine when invoked
+            task_type: TaskType enum value
+            timing_param: Period/delay/interval in seconds
+        """
+        self.task_id = TaskHandle._generate_id()
+        self.name = name
+        self.priority = priority
+        self.coroutine_factory = coroutine_factory
+        self.task_type = task_type
+        self.timing_param = timing_param
+
+        # Runtime state
+        self.next_run_time = None  # Monotonic timestamp
+        self.ready_since = None    # For starvation prevention
+        self.effective_priority = priority
+        self.last_run_time = None
+        self.last_scheduled_time = None  # For fixed-rate periodic tasks
+        self.execution_count = 0
+        self.total_runtime = 0.0
+        self.cancelled = False
+
+    def __lt__(self, other):
+        """Comparison for heap ordering: (next_run_time, effective_priority, task_id)."""
+        if self.next_run_time != other.next_run_time:
+            return self.next_run_time < other.next_run_time
+        if self.effective_priority != other.effective_priority:
+            return self.effective_priority < other.effective_priority
+        return self.task_id < other.task_id
+
+    def __repr__(self):
+        return (f"Task(id={self.task_id}, name='{self.name}', "
+                f"pri={self.priority}, type={self.task_type.name})")
+
+
+class Scheduler:
+    """Cooperative multitasking scheduler with priority-based scheduling.
+
+    Singleton facade over asyncio. Provides unified task scheduling API
+    with starvation prevention and error handling.
+    """
+
+    _instance = None
+
+    # Configuration
+    MAX_STARVATION_TIME = 60.0  # seconds
+    STARVATION_PRIORITY_BOOST = 30  # priority points
+    TASK_WARNING_THRESHOLD_MS = 100  # milliseconds
+    FALL_BEHIND_DEBUG_THRESHOLD = 30.0  # seconds
+    FALL_BEHIND_INFO_THRESHOLD = 120.0   # seconds
+    FALL_BEHIND_WARNING_THRESHOLD = 180.0  # seconds
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    @classmethod
+    def instance(cls):
+        """Get the scheduler singleton.
+
+        Returns:
+            The global Scheduler instance
+        """
+        return cls()
+
+    def __init__(self):
+        """Initialize scheduler (called once via singleton pattern)."""
+        if self._initialized:
+            return
+
+        self.logger = logger('wicid.scheduler')
+        self.logger.info("Initializing Scheduler v0.1")
+
+        # Task management
+        self.ready_queue = _MinHeap()  # Min-heap of tasks sorted by (next_run_time, priority, id)
+        self.task_registry = {}  # task_id -> Task
+
+        # Statistics
+        self.total_tasks_scheduled = 0
+        self.total_tasks_executed = 0
+        self.total_tasks_failed = 0
+
+        # Event loop (set after run_forever starts)
+        self.loop = None
+        self._active_asyncio_tasks = set()
+        self._fatal_error = None
+
+        self._initialized = True
+        self.logger.info("Scheduler initialized")
+
+    # -------------------------------------------------------------------------
+    # Public API: Task Scheduling
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _is_awaitable(obj):
+        return hasattr(obj, "__await__")
+
+    def _make_coroutine_factory(self, coroutine):
+        """Normalize callable into a factory that returns awaitables."""
+        if not callable(coroutine):
+            raise TypeError(
+                "Scheduler requires coroutine functions (pass the async function without calling it)"
+            )
+
+        def factory():
+            result = coroutine()
+            if not self._is_awaitable(result):
+                raise TypeError(
+                    f"Scheduled callable '{coroutine}' must return an awaitable coroutine"
+                )
+            return result
+
+        return factory
+
+    def schedule_periodic(
+        self,
+        coroutine,
+        period: float,
+        priority: int = 50,
+        name: str = "Unnamed Task"
+    ) -> TaskHandle:
+        """Schedule a task to run every N seconds at fixed rate.
+
+        Uses fixed-rate scheduling: next run = last_scheduled_time + period.
+        Prevents drift for timing-sensitive tasks like LED animations.
+
+        Args:
+            coroutine: Async callable to execute (pass the async function without calling it)
+            period: Seconds between executions (fixed-rate)
+            priority: Task priority (0-90, lower = higher priority)
+            name: Human-readable task identifier
+
+        Returns:
+            TaskHandle for cancellation/management
+
+        Example:
+            # LED updates every 40ms (25Hz)
+            handle = scheduler.schedule_periodic(
+                coroutine=led_animation_task,
+                period=0.04,
+                priority=0,
+                name="LED Animation"
+            )
+        """
+        factory = self._make_coroutine_factory(coroutine)
+        task = Task(name, priority, factory, TaskType.PERIODIC, period)
+        task.next_run_time = time.monotonic()  # Run immediately
+        task.last_scheduled_time = task.next_run_time
+
+        self._register_task(task)
+        return TaskHandle(task.task_id)
+
+    def schedule_once(
+        self,
+        coroutine,
+        delay: float,
+        priority: int = 50,
+        name: str = "Unnamed Task"
+    ) -> TaskHandle:
+        """Schedule a task to run once after N seconds delay.
+
+        Args:
+            coroutine: Async callable to execute (pass the async function without calling it)
+            delay: Seconds to wait before execution
+            priority: Task priority (0-90, lower = higher priority)
+            name: Human-readable task identifier
+
+        Returns:
+            TaskHandle for cancellation
+
+        Example:
+            # Initial update check 60 seconds after boot
+            handle = scheduler.schedule_once(
+                coroutine=check_for_updates,
+                delay=60.0,
+                priority=50,
+                name="Initial Update Check"
+            )
+        """
+        factory = self._make_coroutine_factory(coroutine)
+        task = Task(name, priority, factory, TaskType.ONE_SHOT, delay)
+        task.next_run_time = time.monotonic() + delay
+
+        self._register_task(task)
+        return TaskHandle(task.task_id)
+
+    def schedule_recurring(
+        self,
+        coroutine,
+        interval: float,
+        priority: int = 50,
+        name: str = "Unnamed Task"
+    ) -> TaskHandle:
+        """Schedule a task to run repeatedly with N seconds between completions.
+
+        Unlike periodic tasks, recurring tasks wait for completion before
+        scheduling the next run: next run = completion_time + interval.
+
+        Args:
+            coroutine: Async callable to execute (pass the async function without calling it)
+            interval: Seconds between task completions
+            priority: Task priority (0-90, lower = higher priority)
+            name: Human-readable task identifier
+
+        Returns:
+            TaskHandle for cancellation/management
+
+        Example:
+            # Weather updates every 20 minutes (after previous update completes)
+            handle = scheduler.schedule_recurring(
+                coroutine=weather_update_task,
+                interval=1200.0,
+                priority=40,
+                name="Weather Updates"
+            )
+        """
+        factory = self._make_coroutine_factory(coroutine)
+        task = Task(name, priority, factory, TaskType.RECURRING, interval)
+        task.next_run_time = time.monotonic()  # Run immediately
+
+        self._register_task(task)
+        return TaskHandle(task.task_id)
+
+    def schedule_now(
+        self,
+        coroutine,
+        priority: int = 50,
+        name: str = "Unnamed Task"
+    ) -> TaskHandle:
+        """Schedule a task to run as soon as possible (one-shot).
+
+        Args:
+            coroutine: Async function to execute
+            priority: Task priority (0-90, lower = higher priority)
+            name: Human-readable task identifier
+
+        Returns:
+            TaskHandle for cancellation
+
+        Example:
+            # Handle button press immediately
+            handle = scheduler.schedule_now(
+                coroutine=handle_button_press,
+                priority=10,
+                name="Button Handler"
+            )
+        """
+        factory = self._make_coroutine_factory(coroutine)
+        task = Task(name, priority, factory, TaskType.ONE_SHOT, 0)
+        task.next_run_time = time.monotonic()  # Run immediately
+
+        self._register_task(task)
+        return TaskHandle(task.task_id)
+
+    def cancel(self, handle: TaskHandle) -> bool:
+        """Cancel a scheduled task.
+
+        Args:
+            handle: TaskHandle returned from schedule_* methods
+
+        Returns:
+            True if task was cancelled, False if already completed/cancelled
+        """
+        task = self.task_registry.get(handle.task_id)
+        if task and not task.cancelled:
+            task.cancelled = True
+            self.logger.info(f"Cancelled task '{task.name}' (id={task.task_id})")
+            return True
+        return False
+
+    # -------------------------------------------------------------------------
+    # Public API: Asyncio Wrappers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def yield_control():
+        """Return awaitable that yields control to other tasks.
+
+        Use this in tight loops or CPU-bound operations to prevent
+        monopolizing the scheduler. Equivalent to asyncio.sleep(0).
+        """
+        return asyncio.sleep(0)
+
+    @staticmethod
+    def sleep(seconds: float):
+        """Return awaitable that sleeps for specified duration.
+
+        Args:
+            seconds: Duration to sleep (can be fractional)
+        """
+        return asyncio.sleep(seconds)
+
+    # -------------------------------------------------------------------------
+    # Internal: Task Management
+    # -------------------------------------------------------------------------
+
+    def _register_task(self, task: Task):
+        """Register a task and add to ready queue."""
+        self.task_registry[task.task_id] = task
+        self.ready_queue.push(task)
+        self.total_tasks_scheduled += 1
+
+        self.logger.info(
+            f"Registered task '{task.name}' "
+            f"(id={task.task_id}, priority={task.priority}, "
+            f"type={task.task_type.name}, param={task.timing_param}s)"
+        )
+
+    def _reschedule_task(self, task: Task):
+        """Reschedule a task based on its type."""
+        now = time.monotonic()
+
+        if task.task_type == TaskType.PERIODIC:
+            # Fixed-rate: next run = last_scheduled + period
+            task.last_scheduled_time += task.timing_param
+            task.next_run_time = task.last_scheduled_time
+
+            # If we fell behind, catch up (run immediately)
+            if task.next_run_time < now:
+                delay = now - task.next_run_time
+                if delay >= self.FALL_BEHIND_WARNING_THRESHOLD:
+                    self.logger.warning(
+                        f"Task '{task.name}' fell behind schedule "
+                        f"(behind by {delay:.3f}s)"
+                    )
+                elif delay >= self.FALL_BEHIND_INFO_THRESHOLD:
+                    self.logger.info(
+                        f"Task '{task.name}' fell behind schedule "
+                        f"(behind by {delay:.3f}s)"
+                    )
+                elif delay >= self.FALL_BEHIND_DEBUG_THRESHOLD:
+                    self.logger.debug(
+                        f"Task '{task.name}' fell behind schedule "
+                        f"(behind by {delay:.3f}s)"
+                    )
+                task.next_run_time = now
+                task.last_scheduled_time = now
+
+        elif task.task_type == TaskType.RECURRING:
+            # Interval starts after completion
+            task.next_run_time = now + task.timing_param
+
+        elif task.task_type == TaskType.ONE_SHOT:
+            # Don't reschedule one-shot tasks
+            return
+
+        # Reset starvation tracking
+        task.ready_since = None
+        task.effective_priority = task.priority
+
+        # Re-add to queue
+        self.ready_queue.push(task)
+
+    def _apply_starvation_prevention(self):
+        """Check for starved tasks and boost their priority."""
+        now = time.monotonic()
+
+        for task in self.ready_queue.heap:
+            if task.cancelled:
+                continue
+
+            # Track when task became ready
+            if task.ready_since is None and task.next_run_time <= now:
+                task.ready_since = now
+
+            # Check for starvation
+            if task.ready_since is not None:
+                waiting_time = now - task.ready_since
+
+                if waiting_time > self.MAX_STARVATION_TIME:
+                    # Boost priority
+                    old_priority = task.effective_priority
+                    task.effective_priority = max(0, task.priority - self.STARVATION_PRIORITY_BOOST)
+
+                    if old_priority != task.effective_priority:
+                        self.logger.info(
+                            f"Task '{task.name}' starved for {waiting_time:.1f}s, "
+                            f"boosted priority {old_priority} → {task.effective_priority}"
+                        )
+
+        # Re-heapify to apply priority changes
+        self.ready_queue.heapify()
+
+    # -------------------------------------------------------------------------
+    # Internal: Task Execution
+    # -------------------------------------------------------------------------
+
+    async def _run_task(self, task: Task):
+        """Execute a single task with error handling."""
+        start_time = time.monotonic()
+
+        try:
+            self.logger.debug(f"Running task '{task.name}'")
+
+            # Execute the coroutine (create fresh instance each run)
+            coroutine = task.coroutine_factory()
+            await coroutine
+
+            # Update statistics
+            runtime = time.monotonic() - start_time
+            task.total_runtime += runtime
+            task.execution_count += 1
+            task.last_run_time = start_time
+            self.total_tasks_executed += 1
+
+            # Warn if task exceeded threshold
+            runtime_ms = runtime * 1000
+            if runtime_ms > self.TASK_WARNING_THRESHOLD_MS:
+                self.logger.debug(
+                    f"Task '{task.name}' exceeded {self.TASK_WARNING_THRESHOLD_MS}ms "
+                    f"CPU time (actual={runtime_ms:.1f}ms)"
+                )
+
+            self.logger.debug(
+                f"Task '{task.name}' completed in {runtime_ms:.1f}ms "
+                f"(total executions: {task.execution_count})"
+            )
+
+            # Reschedule if periodic/recurring
+            if task.task_type in (TaskType.PERIODIC, TaskType.RECURRING):
+                self._reschedule_task(task)
+
+        except TaskNonFatalError as e:
+            # Task failed, but system continues
+            self.logger.error(f"Task '{task.name}' failed (non-fatal): {e}")
+            self.total_tasks_failed += 1
+
+            # Reschedule periodic/recurring tasks
+            if task.task_type in (TaskType.PERIODIC, TaskType.RECURRING):
+                self._reschedule_task(task)
+
+        except TaskFatalError as e:
+            # System integrity compromised
+            self.logger.critical(f"FATAL error in task '{task.name}': {e}")
+            self.logger.critical("System stability compromised - propagating to main loop")
+            raise  # Re-raise to enclosing wrapper
+
+        except Exception as e:
+            # Unknown exception - treat as non-fatal by default
+            self.logger.error(
+                f"Task '{task.name}' raised unexpected exception: {e}",
+                exc_info=True
+            )
+            self.total_tasks_failed += 1
+
+            # Reschedule periodic/recurring tasks
+            if task.task_type in (TaskType.PERIODIC, TaskType.RECURRING):
+                self._reschedule_task(task)
+
+    async def _task_wrapper(self, task: Task):
+        """Wrapper around _run_task that tracks asyncio task lifecycle."""
+        try:
+            await self._run_task(task)
+        except TaskFatalError as fatal_error:
+            # Capture fatal error so main loop can exit cleanly
+            self._fatal_error = fatal_error
+        finally:
+            # Remove from active task set
+            current = asyncio.current_task()
+            if current in self._active_asyncio_tasks:
+                self._active_asyncio_tasks.remove(current)
+
+    async def _event_loop(self):
+        """Main scheduler event loop."""
+        self.logger.info("Scheduler event loop started")
+        self.loop = asyncio.get_running_loop()
+
+        last_starvation_check = time.monotonic()
+
+        while True:
+            if self._fatal_error is not None:
+                raise self._fatal_error
+
+            # Periodic starvation prevention check (every 10 seconds)
+            now = time.monotonic()
+            if now - last_starvation_check > 10.0:
+                self._apply_starvation_prevention()
+                last_starvation_check = now
+
+            # Get next ready task
+            if not self.ready_queue.heap:
+                # No tasks scheduled - wait briefly
+                await asyncio.sleep(0.1)
+                continue
+
+            # Peek at next task
+            next_task = self.ready_queue.heap[0]
+
+            # Skip cancelled tasks
+            if next_task.cancelled:
+                self.ready_queue.pop()
+                del self.task_registry[next_task.task_id]
+                continue
+
+            # Check if task is ready to run
+            now = time.monotonic()
+            if next_task.next_run_time > now:
+                # Sleep until next task is ready
+                sleep_time = min(next_task.next_run_time - now, 0.1)
+                await asyncio.sleep(sleep_time)
+                continue
+
+            # Remove task from queue and execute asynchronously
+            task = self.ready_queue.pop()
+            asyncio_task = asyncio.create_task(self._task_wrapper(task))
+            self._active_asyncio_tasks.add(asyncio_task)
+
+    # -------------------------------------------------------------------------
+    # Public API: Scheduler Lifecycle
+    # -------------------------------------------------------------------------
+
+    def run_forever(self):
+        """Start the scheduler event loop.
+
+        This method never returns under normal conditions. It runs the
+        asyncio event loop and continuously executes scheduled tasks.
+
+        Raises:
+            TaskFatalError: If a task encounters a fatal error
+            Exception: If the scheduler itself crashes
+        """
+        self.logger.info("Starting scheduler event loop...")
+        self.logger.info(f"Configuration: MAX_STARVATION_TIME={self.MAX_STARVATION_TIME}s, "
+                        f"STARVATION_PRIORITY_BOOST={self.STARVATION_PRIORITY_BOOST}, "
+                        f"TASK_WARNING_THRESHOLD_MS={self.TASK_WARNING_THRESHOLD_MS}ms")
+
+        try:
+            # Run the event loop
+            asyncio.run(self._event_loop())
+        except TaskFatalError:
+            # Re-raise fatal errors to caller
+            raise
+        except Exception as e:
+            self.logger.critical(f"Scheduler event loop crashed: {e}", exc_info=True)
+            raise
+
+    # -------------------------------------------------------------------------
+    # Diagnostics
+    # -------------------------------------------------------------------------
+
+    def dump_state(self):
+        """Return lightweight snapshot of scheduler state for debugging."""
+        snapshot = []
+        now = time.monotonic()
+
+        for task in self.ready_queue.heap:
+            snapshot.append({
+                "id": task.task_id,
+                "name": task.name,
+                "priority": task.priority,
+                "next_in": task.next_run_time - now,
+                "effective_priority": task.effective_priority,
+                "ready_since": task.ready_since,
+            })
+
+        return {
+            "tasks_scheduled": self.total_tasks_scheduled,
+            "tasks_executed": self.total_tasks_executed,
+            "tasks_failed": self.total_tasks_failed,
+            "queued_tasks": snapshot,
+        }
+
+    def describe(self):
+        """Return human-readable snapshot useful for REPL debugging."""
+        state = self.dump_state()
+        lines = [
+            f"Scheduler State: scheduled={state['tasks_scheduled']}, "
+            f"executed={state['tasks_executed']}, failed={state['tasks_failed']}"
+        ]
+        if not state["queued_tasks"]:
+            lines.append("  (no queued tasks)")
+        else:
+            lines.append("  Queued Tasks:")
+            for task in state["queued_tasks"]:
+                lines.append(
+                    "    - {name} (id={task_id}, pri={priority}, "
+                    "effective={effective}, next_in={next_in:.3f}s)".format(
+                        name=task["name"],
+                        task_id=task["id"],
+                        priority=task["priority"],
+                        effective=task["effective_priority"],
+                        next_in=task["next_in"],
+                    )
+                )
+        return "\n".join(lines)

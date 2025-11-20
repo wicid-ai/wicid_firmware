@@ -18,13 +18,30 @@ The WICID architecture follows these core principles:
 
 The system is organized around specialized managers that encapsulate domain logic:
 
-- **Configuration Manager**: Handles the complete configuration lifecycle, including setup portal and credential validation
-- **WiFi Manager**: Centralizes all WiFi operations (station mode, access point, retry logic)
-- **Mode Manager**: Orchestrates user-selectable operating modes with consistent lifecycle management
-- **Update Manager**: Handles firmware updates with verification and installation
-- **System Monitor**: Performs periodic health checks and maintenance operations
+- **Configuration manager**: Handles the complete configuration lifecycle, including setup portal and credential validation
+- **Connectivity manager**: Centralizes all network operations (station mode, access point, retry logic)
+- **Mode manager**: Orchestrates user-selectable operating modes with consistent lifecycle management
+- **Update manager**: Handles firmware updates with verification and installation
+- **Weather manager**: Schedules and caches weather data fetched from the weather service API client
+- **Input manager**: Manages button input events using a dedicated button controller
+- **System manager**: Performs periodic health checks and maintenance operations
 
 Each manager owns its domain and makes best-effort recovery from errors. Only unrecoverable failures propagate upward.
+
+### Naming Conventions
+
+To keep responsibilities predictable and discoverable, components follow these naming conventions:
+
+- **`*Manager`**: Orchestrates a domain, lifecycle, or workflow and may coordinate multiple collaborators.
+  - Examples: `FooManager`, `ConfigManager`.
+- **`*Controller`**: Encapsulates direct interaction with a specific hardware component and exposes intent-level operations.
+  - Examples: `DeviceController`, `LedController`.
+- **`*Service`**: Encapsulates access to an external or logical service (typically network-backed or domain-specific).
+  - Examples: `ExampleService`, `ExternalApiService`.
+
+Modules are generally named to match the primary class they expose (for example, `ExampleManager` would live in `example_manager.py`), which keeps module and class names aligned over time.
+
+Utility/helper functionality is kept in dedicated utility modules rather than helper classes whenever possible.
 
 ### Main Orchestrator
 
@@ -43,6 +60,44 @@ The mode system is extensible—new modes can be added by implementing the mode 
 ### Shared Resources
 
 Critical shared resources (WiFi, LED, Logging) use the singleton pattern to ensure consistent state management across the system.
+
+#### Manager Lifecycle Pattern
+
+All managers inherit from `ManagerBase` which provides a consistent lifecycle pattern:
+
+- **Singleton Access**: Managers are accessed via `instance()` or `get_instance()` class methods
+- **Encapsulated Resource Management**: All resource allocation (pins, tasks, sessions) happens in `_init()` method
+- **Automatic Cleanup**: All resource cleanup happens in `shutdown()` method
+- **Smart Reinitialization**: When dependencies change (e.g., in tests), managers automatically shut down and reinitialize
+- **Context Manager Support**: Managers can be used in `with` blocks for explicit lifetime management
+
+**Key Principles:**
+- Callers only ever call `instance(...)` or `get_instance(...)` - never manipulate `_instance` directly
+- Resource cleanup is encapsulated inside each manager's `shutdown()` method
+- Tests can inject dependencies (pins, sessions, fake radios) via `instance(deps...)` without special test APIs
+- All managers follow the same lifecycle pattern, even if they don't own external resources (use no-op `shutdown()`)
+
+**Example:**
+```python
+# Production code - simple singleton access
+input_mgr = InputManager.instance()
+
+# Test code - inject test dependencies (auto-reinitializes if needed)
+test_pin = DigitalInOut(board.BUTTON)
+input_mgr = InputManager.instance(button_pin=test_pin)
+
+# Context manager (optional, for explicit lifetime)
+with InputManager.instance() as mgr:
+    # Use manager
+    pass
+# Manager is automatically shut down here
+```
+
+**Benefits:**
+- Tests don't need special `reset_for_test()` APIs or manual `_instance` manipulation
+- Resource ownership is clear - each manager owns its resources and cleans them up
+- Safe reinitialization when dependencies change (common in tests)
+- Consistent pattern across all managers makes the codebase easier to understand
 
 ## Error Handling Strategy
 

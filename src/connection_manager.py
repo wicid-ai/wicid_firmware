@@ -1,25 +1,26 @@
 """
-WiFi Manager - Centralized WiFi connection management with progressive backoff and interrupt support.
+ConnectionManager - Centralized WiFi connection management with progressive backoff and interrupt support.
 
-This module encapsulates ALL WiFi operations for the WICID device, including:
+This module encapsulates all WiFi connection behavior for the device, including:
 - Station mode connection with progressive exponential backoff
-- Access Point mode for setup portal
+- Access Point mode for the setup portal
 - Button interrupt support during connection attempts
 - Connection state management
-- WiFi radio lifecycle management
+- WiFi radio lifecycle management via WiFiRadioController
 - Graceful error handling
 
-WiFiManager is a singleton - use WiFiManager.get_instance() to access it.
+ConnectionManager is a singleton - use ConnectionManager.get_instance() to access it.
 """
 
-import wifi
 import socketpool
 import ssl
 import time
 import json
 import os
-from logging_helper import get_logger
-from utils import is_button_pressed, interruptible_sleep
+from logging_helper import logger
+from wifi_radio_controller import WiFiRadioController
+from manager_base import ManagerBase
+from scheduler import Scheduler
 
 
 class AuthenticationError(Exception):
@@ -27,7 +28,7 @@ class AuthenticationError(Exception):
     pass
 
 
-class WiFiManager:
+class ConnectionManager(ManagerBase):
     """
     Singleton manager for all WiFi operations.
     
@@ -46,49 +47,93 @@ class WiFiManager:
     MAX_BACKOFF_TIME = 60 * 30     # Cap at 30 minutes between retries
     
     @classmethod
-    def get_instance(cls, button=None):
+    def instance(cls, radio_controller=None):
         """
-        Get the singleton instance of WiFiManager.
-        
+        Get the singleton instance of ConnectionManager.
+
+        Supports smart reinitialization: if radio_controller changes (e.g., in tests),
+        the existing instance will be shut down and reinitialized.
+
         Args:
-            button: Optional button instance (only used on first call)
-        
+            radio_controller: Optional WiFiRadioController instance for DI (only used on first call or when different)
+
         Returns:
-            WiFiManager: The singleton instance
+            ConnectionManager: The singleton instance
         """
         if cls._instance is None:
-            # Create instance directly without going through __init__ check
-            instance = object.__new__(cls)
-            instance._init_singleton(button)
-            cls._instance = instance
+            obj = super().__new__(cls)
+            cls._instance = obj
+            obj._initialized = False
+            obj._init(radio_controller)
+        else:
+            # Check if reinitialization is needed (different radio_controller)
+            if not cls._instance._is_compatible_with(radio_controller=radio_controller):
+                cls._instance.shutdown()
+                cls._instance._init(radio_controller)
         return cls._instance
     
     # Retry state file
     RETRY_STATE_FILE = "/wifi_retry_state.json"
     
-    def _init_singleton(self, button=None):
+    def _init(self, radio_controller=None):
         """
-        Internal initialization method for singleton.
-        
+        Internal initialization method.
+
         Args:
-            button: Optional button instance to check for interrupts during connection
+            radio_controller: Optional WiFiRadioController instance for dependency injection
         """
-        self.button = button
+        self.logger = logger("wicid.wifi")
+
+        # Store init parameters for compatibility checking
+        self._init_radio_controller = radio_controller
+
         self.session = None
         self._connected = False
         self._ap_active = False
         self._credentials = None  # Cached credentials from secrets.json
         self._pre_ap_connected = False  # Track connection state before AP mode
-        self.logger = get_logger('wicid.wifi')
+
+        # Hardware abstraction for the WiFi radio (injectable for tests)
+        self._radio_controller = radio_controller or WiFiRadioController()
+        self._radio = self._radio_controller.radio
+
+        self._initialized = True
+        self.logger.debug("ConnectionManager initialized")
     
-    def __init__(self, button=None):
+    def __init__(self, radio_controller=None):
         """
         Direct instantiation is discouraged.
-        Use get_instance() instead for singleton pattern.
-        
+        Use instance() instead for singleton pattern.
+
         This is kept for backwards compatibility but will create independent instances.
         """
-        self._init_singleton(button)
+        # Guard against re-initialization
+        if getattr(self, "_initialized", False):
+            return
+        # If _instance is already set, don't override it
+        if ConnectionManager._instance is None:
+            ConnectionManager._instance = self
+        self._init(radio_controller)
+
+    def _is_compatible_with(self, radio_controller=None):
+        """
+        Check if this instance is compatible with the given radio_controller.
+
+        Args:
+            radio_controller: Optional WiFiRadioController instance to check compatibility with
+
+        Returns:
+            bool: True if instance is compatible, False if reinit needed
+        """
+        # If not initialized yet, always compatible (will initialize)
+        if not getattr(self, "_initialized", False):
+            return True
+
+        # Compare stored init parameters with requested ones
+        # Same object references or both None means compatible
+        radio_compat = (self._init_radio_controller is None and radio_controller is None) or (self._init_radio_controller is radio_controller)
+
+        return radio_compat
     
     def reset_radio_to_station_mode(self):
         """
@@ -99,9 +144,9 @@ class WiFiManager:
         """
         try:
             self.logger.debug("Resetting WiFi radio to station mode")
-            wifi.radio.enabled = False
+            self._radio.enabled = False
             time.sleep(0.3)
-            wifi.radio.enabled = True
+            self._radio.enabled = True
             time.sleep(0.3)
             self.logger.debug("WiFi radio reset complete")
         except Exception as e:
@@ -194,7 +239,7 @@ class WiFiManager:
         """Clear the cached credentials (forces reload from file on next access)."""
         self._credentials = None
     
-    def ensure_connected(self, timeout=None):
+    async def ensure_connected(self, timeout=None):
         """
         Ensure WiFi is connected using credentials from secrets.json.
         
@@ -242,7 +287,7 @@ class WiFiManager:
         
         # Attempt connection with backoff
         try:
-            success, error_msg = self.connect_with_backoff(
+            success, error_msg = await self.connect_with_backoff(
                 ssid, 
                 password, 
                 timeout=timeout
@@ -261,10 +306,10 @@ class WiFiManager:
             self.logger.error(error_msg)
             return False, error_msg
     
-    def connect_with_backoff(self, ssid, password, timeout=None, on_retry=None):
+    async def connect_with_backoff(self, ssid, password, timeout=None, on_retry=None):
         """
         Connect to WiFi with progressive exponential backoff retry logic.
-        Can be interrupted by button press if button is provided.
+        Automatically interrupts when the InputManager reports a button press.
         
         Retries with exponential backoff capped at MAX_BACKOFF_TIME (30 minutes).
         If timeout is specified, gives up after that duration. Otherwise retries indefinitely.
@@ -299,25 +344,27 @@ class WiFiManager:
             
             try:
                 self.logger.debug(f"Connection attempt #{attempts} to '{ssid}'")
-                
+
                 # Check for button interrupt before attempting connection
-                if self.button and is_button_pressed(self.button):
+                from input_manager import InputManager
+                input_mgr = InputManager.instance()
+                if input_mgr.is_pressed():
                     raise KeyboardInterrupt("Connection interrupted by button press")
                 
                 # Convert to bytes to satisfy buffer protocol requirement
-                ssid_b = bytes(ssid, 'utf-8')
-                password_b = bytes(password, 'utf-8')
-                
-                # Attempt connection
-                wifi.radio.connect(ssid_b, password_b, timeout=self.CONNECTION_TIMEOUT)
-                
+                ssid_b = bytes(ssid, "utf-8")
+                password_b = bytes(password, "utf-8")
+
+                # Attempt connection via radio controller
+                self._radio.connect(ssid_b, password_b, timeout=self.CONNECTION_TIMEOUT)
+
                 # Verify connection
-                if wifi.radio.connected and wifi.radio.ipv4_address:
-                    self.logger.info(f"WiFi connected - IP: {wifi.radio.ipv4_address}")
+                if self._radio.connected and self._radio.ipv4_address:
+                    self.logger.info(f"WiFi connected - IP: {self._radio.ipv4_address}")
                     self._connected = True
                     
                     # Create socket pool and session
-                    pool = socketpool.SocketPool(wifi.radio)
+                    pool = socketpool.SocketPool(self._radio)
                     self.session = None  # Will be created by caller if needed
                     
                     return True, None
@@ -334,7 +381,7 @@ class WiFiManager:
                 # Reset auth failure counter and retry with backoff
                 auth_failure_count = 0
                 self.logger.warning(f"Attempt #{attempts} timed out")
-                result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
+                result = await self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
                 if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
@@ -359,7 +406,7 @@ class WiFiManager:
                     auth_failure_count = 0
                 
                 # Network unreachable or other transient errors - retry with backoff
-                result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
+                result = await self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
                 if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
@@ -390,7 +437,7 @@ class WiFiManager:
                 
                 # Network unreachable or other transient errors - retry with backoff
                 # "No network with that ssid" could be typo OR temporary outage - retry cycle handles both
-                result = self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
+                result = await self._handle_retry_or_fail(attempts, str(e), start_time, timeout, on_retry)
                 if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
@@ -407,12 +454,12 @@ class WiFiManager:
                 auth_failure_count = 0
                 
                 # Network unreachable or other transient errors - retry with backoff
-                result = self._handle_retry_or_fail(attempts, error_msg, start_time, timeout, on_retry)
+                result = await self._handle_retry_or_fail(attempts, error_msg, start_time, timeout, on_retry)
                 if result:  # Timeout exceeded
                     return result
                 # Continue loop for retry
     
-    def _handle_retry_or_fail(self, attempts, error_msg, start_time, timeout=None, on_retry=None):
+    async def _handle_retry_or_fail(self, attempts, error_msg, start_time, timeout=None, on_retry=None):
         """
         Handle retry logic for soft failures.
         
@@ -445,13 +492,19 @@ class WiFiManager:
         # Call retry callback if provided
         if on_retry:
             on_retry(attempts, wait_time)
-        
+
         self.logger.debug(f"Waiting {wait_time:.1f}s before retry...")
-        
-        # Wait with button interrupt checking
-        if not interruptible_sleep(wait_time, self.button):
-            raise KeyboardInterrupt("Connection interrupted by button press during backoff")
-        
+
+        # Wait with button interrupt checking using InputManager
+        from input_manager import InputManager
+        input_mgr = InputManager.instance()
+        start = time.monotonic()
+        while time.monotonic() - start < wait_time:
+            if input_mgr.is_pressed():
+                raise KeyboardInterrupt("Connection interrupted by button press during backoff")
+            remaining = wait_time - (time.monotonic() - start)
+            await Scheduler.sleep(min(0.1, remaining))
+
         # Return None to signal caller to continue retry loop
         return None
     
@@ -469,8 +522,8 @@ class WiFiManager:
         self.logger.debug(f"Testing connection to '{ssid}'")
         
         # Convert to bytes to satisfy buffer protocol requirement
-        ssid_b = bytes(ssid, 'utf-8')
-        password_b = bytes(password, 'utf-8')
+        ssid_b = bytes(ssid, "utf-8")
+        password_b = bytes(password, "utf-8")
         
         # Attempt connection with explicit exception handling
         start_time = time.monotonic()
@@ -478,13 +531,13 @@ class WiFiManager:
         error_result = None
         
         try:
-            wifi.radio.connect(ssid_b, password_b, timeout=self.CONNECTION_TIMEOUT)
+            self._radio.connect(ssid_b, password_b, timeout=self.CONNECTION_TIMEOUT)
             elapsed = time.monotonic() - start_time
             self.logger.debug(f"Connection completed in {elapsed:.1f}s")
             
             # Verify connection success
-            if wifi.radio.connected and wifi.radio.ipv4_address:
-                self.logger.info(f"Connected - IP: {wifi.radio.ipv4_address}")
+            if self._radio.connected and self._radio.ipv4_address:
+                self.logger.info(f"Connected - IP: {self._radio.ipv4_address}")
                 self._connected = True
                 connection_success = True
                 return True, None
@@ -549,9 +602,9 @@ class WiFiManager:
     def disconnect(self):
         """Disconnect from WiFi."""
         try:
-            if wifi.radio.connected:
-                wifi.radio.enabled = False
-                wifi.radio.enabled = True
+            if self._radio.connected:
+                self._radio.enabled = False
+                self._radio.enabled = True
                 self._connected = False
                 self.logger.info("WiFi disconnected")
         except Exception as e:
@@ -559,9 +612,9 @@ class WiFiManager:
     
     def is_connected(self):
         """Check if currently connected to WiFi."""
-        return self._connected and wifi.radio.connected
+        return self._connected and self._radio.connected
     
-    def reconnect(self, ssid, password, timeout=None):
+    async def reconnect(self, ssid, password, timeout=None):
         """
         Reconnect to WiFi after setup mode or network disruption.
         Handles all necessary cleanup and state management:
@@ -587,7 +640,7 @@ class WiFiManager:
         self.session = None
         
         # Reconnect using standard backoff logic
-        return self.connect_with_backoff(ssid, password, timeout)
+        return await self.connect_with_backoff(ssid, password, timeout)
     
     def create_session(self):
         """
@@ -603,7 +656,7 @@ class WiFiManager:
             raise RuntimeError("Cannot create session: not connected to WiFi")
         
         import adafruit_requests
-        pool = socketpool.SocketPool(wifi.radio)
+        pool = socketpool.SocketPool(self._radio)
         self.session = adafruit_requests.Session(pool, ssl.create_default_context())
         return self.session
     
@@ -614,7 +667,7 @@ class WiFiManager:
         Returns:
             str: MAC address in format "aa:bb:cc:dd:ee:ff"
         """
-        mac_binary = wifi.radio.mac_address
+        mac_binary = self._radio.mac_address
         return mac_binary.hex(':')
     
     def start_access_point(self, ssid, password=None):
@@ -642,18 +695,18 @@ class WiFiManager:
         
         # Disconnect from any existing WiFi connection before starting AP
         try:
-            if wifi.radio.connected:
+            if self._radio.connected:
                 self.logger.debug("Disconnecting from current network")
-                wifi.radio.stop_station()
+                self._radio.stop_station()
                 time.sleep(0.3)
         except Exception as e:
             self.logger.warning(f"Warning during disconnect: {e}")
         
         # Initialize/reset WiFi radio to ensure it's in a known good state
         try:
-            wifi.radio.enabled = False
+            self._radio.enabled = False
             time.sleep(0.2)
-            wifi.radio.enabled = True
+            self._radio.enabled = True
             time.sleep(0.2)
             self.logger.debug("WiFi radio initialized")
         except Exception as e:
@@ -667,7 +720,7 @@ class WiFiManager:
             # Configure AP IP address before starting
             try:
                 import ipaddress
-                wifi.radio.set_ipv4_address_ap(
+                self._radio.set_ipv4_address_ap(
                     ipv4=ipaddress.IPv4Address("192.168.4.1"),
                     netmask=ipaddress.IPv4Address("255.255.255.0"),
                     gateway=ipaddress.IPv4Address("192.168.4.1")
@@ -678,13 +731,13 @@ class WiFiManager:
             
             # Start the access point
             if pwd_b:
-                wifi.radio.start_ap(ssid_b, pwd_b)
+                self._radio.start_ap(ssid_b, pwd_b)
             else:
                 # Open network; signature varies by version
                 try:
-                    wifi.radio.start_ap(ssid_b)
+                    self._radio.start_ap(ssid_b)
                 except TypeError:
-                    wifi.radio.start_ap(ssid_b, None)
+                    self._radio.start_ap(ssid_b, None)
         except Exception as e:
             self.logger.error(f"start_ap failed: {e}")
             raise RuntimeError(f"Failed to start access point: {e}")
@@ -696,7 +749,7 @@ class WiFiManager:
         # Wait for AP IP address to be assigned
         ap_ip = None
         for attempt in range(10):
-            ap_ip = wifi.radio.ipv4_address_ap
+            ap_ip = self._radio.ipv4_address_ap
             if ap_ip:
                 break
             time.sleep(0.1)
@@ -728,12 +781,14 @@ class WiFiManager:
         # If we're connected in station mode, just stop the AP
         # Don't reset the radio - that would disconnect us!
         if self.is_connected():
-            self.logger.debug(f"Stopping AP while preserving connection (connected={wifi.radio.connected}, _connected={self._connected})")
+            self.logger.debug(
+                f"Stopping AP while preserving connection (connected={self._radio.connected}, _connected={self._connected})"
+            )
             try:
-                wifi.radio.stop_ap()
+                self._radio.stop_ap()
                 # Verify connection preserved
                 time.sleep(0.2)  # Brief pause for radio state to stabilize
-                still_connected = wifi.radio.connected
+                still_connected = self._radio.connected
                 self.logger.info(f"AP stopped - connection {'preserved' if still_connected else 'LOST'} (radio.connected={still_connected})")
                 if not still_connected:
                     self.logger.error("Connection lost after stopping AP - ESP32 firmware issue?")
@@ -746,11 +801,15 @@ class WiFiManager:
                 self.logger.info("Restoring WiFi connection after AP mode")
                 credentials = self.get_credentials()
                 if credentials and credentials.get('ssid'):
-                    success, error_msg = self.ensure_connected(timeout=30)
-                    if not success:
-                        self.logger.warning(f"Failed to restore connection: {error_msg}")
-                    else:
-                        self.logger.info("Connection restored successfully")
+                    scheduler = Scheduler.instance()
+                    self._track_task_handle(
+                        scheduler.schedule_now(
+                            coroutine=lambda: self.ensure_connected(timeout=30),
+                            priority=20,
+                            name="Restore WiFi After AP",
+                        )
+                    )
+                    self.logger.debug("Queued background reconnection task")
                 else:
                     self.logger.warning("Cannot restore connection - no valid credentials")
             else:
@@ -761,7 +820,7 @@ class WiFiManager:
         self._ap_active = False
         self._pre_ap_connected = False  # Reset saved state
     
-    def test_credentials_from_ap(self, ssid, password, max_attempts=3):
+    async def test_credentials_from_ap(self, ssid, password, max_attempts=3):
         """
         Test WiFi credentials while in AP mode with retry logic.
         Uses concurrent AP+STA mode - AP stays running so clients remain connected.
@@ -798,10 +857,12 @@ class WiFiManager:
             for attempt in range(1, max_attempts + 1):
                 if attempt > 1:
                     self.logger.debug(f"Retry attempt {attempt}/{max_attempts} after transient error")
-                    time.sleep(1.5)  # Short delay between retries
+                    await Scheduler.sleep(1.5)  # Short delay between retries
                 
                 self.logger.debug(f"Testing connection to '{ssid}' (attempt {attempt}/{max_attempts})")
+                await Scheduler.yield_control()
                 success, error_msg = self.connect_once(ssid, password)
+                await Scheduler.yield_control()
                 last_error_msg = error_msg
                 
                 if success:
@@ -857,14 +918,14 @@ class WiFiManager:
         
         # Stop AP if running
         try:
-            wifi.radio.stop_ap()
+            self._radio.stop_ap()
             self.logger.debug("AP stopped")
         except Exception as e:
             self.logger.warning(f"Warning stopping AP: {e}")
         
         # Disable radio completely (no re-enable)
         try:
-            wifi.radio.enabled = False
+            self._radio.enabled = False
             self.logger.debug("WiFi radio disabled")
         except Exception as e:
             self.logger.warning(f"Warning disabling radio: {e}")
@@ -884,7 +945,7 @@ class WiFiManager:
         Returns:
             socketpool.SocketPool instance
         """
-        return socketpool.SocketPool(wifi.radio)
+        return socketpool.SocketPool(self._radio)
     
     def get_ap_ip_address(self):
         """
@@ -893,7 +954,7 @@ class WiFiManager:
         Returns:
             str: AP IP address, or "192.168.4.1" if not available
         """
-        ap_ip = wifi.radio.ipv4_address_ap
+        ap_ip = self._radio.ipv4_address_ap
         return str(ap_ip) if ap_ip else "192.168.4.1"
     
     def scan_networks(self):
@@ -904,11 +965,11 @@ class WiFiManager:
             Network objects with ssid, rssi, channel, etc.
         """
         try:
-            for network in wifi.radio.start_scanning_networks():
+            for network in self._radio.start_scanning_networks():
                 yield network
         finally:
             try:
-                wifi.radio.stop_scanning_networks()
+                self._radio.stop_scanning_networks()
             except Exception as e:
                 self.logger.warning(f"Error stopping network scan: {e}")
     
@@ -923,7 +984,7 @@ class WiFiManager:
             bool: True if SSID found in scan results
         """
         try:
-            scan_results = wifi.radio.start_scanning_networks()
+            scan_results = self._radio.start_scanning_networks()
             
             # Handle different return types (iterator or int)
             if isinstance(scan_results, int):
@@ -941,6 +1002,54 @@ class WiFiManager:
             return False
         finally:
             try:
-                wifi.radio.stop_scanning_networks()
+                self._radio.stop_scanning_networks()
             except Exception as e:
                 self.logger.warning(f"Error stopping scan: {e}")
+
+    def shutdown(self):
+        """
+        Release all resources owned by ConnectionManager.
+
+        Disconnects WiFi, stops AP if active, disables radio, and clears references.
+        This is called automatically when reinitializing with different dependencies,
+        or can be called explicitly for cleanup.
+
+        This method is idempotent (safe to call multiple times).
+        """
+        if not getattr(self, "_initialized", False):
+            return
+
+        try:
+            # Stop access point if active
+            if getattr(self, "_ap_active", False):
+                self.shutdown_access_point()
+
+            # Disconnect from WiFi
+            self.disconnect()
+
+            # Disable radio completely
+            if hasattr(self, "_radio") and self._radio is not None:
+                try:
+                    self._radio.enabled = False
+                except Exception:
+                    pass
+
+            # Clear references
+            self.session = None
+            self._connected = False
+            self._ap_active = False
+            self._pre_ap_connected = False
+            self._credentials = None
+            self._init_radio_controller = None
+
+            # Radio controller should be managed by its own lifecycle
+            # Don't delete _radio_controller here as it might be shared
+            # Just clear the radio reference
+            self._radio = None
+
+            self.logger.debug("ConnectionManager shut down")
+
+        except Exception as e:
+            self.logger.warning(f"Error during ConnectionManager shutdown: {e}")
+        finally:
+            super().shutdown()

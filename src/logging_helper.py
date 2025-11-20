@@ -37,7 +37,7 @@ class WicidLogger:
     Format: [LEVEL: ModuleName] message
     
     Example:
-        logger = get_logger('wicid.wifi')
+        log = logger('wicid.wifi')
         logger.info("Connected")  # Output: [INFO: Wifi] Connected
     """
     
@@ -66,7 +66,7 @@ class WicidLogger:
             mod = parts[0]
             self.module = mod[0].upper() + mod[1:] if mod else 'Unknown'
     
-    def _log(self, level, msg):
+    def _log(self, level, msg, exc_info=False):
         """Internal logging method."""
         global _log_level
         if level >= _log_level:
@@ -76,44 +76,36 @@ class WicidLogger:
             else:
                 level_name = _LEVEL_NAMES.get(level, "UNKNOWN")
                 print("[%s: %s] %s" % (level_name, self.module, msg))
+        if exc_info:
+            try:
+                import sys
+                import traceback
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                if exc_type is not None:
+                    traceback.print_exception(exc_type, exc_value, exc_tb)
+                    sys.stdout.flush()
+            except Exception:
+                pass
     
     def debug(self, msg, exc_info=False):
         """Log debug message."""
-        self._log(DEBUG, msg)
-    
+        self._log(DEBUG, msg, exc_info=exc_info)
+
     def info(self, msg, exc_info=False):
         """Log info message."""
-        self._log(INFO, msg)
-    
+        self._log(INFO, msg, exc_info=exc_info)
+
     def warning(self, msg, exc_info=False):
         """Log warning message."""
-        self._log(WARNING, msg)
-    
+        self._log(WARNING, msg, exc_info=exc_info)
+
     def error(self, msg, exc_info=False):
         """Log error message."""
-        self._log(ERROR, msg)
-        if exc_info:
-            try:
-                import sys
-                import traceback
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                if exc_type is not None:
-                    traceback.print_exception(exc_type, exc_value, exc_tb)
-            except:
-                pass
-    
+        self._log(ERROR, msg, exc_info=exc_info)
+
     def critical(self, msg, exc_info=False):
         """Log critical message."""
-        self._log(CRITICAL, msg)
-        if exc_info:
-            try:
-                import sys
-                import traceback
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                if exc_type is not None:
-                    traceback.print_exception(exc_type, exc_value, exc_tb)
-            except:
-                pass
+        self._log(CRITICAL, msg, exc_info=exc_info)
 
     def testing(self, msg):
         """
@@ -125,7 +117,7 @@ class WicidLogger:
         self._log(TESTING, msg)
 
 
-def get_logger(name='wicid'):
+def logger(name='wicid'):
     """
     Get a logger instance for the given name.
     
@@ -136,8 +128,7 @@ def get_logger(name='wicid'):
         WicidLogger: Logger instance
         
     Example:
-        logger = get_logger('wicid.wifi')
-        logger.info("Connected")
+        logger("wicid.wifi").info("Connected")
     """
     return WicidLogger(name)
 
@@ -147,7 +138,7 @@ def configure_logging(log_level_str="INFO"):
     Configure global logging level.
     
     Call this once at application startup to set the log level
-    for all loggers created via get_logger().
+    for all loggers created via logger().
     
     Args:
         log_level_str: Log level as string (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -158,8 +149,7 @@ def configure_logging(log_level_str="INFO"):
         
     Example:
         configure_logging("DEBUG")
-        logger = get_logger('wicid')
-        logger.debug("This will be visible")
+        logger('wicid').debug("This will be visible")
     """
     global _log_level
     
@@ -173,4 +163,4 @@ def configure_logging(log_level_str="INFO"):
     }
 
     _log_level = levels.get(log_level_str.upper(), INFO)
-    return get_logger('wicid')
+    return logger('wicid')

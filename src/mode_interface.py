@@ -2,12 +2,14 @@
 Mode Interface - Base class for all user-selectable operating modes.
 
 Defines the contract that all modes must implement and provides
-access to shared system resources (WiFiManager, PixelController, etc.).
+access to shared system resources (connection manager, pixel controller, etc.).
 """
 
-from logging_helper import get_logger
-from wifi_manager import WiFiManager
+from scheduler import Scheduler
+from logging_helper import logger
+from connection_manager import ConnectionManager
 from pixel_controller import PixelController
+from input_manager import InputManager
 
 
 class Mode:
@@ -15,9 +17,9 @@ class Mode:
     Base class for all user-selectable operating modes.
     
     Modes have access to shared singleton resources:
-    - WiFiManager.get_instance() - for connectivity and session management
+    - ConnectionManager.get_instance() - for connectivity and session management
     - PixelController() - for LED control (singleton via __new__)
-    - SystemMonitor.get_instance() - for update checks and periodic reboots
+    - SystemManager.get_instance() - for update checks and periodic reboots
     
     Subclasses must implement:
     - name: str - Mode name for identification
@@ -38,25 +40,22 @@ class Mode:
     requires_wifi = False
     order = 999  # Default high value for base class
     
-    def __init__(self, button):
+    def __init__(self):
         """
         Initialize mode with access to shared resources.
-        
-        Args:
-            button: Hardware button reference for user input
         """
-        self.button = button
-        self.wifi_manager = WiFiManager.get_instance()
+        self.connection_manager = ConnectionManager.get_instance()
         self.pixel = PixelController()
+        self.input_mgr = InputManager.instance()
         self._running = False
-        self.logger = get_logger(f'wicid.modes.{self.name}')
+        self.logger = logger(f'wicid.modes.{self.name}')
     
     def initialize(self) -> bool:
         """
         Initialize mode-specific services and resources.
         
         Called once before run(). Mode implementations should:
-        - Check WiFi if required: self.wifi_manager.is_connected()
+        - Check WiFi if required: self.connection_manager.is_connected()
         - Initialize mode-specific services (Weather, APIs, etc.)
         - Prepare any required state
         - Return False if prerequisites not met
@@ -66,20 +65,20 @@ class Mode:
         """
         # Default implementation - subclasses should override
         if self.requires_wifi:
-            is_connected = self.wifi_manager.is_connected()
+            is_connected = self.connection_manager.is_connected()
             if not is_connected:
                 self.logger.warning("WiFi required but not connected")
                 return False
             self.logger.debug("WiFi connection verified")
         return True
     
-    def run(self) -> None:
+    async def run(self) -> None:
         """
         Run the mode's main loop.
         
         Should:
-        - Run until button press detected
-        - Check self.button.value in loop for button press
+        - Run until InputManager signals a button press
+        - Call ``self.input_mgr.is_pressed()`` to check for interrupts
         - Update display/LEDs as needed
         - Handle mode-specific logic
         
@@ -94,9 +93,21 @@ class Mode:
         
         Called when mode exits (button press, error, etc.).
         Should release any mode-specific resources but NOT touch shared
-        singletons (WiFiManager, PixelController, etc.).
+        singletons (connection manager, pixel controller, etc.).
         """
         # Default implementation - subclasses can override if needed
         self._running = False
         pass
 
+    # Convenience helpers -------------------------------------------------
+    def is_button_pressed(self):
+        """Return True if the physical button is currently pressed."""
+        try:
+            return self.input_mgr.is_pressed()
+        except Exception:
+            return False
+
+    async def wait_for_button_release(self, poll_delay=0.05):
+        """Block until the button is released (coarse polling)."""
+        while self.is_button_pressed():
+            await Scheduler.sleep(poll_delay)

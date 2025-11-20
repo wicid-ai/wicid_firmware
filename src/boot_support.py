@@ -65,9 +65,14 @@ class UpdateInstaller:
             self.pixel_controller = None
     
     def update_led(self):
-        """Update LED animation. Call frequently during long operations."""
+        """Update LED animation. 
+        
+        """
         if self.pixel_controller:
-            self.pixel_controller.tick()
+            try:
+                self.pixel_controller.manual_tick()
+            except Exception as e:
+                print(f"LED manual tick error: {e}")
     
     def turn_off_led(self):
         """Turn off LED (used on error conditions)."""
@@ -221,7 +226,7 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
     
     # Define preserved files that should NEVER be overwritten
     # These must match the preservation list used during deletion
-    PRESERVED_FILES = ['secrets.json', 'incompatible_releases.json']
+    PRESERVED_FILES = ['secrets.json', 'incompatible_releases.json', 'DEVELOPMENT']
     
     items = os.listdir(src_dir)
     
@@ -460,10 +465,11 @@ def process_pending_update():
                 except:
                     log_boot_message("ℹ No secrets.json (first-time setup)")
                 
-                # Step 5: Delete everything except secrets, incompatible list, and recovery
+                # Step 5: Delete everything except secrets, incompatible list, recovery, and DEVELOPMENT flag
                 preserve_paths = [
                     "/secrets.json",
                     "/incompatible_releases.json",
+                    "/DEVELOPMENT",
                     "/recovery",
                     PENDING_UPDATE_DIR
                 ]
@@ -678,4 +684,3 @@ def main():
         microcontroller.reset()
     
     process_pending_update()
-

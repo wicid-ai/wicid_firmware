@@ -2,14 +2,15 @@ import os
 import json
 import time
 import supervisor
-from logging_helper import get_logger
+from logging_helper import logger
 from adafruit_httpserver import Response, Request, JSONResponse
 from pixel_controller import PixelController
-from utils import check_button_hold_duration, trigger_safe_mode
 from dns_interceptor import DNSInterceptor
-from wifi_manager import WiFiManager
+from connection_manager import ConnectionManager
+from manager_base import ManagerBase
+from scheduler import Scheduler
 
-class ConfigurationManager:
+class ConfigurationManager(ManagerBase):
     """
     Singleton manager for device configuration lifecycle.
     
@@ -35,33 +36,31 @@ class ConfigurationManager:
     ERR_INVALID_ZIP = "ZIP code must be 5 digits."
 
     @classmethod
-    def get_instance(cls, button=None):
+    def get_instance(cls):
         """
         Get the singleton instance of ConfigurationManager.
         
         Args:
-            button: Required on first call, optional on subsequent calls
-            
+            portal_runner: Coroutine callable used to launch the setup portal
+                when configuration must be collected or repaired.
+
         Returns:
             ConfigurationManager: The singleton instance
         """
         if cls._instance is None:
-            if button is None:
-                raise ValueError("button is required when creating ConfigurationManager instance")
-            cls._instance = cls(button)
+            obj = super().__new__(cls)
+            cls._instance = obj
+            obj._initialized = False
+            obj._init()
         return cls._instance
 
-    def __init__(self, button):
-        """Private constructor. Use get_instance() instead."""
-        if ConfigurationManager._instance is not None:
-            raise RuntimeError("Use ConfigurationManager.get_instance() instead of direct instantiation")
-        
+    def _init(self):
+        """Internal initialization method."""
         self.ap_ssid = "WICID-Setup"
         self.ap_password = None  # Open network
         self.setup_complete = False
         self.pixel = PixelController()  # Get singleton instance
-        self.wifi_manager = WiFiManager.get_instance(button)  # Get WiFiManager singleton
-        self.button = button
+        self.connection_manager = ConnectionManager.instance()  # Get ConnectionManager singleton
         self.last_connection_error = None
         self.pending_ready_at = None  # monotonic timestamp for scheduled activation
         self.dns_interceptor = None  # DNS interceptor for captive portal
@@ -69,7 +68,6 @@ class ConfigurationManager:
         self.user_connected = False  # flag indicating user has connected to portal
         self.pending_ssid = None  # SSID to test before activation
         self.pending_password = None  # Password to test before activation
-        self._initialized = False  # Track if initialize() has been called
         
         # Async validation state tracking
         self.validation_state = "idle"  # idle | validating_wifi | checking_updates | success | error
@@ -90,16 +88,67 @@ class ConfigurationManager:
         self._last_progress_notify_pct = None
         self._last_progress_pct_value = None
         self._last_update_service_time = 0.0
+        self._active_button_session = None  # Tracks session controller while portal active
         
-        self.logger = get_logger('wicid.config')
+        self.logger = logger('wicid.config')
+        self._initialized = False  # Track if initialize() has been called (different from ManagerBase._initialized)
+        
+        # ManagerBase initialization flag
+        self._manager_initialized = True
 
-    def initialize(self):
+    def __init__(self):
+        """Private constructor. Use get_instance() instead."""
+        # Guard against re-initialization
+        if getattr(self, "_manager_initialized", False):
+            return
+        # If _instance is already set, don't override it
+        if ConfigurationManager._instance is None:
+            ConfigurationManager._instance = self
+        self._init()
+    
+    def shutdown(self):
+        """
+        Release all resources owned by ConfigurationManager.
+
+        Stops HTTP server, DNS interceptor, and clears references.
+        This method is idempotent (safe to call multiple times).
+        """
+        if not getattr(self, "_manager_initialized", False):
+            return
+
+        try:
+            # Use existing cleanup method if portal is active
+            if hasattr(self, "_cleanup_setup_portal"):
+                try:
+                    self._cleanup_setup_portal()
+                except Exception:
+                    pass
+
+            # Clear references
+            self.connection_manager = None
+            self.pixel = None
+            self._update_manager = None
+            self._http_server = None
+            self.dns_interceptor = None
+            self.logger.debug("ConfigurationManager shut down")
+
+        except Exception as e:
+            self.logger.warning(f"Error during ConfigurationManager shutdown: {e}")
+        finally:
+            super().shutdown()
+            self._manager_initialized = False
+
+    async def initialize(self, portal_runner=None):
         """
         Initialize system configuration on boot.
         
         Checks if valid configuration exists and WiFi is connected.
         Enters setup mode if configuration is missing or WiFi connection fails.
         Blocks until configuration is complete and WiFi is connected.
+        
+        Args:
+            portal_runner: Coroutine callable used to launch the setup portal
+                when configuration must be collected or repaired.
         
         Returns:
             bool: True if initialization successful (WiFi connected)
@@ -125,19 +174,21 @@ class ConfigurationManager:
             # Validate configuration is complete
             if not ssid or not password or not zip_code:
                 self.logger.info("Configuration incomplete - entering setup")
-                return self.run_portal(error=None)
+                if portal_runner is None:
+                    raise ValueError("portal_runner is required to enter setup mode")
+                return await portal_runner(error=None)
             
             self.logger.debug(f"Configuration found for '{ssid}'")
             
             # Try to connect with existing credentials
-            if self.wifi_manager.is_connected():
+            if self.connection_manager.is_connected():
                 self.logger.info("Already connected")
                 self._initialized = True
                 return True
             
             # Attempt connection with saved credentials
             self.logger.info("Connecting with saved credentials")
-            success, error_msg = self.wifi_manager.ensure_connected(timeout=60)
+            success, error_msg = await self.connection_manager.ensure_connected(timeout=60)
             
             if success:
                 self.logger.info("WiFi connected")
@@ -148,7 +199,9 @@ class ConfigurationManager:
                 self.logger.warning(f"Connection failed: {error_msg}")
                 self.logger.info("Entering setup mode")
                 friendly_message, field = self._build_connection_error(ssid, error_msg)
-                return self.run_portal(error={
+                if portal_runner is None:
+                    raise ValueError("portal_runner is required to enter setup mode")
+                return await portal_runner(error={
                     "message": friendly_message,
                     "field": field
                 })
@@ -156,9 +209,11 @@ class ConfigurationManager:
         except (OSError, ValueError) as e:
             # Configuration file missing or invalid - normal for first boot
             self.logger.info(f"No configuration found: {e}")
-            return self.run_portal(error=None)
+            if portal_runner is None:
+                raise ValueError("portal_runner is required to enter setup mode")
+            return await portal_runner(error=None)
     
-    def run_portal(self, error=None):
+    async def run_portal(self, error=None, button_session=None):
         """
         Force entry into setup/configuration mode.
         
@@ -170,7 +225,8 @@ class ConfigurationManager:
         
         Args:
             error: Optional error dict to display in portal ({'message': str, 'field': str})
-        
+            button_session: Controller that exposes button events for exit/safe mode actions
+       
         Returns:
             bool: True if setup successful and WiFi connected, False if cancelled
             
@@ -183,12 +239,20 @@ class ConfigurationManager:
         Raises:
             Exception: Only on unrecoverable errors
         """
+        if button_session is None:
+            raise ValueError("run_portal() requires a button_session controller")
+        self._active_button_session = button_session
+
         self.logger.info("Entering configuration mode")
         
         # Set error message if provided
         if error:
             self.last_connection_error = error
         
+        # Reset button state tracking for this portal session
+        if hasattr(self._active_button_session, "reset"):
+            self._active_button_session.reset()
+
         # Start setup mode indicator (pulsing white LED)
         self.start_setup_indicator()
         
@@ -196,17 +260,19 @@ class ConfigurationManager:
         self.start_access_point()
         
         # Run the web server (blocks until setup complete or cancelled)
-        result = self.run_web_server()
+        result = await self.run_web_server()
         
         if result:
             self.logger.info("Configuration complete")
             self._initialized = True
+            self._active_button_session = None
             return True
         else:
             self.logger.info("Configuration cancelled - returning to caller")
             # Clean up and return False - caller decides next action
-            # WiFiManager will automatically restore connection if needed
+            # ConnectionManager will automatically restore connection if needed
             self._cleanup_setup_portal()
+            self._active_button_session = None
             return False
 
     def _build_connection_error(self, ssid: str, raw_error: str):
@@ -257,7 +323,7 @@ class ConfigurationManager:
             bool: True if DNS interceptor started successfully
         """
         try:
-            socket_pool = self.wifi_manager.get_socket_pool()
+            socket_pool = self.connection_manager.get_socket_pool()
             self.dns_interceptor = DNSInterceptor(local_ip=ap_ip, socket_pool=socket_pool)
             
             if self.dns_interceptor.start():
@@ -302,9 +368,9 @@ class ConfigurationManager:
             return False
 
     def start_access_point(self):
-        """Start the access point for setup mode using WiFiManager."""
-        # Start AP through WiFiManager (handles all radio state transitions)
-        ap_ip = self.wifi_manager.start_access_point(self.ap_ssid, self.ap_password)
+        """Start the access point for setup mode using the connection manager."""
+        # Start AP through ConnectionManager (handles all radio state transitions)
+        ap_ip = self.connection_manager.start_access_point(self.ap_ssid, self.ap_password)
         
         # Start DNS interceptor for captive portal functionality
         dns_success = self._start_dns_interceptor(ap_ip)
@@ -314,10 +380,9 @@ class ConfigurationManager:
         else:
             self.logger.info("Captive portal: HTTP only")
         
-        # Ensure setup mode indicator is active (already started in run_setup_mode)
+        # Ensure setup mode indicator is active whenever portal is running
         self.pixel.indicate_setup_mode()
-        # Call tick immediately to ensure animation starts
-        self.pixel.tick()
+        # Scheduler automatically handles LED animation updates at 25Hz
 
     def _get_os_from_user_agent(self, request: Request) -> str:
         """
@@ -410,11 +475,11 @@ class ConfigurationManager:
 
     def _scan_ssids(self):
         """Scan for WiFi networks and return a list of available SSIDs.
-        Uses WiFiManager for scanning (ensures scanning is stopped).
+        Uses the connection manager for scanning (ensures scanning is stopped).
         """
         self.logger.debug("Starting network scan for SSID validation")
         try:
-            ssids = [net.ssid for net in self.wifi_manager.scan_networks() if getattr(net, 'ssid', None)]
+            ssids = [net.ssid for net in self.connection_manager.scan_networks() if getattr(net, 'ssid', None)]
             self.logger.debug(f"Found SSIDs: {ssids}")
             return ssids
         except Exception as e:
@@ -459,18 +524,18 @@ class ConfigurationManager:
             self.logger.error(f"Error saving credentials: {e}")
             return False, str(e)
 
-    def blink_success(self):
+    async def blink_success(self):
         """Blink green to indicate success"""
         try:
-            self.pixel.blink_success()
+            await self.pixel.blink_success()
         except Exception as e:
             self.logger.warning(f"Error in blink_success: {e}")
 
-    def run_web_server(self):
+    async def run_web_server(self):
         """Run a simple web server to handle the setup interface"""
         from adafruit_httpserver import Server, Request, Response, FileResponse
         
-        pool = self.wifi_manager.get_socket_pool()
+        pool = self.connection_manager.get_socket_pool()
         server = Server(pool, "/www", debug=False)
         
         # Store server reference for update polling
@@ -484,7 +549,7 @@ class ConfigurationManager:
         def _mark_user_connected():
             if not self.user_connected:
                 self.user_connected = True
-                self.wifi_manager.clear_retry_count()
+                self.connection_manager.clear_retry_count()
                 self.logger.debug("User connected to portal")
             self.last_request_time = time.monotonic()
         
@@ -571,8 +636,8 @@ class ConfigurationManager:
                 self.logger.debug("Scanning for WiFi networks")
                 networks = []
                 
-                # Scan for available networks using WiFiManager
-                for network in self.wifi_manager.scan_networks():
+                # Scan for available networks using the connection manager
+                for network in self.connection_manager.scan_networks():
                     # Only add networks with SSIDs (skip hidden networks)
                     if network.ssid:
                         network_info = {
@@ -697,7 +762,15 @@ class ConfigurationManager:
             except Exception as e:
                 self.logger.error(f"Fatal error in /configure: {e}")
                 self.last_connection_error = {"message": "An unexpected server error occurred.", "field": None}
-                self.pixel.blink_error()
+                try:
+                    scheduler = Scheduler.instance()
+                    scheduler.schedule_now(
+                        coroutine=self.pixel.blink_error,
+                        priority=5,
+                        name="Portal Blink Error",
+                    )
+                except Exception as led_e:
+                    self.logger.warning(f"Error scheduling blink_error: {led_e}")
                 try:
                     self.start_access_point()
                 except Exception as ap_e:
@@ -831,20 +904,14 @@ class ConfigurationManager:
         
         
         # Start the server
-        server_ip = self.wifi_manager.get_ap_ip_address()
+        server_ip = self.connection_manager.get_ap_ip_address()
         server.start(host=server_ip, port=80)
         self.logger.info(f"Server started at http://{server_ip}")
 
-        # Wait for initial button release (from the press that got us into setup)
-        while not self.button.value:
-            self.pixel.tick()  # Keep pulsing animation active
-            time.sleep(0.1)
-        
-        # Small debounce delay - keep pulsing during delay
+        # Small debounce delay
         debounce_end = time.monotonic() + 0.5
         while time.monotonic() < debounce_end:
-            self.pixel.tick()
-            time.sleep(0.05)
+            await Scheduler.sleep(0.05)
         
         self.logger.info("Starting main server loop")
         self.logger.info("Visit: http://192.168.4.1/ while connected to WICID-Setup")
@@ -852,7 +919,8 @@ class ConfigurationManager:
         # Main server loop - listen for button press to exit
         while not self.setup_complete:
             try:
-                # Service HTTP server, DNS interceptor, and pixel controller
+                # Service HTTP server and DNS interceptor
+                # Note: Pixel controller animation now handled by scheduler
                 self.tick()
 
                 # Check for idle timeout (no user interaction)
@@ -866,11 +934,11 @@ class ConfigurationManager:
                 
                 # Execute async validation if triggered
                 if self.validation_trigger and self.validation_state in ["validating_wifi", "checking_updates"]:
-                    self._execute_async_validation()
+                    await self._execute_async_validation()
                 
                 # Execute async update if triggered
                 if self.update_trigger and self.update_state in ["downloading", "verifying", "unpacking"]:
-                    self._execute_async_update(server, server_ip)
+                    await self._execute_async_update(server, server_ip)
                 
                 # If activation scheduled (after validation or user action), execute activation
                 # Note: Update mode is handled by _execute_async_update, not here
@@ -892,23 +960,23 @@ class ConfigurationManager:
                         
                         # Flash green to indicate success
                         try:
-                            self.pixel.blink_success()
+                            await self.pixel.blink_success()
                         except Exception as led_e:
                             self.logger.warning(f"Error flashing LED: {led_e}")
                         
                         # Stop access point (already connected to WiFi in station mode from validation)
                         try:
-                            self.wifi_manager.stop_access_point()
+                            self.connection_manager.stop_access_point()
                             self.logger.info("Access point stopped")
                         except Exception as e:
                             self.logger.warning(f"Error stopping access point: {e}")
                         
                         # Verify WiFi connection preserved, reconnect if needed
-                        if not self.wifi_manager.is_connected():
+                        if not self.connection_manager.is_connected():
                             self.logger.warning("WiFi connection lost after stopping AP - reconnecting")
-                            credentials = self.wifi_manager.get_credentials()
+                            credentials = self.connection_manager.get_credentials()
                             if credentials:
-                                success, error_msg = self.wifi_manager.ensure_connected(timeout=30)
+                                success, error_msg = await self.connection_manager.ensure_connected(timeout=30)
                                 if not success:
                                     self.logger.error(f"Failed to reconnect after AP stop: {error_msg}")
                                 else:
@@ -926,40 +994,42 @@ class ConfigurationManager:
                         # Unknown or update mode (update is handled by _execute_async_update)
                         self.logger.debug(f"Ignoring pending_ready_at for mode: {self.activation_mode}")
                         self.pending_ready_at = None
-                
-                # Check for button press: 10s hold = Safe Mode, any other press = exit setup
-                if not self.button.value:
-                    hold_result = check_button_hold_duration(self.button, self.pixel)
                     
-                    if hold_result == 'safe_mode':
-                        self.logger.info("Safe Mode requested (10 second hold)")
-                        # Comprehensive cleanup before triggering safe mode
-                        self._cleanup_setup_portal()
-                        trigger_safe_mode()
-                        # This will restart, so we never reach here
-                    else:
-                        # Short press or 3-second hold: exit setup mode
-                        self.logger.debug("Button pressed, exiting setup")
-                        # Comprehensive cleanup before exiting
-                        cleanup_successful = self._cleanup_setup_portal()
-                        
-                        if not cleanup_successful:
-                            self.logger.warning("Cleanup completed with issues")
-                        
-                        time.sleep(0.2)  # Small debounce
-                        return False
+                # Check for button interrupt via session
+                if self._active_button_session and self._active_button_session.safe_mode_ready():
+                    self.logger.info("Safe Mode requested (setup portal)")
+                    self._cleanup_setup_portal()
+                    # Session handoff requeues SAFE action for ModeManager
+                    return False
+
+                exit_reason = (
+                    self._active_button_session.consume_exit_request()
+                    if self._active_button_session
+                    else None
+                )
+                if exit_reason:
+                    self.logger.debug(f"Setup exit requested via {exit_reason}")
+                    
+                    cleanup_successful = self._cleanup_setup_portal()
+                    
+                    if not cleanup_successful:
+                        self.logger.warning("Cleanup completed with issues")
+                    
+                    await Scheduler.sleep(0.2)
+                    return False
                 
                 # Small sleep to prevent busy-waiting while maintaining smooth LED animation
                 # 5ms is fast enough for smooth pulsing (tick interval is 40ms) while being CPU-friendly
-                time.sleep(0.005)
+                await Scheduler.sleep(0.005)
                 
             except Exception as e:
                 self.logger.error(f"Server error: {e}")
-                time.sleep(1)
+                await Scheduler.sleep(1)
         
         # Comprehensive cleanup
         self._cleanup_setup_portal()
         server.stop()
+        self._active_button_session = None
         return self.setup_complete
     
     def tick(self):
@@ -980,7 +1050,7 @@ class ConfigurationManager:
                 self.logger.error(f"DNS interceptor error: {dns_e}")
                 self._stop_dns_interceptor()
         
-        self.pixel.tick()
+        # Pixel controller animation now handled by scheduler at 25Hz
     
     def _update_progress_callback(self, state, message, progress_pct):
         """
@@ -1007,7 +1077,9 @@ class ConfigurationManager:
         self.update_progress_message = message
         self.update_progress_pct = progress_pct
         
-        if not (state_changed or message_changed or progress_changed):
+        force_progress = ((state == 'downloading' or state == 'verifying' or state == 'unpacking') and progress_pct is not None)
+        
+        if not (state_changed or message_changed or progress_changed or force_progress):
             return
         
         self._last_progress_notify_state = state
@@ -1059,6 +1131,16 @@ class ConfigurationManager:
         except Exception as e:
             self.logger.debug(f"Error servicing update requests: {e}")
     
+    async def _sleep_with_portal_service(self, seconds):
+        """Sleep while continuing to service portal networking."""
+        target = time.monotonic() + max(0.0, seconds)
+        while True:
+            remaining = target - time.monotonic()
+            if remaining <= 0:
+                break
+            self._service_update_timeslice()
+            await Scheduler.sleep(min(0.1, remaining))
+    
     def _get_update_manager(self):
         """
         Get or create UpdateManager instance with progress callback.
@@ -1076,7 +1158,7 @@ class ConfigurationManager:
             )
         return self._update_manager
     
-    def _execute_async_update(self, server, server_ip):
+    async def _execute_async_update(self, server, server_ip):
         """
         Execute async update workflow using UpdateManager.
         
@@ -1092,11 +1174,10 @@ class ConfigurationManager:
                 
                 # UpdateManager cached update_info from check_for_updates()
                 try:
-                    download_success = update_manager.download_update()
+                    download_success = await update_manager.download_update()
                 except ValueError as e:
                     self.logger.error(f"Update download failed: {e}")
-                    self.update_state = "error"
-                    self.update_trigger = False
+                    await self._handle_setup_update_failure(server, f"Invalid update request: {e}")
                     return
                 except RuntimeError as e:
                     # Critical programming errors - re-raise to propagate to main() and trigger reboot
@@ -1107,8 +1188,7 @@ class ConfigurationManager:
                 
                 if not download_success:
                     self.logger.error("Update download failed")
-                    self.update_state = "error"
-                    self.update_trigger = False
+                    await self._handle_setup_update_failure(server, "Download failed")
                     return
                 
                 self.logger.info("Update ready for installation")
@@ -1118,7 +1198,7 @@ class ConfigurationManager:
                 self.update_trigger = False
                 
                 # Give client time to see "Restarting..." (2 seconds)
-                time.sleep(2)
+                await self._sleep_with_portal_service(2)
                 
                 # Stop server and AP
                 try:
@@ -1130,7 +1210,7 @@ class ConfigurationManager:
                 self._stop_dns_interceptor()
                 
                 try:
-                    self.wifi_manager.stop_access_point()
+                    self.connection_manager.stop_access_point()
                 except Exception as e:
                     self.logger.warning(f"Error stopping AP: {e}")
                 
@@ -1141,10 +1221,37 @@ class ConfigurationManager:
                     
         except Exception as e:
             self.logger.error(f"Error during async update: {e}")
-            self.update_state = "error"
-            self.update_trigger = False
+            await self._handle_setup_update_failure(server, f"Async update error: {e}")
+
+    async def _handle_setup_update_failure(self, server, reason):
+        """
+        Gracefully exit setup mode after an update failure and resume normal mode.
+        """
+        self.logger.warning(f"Update failed in setup mode: {reason}. Continuing with current firmware.")
+        self.update_trigger = False
+        self.update_state = "restarting"
+        self.update_progress_message = "Restarting device..."
+        self.update_progress_pct = 100
+        self.pending_ready_at = None
+        self.activation_mode = None
+        self.setup_complete = True
+        
+        try:
+            server.stop()
+            self.logger.debug("HTTP server stopped after update failure")
+        except Exception as e:
+            self.logger.debug(f"HTTP server stop after failure raised: {e}")
+        
+        try:
+            self._cleanup_setup_portal()
+        except Exception as cleanup_error:
+            self.logger.warning(f"Cleanup after update failure reported: {cleanup_error}")
+        
+        # Allow the client to poll one last status update before restarting
+        await self._sleep_with_portal_service(1)
+        supervisor.reload()
     
-    def _execute_async_validation(self):
+    async def _execute_async_validation(self):
         """
         Execute async validation workflow: test WiFi credentials and check for updates.
         Updates validation_state and validation_result as it progresses.
@@ -1166,7 +1273,7 @@ class ConfigurationManager:
                     return
                 
                 self.logger.info(f"Validating WiFi credentials for '{self.pending_ssid}'")
-                success, error_msg = self.wifi_manager.test_credentials_from_ap(
+                success, error_msg = await self.connection_manager.test_credentials_from_ap(
                     self.pending_ssid,
                     self.pending_password
                 )
@@ -1276,7 +1383,7 @@ class ConfigurationManager:
         """
         Cleanup of setup portal resources and state.
         
-        WiFiManager automatically handles connection restoration when stopping AP,
+        ConnectionManager automatically handles connection restoration when stopping AP,
         so we just need to trigger cleanup and it will restore previous connection state.
         
         Returns:
@@ -1295,9 +1402,9 @@ class ConfigurationManager:
                 self.dns_interceptor = None
             
             # Stop access point with automatic connection restoration
-            # WiFiManager will reconnect if we were connected before entering AP mode
+            # ConnectionManager will reconnect if we were connected before entering AP mode
             try:
-                self.wifi_manager.stop_access_point(restore_connection=True)
+                self.connection_manager.stop_access_point(restore_connection=True)
             except Exception as ap_e:
                 self.logger.warning(f"Error stopping access point: {ap_e}")
                 cleanup_successful = False

@@ -4,26 +4,25 @@ Orchestrates system initialization and mode execution using manager classes.
 """
 
 import os
-import time
-import board
-import digitalio
 import microcontroller
 from pixel_controller import PixelController
 from configuration_manager import ConfigurationManager
 from mode_manager import ModeManager
-from modes import WeatherMode, TempDemoMode, PrecipDemoMode
-from logging_helper import configure_logging, get_logger
+from modes import WeatherMode, TempDemoMode, PrecipDemoMode, SetupPortalMode
+from logging_helper import configure_logging, logger
+from input_manager import InputManager
 from utils import trigger_safe_mode
 import test_mode
+from scheduler import Scheduler
 
 # Configure logging from settings
 log_level = os.getenv("LOG_LEVEL", "INFO")
 configure_logging(log_level)
-logger = get_logger('wicid')
+APP_LOG = logger('wicid')
 
-# Initialize hardware
-button = digitalio.DigitalInOut(board.BUTTON)
-button.switch_to_input(pull=digitalio.Pull.UP)
+# Initialize InputManager early (owns board.BUTTON)
+# Managers should use InputManager callbacks instead of polling
+input_mgr = InputManager.instance()
 
 # Display boot log if it exists
 print("\n" + "=" * 60)
@@ -38,58 +37,59 @@ except OSError:
 print("=" * 60 + "\n")
 
 
-def main():
-    """Main entry point. Catches fatal errors and reboots."""
+async def _startup_sequence():
+    """Run main startup logic inside scheduler context."""
     try:
         # Check for test mode before normal initialization
         if test_mode.is_enabled():
             pixel = PixelController()
-            next_mode = test_mode.run_tests_and_await_action(button, pixel)
+            next_mode = await test_mode.run_tests_and_await_action(pixel)
 
-            # Handle user's mode selection after tests
             if next_mode == 'safe':
-                # Trigger safe mode and reboot
                 trigger_safe_mode()
-                # trigger_safe_mode() calls microcontroller.reset(), so we never reach here
-
             elif next_mode == 'setup':
-                # Run setup portal
-                logger.info("Entering setup mode (user requested after tests)")
-                config_mgr = ConfigurationManager.get_instance(button)
-                setup_success = config_mgr.run_portal()
-
+                APP_LOG.info("Entering setup mode (user requested after tests)")
+                setup_success = await SetupPortalMode.execute()
                 if setup_success:
-                    logger.info("Setup complete - continuing to normal mode")
+                    APP_LOG.info("Setup complete - continuing to normal mode")
                 else:
-                    logger.info("Setup cancelled - continuing to normal mode")
-                # Fall through to normal mode initialization
+                    APP_LOG.info("Setup cancelled - continuing to normal mode")
 
-            # For 'normal' mode, fall through to normal initialization
-            logger.info("Continuing to normal mode after test run")
+            APP_LOG.info("Continuing to normal mode after test run")
 
-        # Initialize configuration and ensure WiFi ready
-        # Blocks until complete. Restarts internally on user cancel/timeout.
-        # Raises exception only on unrecoverable errors.
-        logger.info("Initializing configuration...")
-        config_mgr = ConfigurationManager.get_instance(button)
-        config_mgr.initialize()
+        APP_LOG.info("Initializing configuration...")
+        config_mgr = ConfigurationManager.get_instance()
+        await config_mgr.initialize(portal_runner=SetupPortalMode.execute)
 
-        logger.info("Configuration complete - starting mode loop")
-
-        # At this point: WiFiManager guaranteed connected (or available)
-        # Modes handle their own service initialization
-
-        # Run mode loop (never returns normally)
-        mode_mgr = ModeManager(button)
+        APP_LOG.info("Configuration complete - starting mode loop")
+        mode_mgr = ModeManager()
         mode_mgr.register_modes([WeatherMode, TempDemoMode, PrecipDemoMode])
-        mode_mgr.run()  # Handles setup re-entry, safe mode, mode switching
+        await mode_mgr.run()
 
     except Exception as e:
-        logger.critical(f"Fatal error: {e}", exc_info=True)
+        APP_LOG.critical(f"Fatal error: {e}", exc_info=True)
+        try:
+            import traceback
+            with open("/crash_log.txt", "w") as crash_file:
+                traceback.print_exception(type(e), e, e.__traceback__, file=crash_file)
+                crash_file.flush()
+        except Exception:
+            pass
         pixel = PixelController()
-        pixel.blink_error()
-        time.sleep(2)
-        microcontroller.reset()  # Reboot on unrecoverable error
+        await pixel.blink_error()
+        await Scheduler.sleep(10)
+        microcontroller.reset()
+
+
+def main():
+    """Entrypoint that schedules startup sequence and runs scheduler."""
+    scheduler = Scheduler.instance()
+    scheduler.schedule_now(
+        coroutine=_startup_sequence,
+        priority=0,
+        name="Startup Sequence",
+    )
+    scheduler.run_forever()
 
 
 if __name__ == "__main__":

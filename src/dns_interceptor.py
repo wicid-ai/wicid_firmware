@@ -14,7 +14,7 @@ all DNS traffic and redirecting it to the setup portal.
 
 import struct
 import time
-from logging_helper import get_logger
+from logging_helper import logger
 
 
 class DNSInterceptor:
@@ -62,7 +62,7 @@ class DNSInterceptor:
         self.max_errors = 10  # Maximum consecutive errors before disabling
         self.last_error_time = 0
         self.error_backoff = 1.0  # Seconds to wait after errors
-        self.logger = get_logger('wicid.dns')
+        self.logger = logger('wicid.dns')
         
         # Convert IP address to bytes for DNS response
         try:

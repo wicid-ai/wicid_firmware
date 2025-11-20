@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.5.1",
+  "version": "0.6.0-a1",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
   "target_operating_systems": [
     "circuitpython_10_0"
   ],
-  "release_type": "production",
-  "release_notes": "Fixes bug with initial restart delay.",
-  "release_date": "2025-11-09T15:22:54.503708+00:00"
+  "release_type": "development",
+  "release_notes": "Introduces new scheduling framework for more reliable task management.",
+  "release_date": "2025-11-20T16:05:00.328877+00:00"
 }

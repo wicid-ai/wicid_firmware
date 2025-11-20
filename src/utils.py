@@ -11,7 +11,7 @@ import time
 import board
 import microcontroller
 import json
-from logging_helper import get_logger
+from logging_helper import logger
 
 
 def get_os_name():
@@ -76,16 +76,18 @@ def get_cpu_uid():
 
 def get_mac_address():
     """
-    Get the MAC address via WiFiManager.
+    Get the MAC address via the connection manager.
     
     Returns:
         str: MAC address in colon-separated hex format, or None if Wi-Fi unavailable
     """
+    log = logger('wicid.utils')
     try:
-        # Lazy import to avoid circular dependency (wifi_manager imports from utils)
-        from wifi_manager import WiFiManager
-        wifi_manager = WiFiManager.get_instance()
-        return wifi_manager.get_mac_address()
+        # Lazy import to avoid circular dependency
+        from connection_manager import ConnectionManager
+
+        connection_manager = ConnectionManager.get_instance()
+        return connection_manager.get_mac_address()
     except Exception:
         return None
 
@@ -209,7 +211,9 @@ def mark_incompatible_release(version, reason="Unknown"):
     Args:
         version: Release version string to mark as incompatible
         reason: Why the release is incompatible
+        min_attempts_to_block: Minimum attempts value written to the record (defaults to immediate block)
     """
+    log = logger('wicid.utils')
     try:
         try:
             with open("/incompatible_releases.json", "r") as f:
@@ -233,6 +237,7 @@ def mark_incompatible_release(version, reason="Unknown"):
         else:
             incompatible["releases"][version] = {"reason": reason, "attempts": 1}
         
+        
         # Keep only last 10 to prevent file growth
         if len(incompatible["releases"]) > 10:
             # Sort by attempts (keep ones with fewer attempts for retry opportunity)
@@ -244,20 +249,18 @@ def mark_incompatible_release(version, reason="Unknown"):
         os.sync()
         
         attempts = incompatible["releases"][version]["attempts"]
-        logger = get_logger('wicid.utils')
-        logger.warning(f"Marked {version} as incompatible (attempt {attempts}): {reason}")
+        log.warning(f"Marked {version} as incompatible (attempt {attempts}): {reason}")
     except Exception as e:
-        logger = get_logger('wicid.utils')
-        logger.warning(f"Could not mark incompatible release: {e}")
+        log.warning(f"Could not mark incompatible release: {e}")
 
 
-def is_release_incompatible(version, max_attempts=3):
+def is_release_incompatible(version, max_attempts=1):
     """
     Check if a release version is marked as incompatible.
     
     Args:
         version: Release version string to check
-        max_attempts: Maximum retry attempts before permanent block (default: 3)
+        max_attempts: Maximum retry attempts before permanent block (default: 1)
     
     Returns:
         tuple: (is_blocked: bool, reason: str or None, attempts: int)
@@ -322,9 +325,9 @@ def check_release_compatibility(release_data, current_version):
     if is_blocked:
         return (False, f"Blocked after {attempts} attempts: {reason}")
     elif attempts > 0:
-        logger = get_logger('wicid.utils')
-        logger.warning(f"Version had {attempts} failed attempts: {reason}")
-        logger.debug("Retrying compatibility check")
+        log = logger('wicid.utils')
+        log.warning(f"Version had {attempts} failed attempts: {reason}")
+        log.debug("Retrying compatibility check")
     
     return (True, None)
 
@@ -345,55 +348,6 @@ def get_system_info():
         'cpu_uid': get_cpu_uid(),
         'mac_address': get_mac_address(),
     }
-
-
-def wait_for_button_release(button, debounce_delay=0.1):
-    """
-    Wait for button to be released with optional debounce delay.
-    
-    Args:
-        button: Button instance to monitor
-        debounce_delay: Delay in seconds after release for debouncing (default: 0.1)
-    """
-    while not button.value:
-        time.sleep(0.05)
-    
-    if debounce_delay > 0:
-        time.sleep(debounce_delay)
-
-
-def check_button_held(button, hold_duration=3.0):
-    """
-    Check if button is held for a specified duration.
-    
-    Args:
-        button: Button instance to monitor
-        hold_duration: Duration in seconds to consider as "held" (default: 3.0)
-    
-    Returns:
-        bool: True if button was held for the duration, False otherwise
-    """
-    if not button.value:  # Button is pressed (active low)
-        start_time = time.monotonic()
-        while not button.value:
-            if time.monotonic() - start_time >= hold_duration:
-                return True
-            time.sleep(0.1)
-    return False
-
-
-def is_button_pressed(button):
-    """
-    Check if button is currently pressed.
-    
-    Args:
-        button: Button instance to check
-    
-    Returns:
-        bool: True if button is pressed, False otherwise
-    """
-    # Button is active low (pressed = False)
-    return not button.value
 
 
 def validate_config_values(config_dict, required_keys):
@@ -420,109 +374,14 @@ def validate_config_values(config_dict, required_keys):
 
 
 
-def interruptible_sleep(duration, button=None, check_interval=0.05):
-    """
-    Sleep for the specified duration, optionally checking for button interrupts.
-    
-    Args:
-        duration: Sleep duration in seconds
-        button: Optional button instance to check for interrupts
-        check_interval: How often to check button (default: 0.05 seconds)
-    
-    Returns:
-        bool: True if sleep completed, False if interrupted by button press
-    """
-    if button is None:
-        time.sleep(duration)
-        return True
-    
-    elapsed = 0
-    
-    while elapsed < duration:
-        if is_button_pressed(button):
-            return False
-        
-        sleep_time = min(check_interval, duration - elapsed)
-        time.sleep(sleep_time)
-        elapsed += sleep_time
-    
-    return True
-
-
-def check_button_hold_duration(button, pixel_controller=None):
-    """
-    Check how long button is held and provide progressive visual feedback.
-    
-    Monitors the button from the moment it's pressed until released, detecting:
-    - Short press (< 3 seconds) - no feedback
-    - Setup mode (3-10 seconds) - pulsing white at 3s (same as setup mode)
-    - Safe Mode (10+ seconds) - flashing blue/green at 10s
-    
-    Args:
-        button: Button instance to monitor (must already be pressed when called)
-        pixel_controller: Optional PixelController instance for visual feedback
-    
-    Returns:
-        str: 'short', 'setup', or 'safe_mode' depending on hold duration
-    """
-    if not button.value:  # Button is pressed (active low)
-        start_time = time.monotonic()
-        setup_indicated = False
-        safe_mode_indicated = False
-        
-        while not button.value:
-            elapsed = time.monotonic() - start_time
-            
-            # At 3 seconds, start pulsing white for Setup Mode indicator
-            if elapsed >= 3.0 and not setup_indicated and pixel_controller:
-                setup_indicated = True
-                logger = get_logger('wicid.utils')
-                logger.debug("3 second threshold reached - pulsing Setup Mode indicator")
-                pixel_controller.indicate_setup_mode()
-            
-            # At 10 seconds, start flashing blue/green for Safe Mode indicator
-            if elapsed >= 10.0 and not safe_mode_indicated and pixel_controller:
-                safe_mode_indicated = True
-                logger = get_logger('wicid.utils')
-                logger.debug("10 second threshold reached - flashing Safe Mode indicator")
-                pixel_controller.indicate_safe_mode()
-            
-            # Keep animation running
-            if pixel_controller:
-                pixel_controller.tick()
-            
-            time.sleep(0.05)
-        
-        # Determine which mode based on hold duration
-        final_duration = time.monotonic() - start_time
-        
-        # Button released - clean up LED state
-        # Only clean up for short presses; leave LED active for mode entry
-        if pixel_controller:
-            if final_duration < 3.0:
-                # Short press - turn off LED
-                pixel_controller.clear()
-            # For setup mode (3-10s) or safe mode (10+), leave LED state as-is
-            # so the mode can continue with the visual indicator
-        
-        if final_duration >= 10.0:
-            return 'safe_mode'
-        elif final_duration >= 3.0:
-            return 'setup'
-        else:
-            return 'short'
-    
-    return 'short'  # Button not pressed
-
-
 def trigger_safe_mode():
     """
     Trigger Safe Mode on next reboot.
     This enables USB mass storage for development.
     """
-    logger = get_logger('wicid.utils')
-    logger.info("Triggering Safe Mode for development access")
-    logger.info("Device will reboot with USB enabled")
+    log = logger('wicid.utils')
+    log.info("Triggering Safe Mode for development access")
+    log.info("Device will reboot with USB enabled")
     microcontroller.on_next_reset(microcontroller.RunMode.SAFE_MODE)
     microcontroller.reset()
 
@@ -546,9 +405,9 @@ def get_location_data_from_zip(session, zip_code):
         tuple: (latitude, longitude, timezone) or (None, None, None) if all attempts fail
     """
     # Check cache first
-    logger = get_logger('wicid.utils.geocoding')
+    log = logger('wicid.utils.geocoding')
     if zip_code in _location_cache:
-        logger.debug(f"Using cached location data for ZIP: {zip_code}")
+        log.debug(f"Using cached location data for ZIP: {zip_code}")
         return _location_cache[zip_code]
     
     zip_attempts = [
@@ -561,7 +420,10 @@ def get_location_data_from_zip(session, zip_code):
         if not zip_attempt:  # Skip if truncated to empty string
             continue
             
-        geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={zip_attempt}&count=1&language=en&format=json&countryCode=US"
+        geocode_url = (
+            "https://geocoding-api.open-meteo.com/v1/search"
+            f"?name={zip_attempt}&count=1&language=en&format=json&countryCode=US"
+        )
         response = session.get(geocode_url)
         data = response.json()
         response.close()
@@ -577,10 +439,10 @@ def get_location_data_from_zip(session, zip_code):
             _location_cache[zip_code] = location_data
             
             if zip_attempt != zip_code:
-                logger.debug(f"Location found using {len(zip_attempt)}-digit prefix: {zip_attempt}")
+                log.debug(f"Location found using {len(zip_attempt)}-digit prefix: {zip_attempt}")
             return location_data
     
     # Cache the failure result too to avoid repeated failed lookups
-    logger.warning(f"No geocoding results found for ZIP code: {zip_code}")
+    log.warning(f"No geocoding results found for ZIP code: {zip_code}")
     _location_cache[zip_code] = (None, None, None)
     return None, None, None

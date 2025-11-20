@@ -1,21 +1,24 @@
+from logging_helper import logger
 from utils import get_location_data_from_zip
-from logging_helper import get_logger
+from connection_manager import ConnectionManager
 
 
-class Weather:
-    def __init__(self, session, weather_zip):
+class WeatherService:
+    def __init__(self, weather_zip, session=None):
         """
-        Initialize the Weather service with an active HTTP session.
+        Initialize the WeatherService with an active HTTP session.
         Retrieves latitude/longitude for the target ZIP code using Open-Meteo's geocoding API.
         
         Args:
-            session: An active adafruit_requests.Session instance for making HTTP requests
             weather_zip: ZIP code string for weather location
+            session: Optional adafruit_requests.Session instance (for tests)
         """
-        self.session = session
+        self.logger = logger('wicid.weather')
         self.zip_code = weather_zip
 
-        self.logger = get_logger('wicid.weather')
+        connection_manager = ConnectionManager.get_instance()
+        self.session = session or connection_manager.create_session()
+
         # Get coordinates first, then detect timezone from them
         self.lat, self.lon, raw_tz = get_location_data_from_zip(self.session, self.zip_code)
 
@@ -79,13 +82,10 @@ class Weather:
         if self.lat is None or self.lon is None:
             return None
 
-        # Single-line f-string for the URL:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&current_weather=true&hourly=precipitation_probability&forecast_days=3&timezone={self.timezone}&models=dmi_seamless"
         response = self.session.get(url)
         data = response.json()
         response.close()
-
-        #print(data)
 
         times = data["hourly"]["time"]                  # e.g., ["2025-02-06T14:00", ...]
         probs = data["hourly"]["precipitation_probability"]
@@ -93,7 +93,6 @@ class Weather:
 
         # Extract just the "YYYY-MM-DDTHH"
         hour_str = current_time_str[:13]  # e.g. "2025-02-06T14"
-        #print(hour_str)
 
         # Match against the first 13 chars of each entry in 'times'
         current_index = None
@@ -109,8 +108,6 @@ class Weather:
         start_hour = current_index + int(start_time_offset)
         end_hour = start_hour + int(forecast_window_duration)
 
-        #print(start_hour)
-
         # Clamp to array bounds
         if start_hour >= len(probs):
             return 0
@@ -124,12 +121,3 @@ class Weather:
             return 0
 
         return max(window_probs)
-
-# Example usage (requires WiFiManager):
-# from wifi_manager import WiFiManager
-# wifi_manager = WiFiManager()
-# wifi_manager.connect_with_backoff(ssid, password)
-# weather = Weather(wifi_manager.create_session())
-# print("Current Temp (°F):", weather.get_current_temperature())
-# print("Today's High (°F):", weather.get_daily_high())
-# print("Chance of Precip (%):", weather.get_daily_precip_chance())

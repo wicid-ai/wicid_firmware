@@ -7,11 +7,13 @@ Handles:
 - Special mode entry (setup, safe mode)
 """
 
-import time
-from logging_helper import get_logger
+from scheduler import Scheduler
+from logging_helper import logger
 from pixel_controller import PixelController
-from utils import check_button_hold_duration, trigger_safe_mode
-from configuration_manager import ConfigurationManager
+from utils import trigger_safe_mode
+from input_manager import InputManager
+from modes import SetupPortalMode
+from button_action_router import ButtonActionRouter, ButtonAction
 
 
 class ModeManager:
@@ -26,18 +28,16 @@ class ModeManager:
     - Handle safe mode entry (10s button hold)
     """
     
-    def __init__(self, button):
+    def __init__(self):
         """
         Initialize ModeManager.
-        
-        Args:
-            button: Hardware button reference
         """
-        self.button = button
         self.modes = []
         self.current_mode_index = 0
         self.pixel = PixelController()
-        self.logger = get_logger('wicid.mode_mgr')
+        self.logger = logger('wicid.mode_mgr')
+        self.input_mgr = InputManager.instance()
+        self.button_router = ButtonActionRouter.instance()
     
     def register_modes(self, mode_classes):
         """
@@ -74,7 +74,7 @@ class ModeManager:
         mode_info = [(m.name, m.order) for m in self.modes]
         self.logger.info(f"Registered {len(self.modes)} mode(s): {mode_info}")
     
-    def run(self):
+    async def run(self):
         """
         Main mode loop - never returns normally.
         
@@ -89,11 +89,14 @@ class ModeManager:
             raise ValueError("No modes registered. Call register_modes() first.")
         
         while True:
+            await self._wait_for_button_release()
+            await self._process_pending_actions()
+
             # Get current mode class
             mode_class = self.modes[self.current_mode_index]
-            
-            # Create mode instance
-            mode = mode_class(self.button)
+
+            # Create mode instance (modes use InputManager singleton, not button parameter)
+            mode = mode_class()
             
             self.logger.info(f"Starting {mode.name}")
             
@@ -103,84 +106,41 @@ class ModeManager:
                     self.logger.warning(f"{mode.name} initialization failed")
                     # Try next mode
                     self._next_mode()
-                    time.sleep(1)
+                    await Scheduler.sleep(1)
                     continue
             except Exception as e:
                 self.logger.error(f"Error initializing {mode.name}: {e}")
-                self.pixel.blink_error()
+                await self.pixel.blink_error()
                 self._next_mode()
-                time.sleep(1)
+                await Scheduler.sleep(1)
                 continue
             
             self.logger.info(f"{mode.name} initialized")
             
             # Run mode
             try:
-                mode.run()
+                await mode.run()
             except KeyboardInterrupt:
                 self.logger.debug(f"Button interrupt in {mode.name}")
             except Exception as e:
                 self.logger.error(f"Error in {mode.name}: {e}")
-                self.pixel.blink_error()
-                time.sleep(1)
+                await self.pixel.blink_error()
+                await Scheduler.sleep(1)
             finally:
                 # Cleanup mode
                 try:
                     mode.cleanup()
                 except Exception as e:
                     self.logger.warning(f"Error cleaning up {mode.name}: {e}")
-            
-            # Small delay before checking button to ensure stable state
-            # This prevents race conditions where mode exits while button is being released
-            time.sleep(0.1)
-            
-            # Check button state for mode switching
-            if not self.button.value:  # Button is pressed
-                # Give a brief moment for button state to stabilize
-                time.sleep(0.05)
-                
-                # Re-check button is still pressed (not just a bounce)
-                if not self.button.value:
-                    hold_result = check_button_hold_duration(self.button, self.pixel)
-                    
-                    if hold_result == 'safe_mode':
-                        self.logger.info("Safe Mode requested (10 second hold)")
-                        trigger_safe_mode()
-                        # Never returns
-                    
-                    elif hold_result == 'setup':
-                        self.logger.info("Setup Mode requested (3 second hold)")
-                        # Enter setup mode through ConfigurationManager
-                        config_mgr = ConfigurationManager.get_instance(self.button)
-                        setup_success = config_mgr.run_portal()
-                        
-                        # Always return to primary mode after setup, whether successful or cancelled
-                        if setup_success:
-                            self.logger.info("Setup complete - returning to primary mode")
-                        else:
-                            self.logger.info("Setup cancelled - returning to primary mode")
-                        
-                        self._goto_primary_mode()
-                    
-                    else:
-                        # Short press - switch to next mode
-                        self.logger.info("Switching to next mode")
-                        self._next_mode()
-                    
-                    # Debounce - wait for button release
-                    while not self.button.value:
-                        time.sleep(0.1)
-                    time.sleep(0.3)
-                else:
-                    self.logger.debug("Button bounce detected, ignoring")
-            
-            # Small delay before restarting mode loop
-            time.sleep(0.1)
-    
+
+            await self._wait_for_button_release()
+            await self._process_pending_actions()
+            await Scheduler.sleep(0.1)
+
     def _next_mode(self):
         """Advance to next mode (wraps around to first mode)."""
         self.current_mode_index = (self.current_mode_index + 1) % len(self.modes)
-    
+
     def _goto_primary_mode(self):
         """Jump to primary mode (order=0)."""
         for idx, mode_class in enumerate(self.modes):
@@ -191,3 +151,33 @@ class ModeManager:
         self.logger.error("Primary mode not found - this should not happen")
         self.current_mode_index = 0
 
+    async def _process_pending_actions(self):
+        while True:
+            actions = self.button_router.pop_actions()
+            if not actions:
+                break
+            for action in actions:
+                if action == ButtonAction.SAFE:
+                    self.logger.info("Safe Mode requested (callback)")
+                    trigger_safe_mode()
+                elif action == ButtonAction.SETUP:
+                    self.logger.info("Setup Mode requested (callback)")
+                    setup_success = await SetupPortalMode.execute()
+                    self._goto_primary_mode()
+                    if setup_success:
+                        self.logger.info("Setup complete - returning to primary mode")
+                    else:
+                        self.logger.info("Setup cancelled - returning to primary mode")
+                elif action == ButtonAction.NEXT:
+                    self.logger.info("Switching to next mode")
+                    self._next_mode()
+                else:
+                    self.logger.debug(f"Unhandled button action: {action}")
+
+    def shutdown(self):
+        # ButtonActionRouter owns callback lifecycle
+        pass
+
+    async def _wait_for_button_release(self):
+        while self.input_mgr.is_pressed():
+            await Scheduler.sleep(0.05)
