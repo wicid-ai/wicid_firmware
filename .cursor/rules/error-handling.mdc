@@ -1,0 +1,20 @@
+---
+description: Error handling strategy (Fatal vs Non-Fatal)
+globs: src/**/*.py
+alwaysApply: false
+---
+# Error Handling Rules
+
+## Distinguish Fatal vs Non-Fatal
+
+- **Non-Fatal (Recoverable)**:
+  - Use `raise TaskNonFatalError("msg")`.
+  - Use for recoverable issues like network timeouts, API errors (404/500), or temporary sensor read failures.
+
+- **Fatal (Unrecoverable)**:
+  - Use `raise TaskFatalError("msg")`.
+  - Use ONLY for hardware failure, corruption, or missing critical dependencies.
+
+## Reference
+- `docs/PATTERNS_COOKBOOK.md` (Error Handling)
+- `docs/ARCHITECTURE.md` (Error Handling Strategy)

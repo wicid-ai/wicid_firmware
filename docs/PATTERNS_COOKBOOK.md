@@ -1,0 +1,162 @@
+# Code Patterns Cookbook
+
+This document provides concrete, copy-pasteable examples of common architectural patterns used in the firmware. Use this as a reference for implementation details ("how") to complement the architectural documentation ("what" and "why").
+
+## Table of Contents
+
+1. [Scheduler Usage](#scheduler-usage)
+2. [Manager Singleton Pattern](#manager-singleton-pattern)
+3. [Error Handling](#error-handling)
+4. [Testing with Mocks](#testing-with-mocks)
+5. [Cooperative Yielding](#cooperative-yielding)
+
+---
+
+## Scheduler Usage
+
+**Concept:** The system runs on a cooperative scheduler. Tasks must be scheduled rather than run directly if they are long-running or periodic.
+
+### ✅ Do (Correct)
+
+Use `Scheduler.sleep()` for delays within tasks. This allows other tasks to run while waiting.
+
+```python
+from scheduler import Scheduler
+
+async def my_task():
+    # ... do some work ...
+    await Scheduler.sleep(0.1) # Yields control for 0.1s
+```
+
+### ❌ Don't (Incorrect)
+
+Do not use `asyncio.sleep()` directly, as it bypasses the scheduler's time management.
+
+```python
+import asyncio
+
+async def my_task():
+    # ... do some work ...
+    await asyncio.sleep(0.1) # Wrong: Use Scheduler.sleep()
+```
+
+---
+
+## Manager Singleton Pattern
+
+**Concept:** core system components (Managers) are Singletons. They should be accessed via their `.instance()` method, which handles initialization and dependency injection (useful for testing).
+
+### ✅ Do (Correct)
+
+Access the singleton instance using `.instance()`. You can pass dependencies (like mock pins) here if needed (e.g., in tests).
+
+```python
+from input_manager import InputManager
+
+# Normal usage
+mgr = InputManager.instance()
+
+# Usage in tests (injecting a mock pin)
+mgr = InputManager.instance(button_pin=mock_pin)
+```
+
+### ❌ Don't (Incorrect)
+
+Do not instantiate Managers directly or manually manage the `_instance` variable.
+
+```python
+from input_manager import InputManager
+
+# Wrong: Direct instantiation bypasses singleton logic
+mgr = InputManager()
+mgr._instance = mgr # Wrong: Never manually set _instance
+```
+
+---
+
+## Error Handling
+
+**Concept:** Distinguish between recoverable errors (Network glitches, API failures) and fatal errors (Hardware failure).
+
+### ✅ Do (Correct)
+
+Raise `TaskNonFatalError` for issues that should be logged but shouldn't crash the system. The scheduler will catch this and keep the task alive (or restart it).
+
+```python
+from scheduler import TaskNonFatalError
+
+def fetch_data():
+    if response.status_code == 404:
+        raise TaskNonFatalError("API returned 404 - Resource not found")
+```
+
+### ❌ Don't (Incorrect)
+
+Do not just print errors and return, as this hides visibility from the system manager. Do not crash the whole system for minor issues.
+
+```python
+def fetch_data():
+    if response.status_code == 404:
+        print("Error: API returned 404")
+        return # Wrong: Scheduler doesn't know an error occurred
+```
+
+---
+
+## Testing with Mocks
+
+**Concept:** Hardware dependencies (Pins, I2C, SPI) should be mocked in high-level logic tests to ensure tests run on non-hardware platforms (like CI runners).
+
+### ✅ Do (Correct)
+
+Use `create_mock_button_pin` or similar helpers to create simulated hardware objects.
+
+```python
+from test_helpers import create_mock_button_pin
+
+def test_button_logic():
+    mock_pin = create_mock_button_pin()
+    # Pass mock to the manager
+    mgr = InputManager.instance(button_pin=mock_pin)
+```
+
+### ❌ Don't (Incorrect)
+
+Do not import `board` or access physical pins in high-level logic tests.
+
+```python
+import board
+
+def test_button_logic():
+    pin = board.BUTTON # Wrong: Fails on computers without this specific hardware
+```
+
+---
+
+## Cooperative Yielding
+
+**Concept:** The system is single-threaded. Long-running loops (like `while True`) must explicitly yield control to the scheduler to prevent "starving" other tasks.
+
+### ✅ Do (Correct)
+
+Use `await Scheduler.yield_control()` inside tight loops.
+
+```python
+from scheduler import Scheduler
+
+async def processing_loop():
+    while True:
+        process_chunk()
+        # Allow other tasks to run
+        await Scheduler.yield_control()
+```
+
+### ❌ Don't (Incorrect)
+
+Do not write blocking infinite loops without yielding.
+
+```python
+async def processing_loop():
+    while True:
+        pass # Wrong: Blocks the entire system, watchdog will trigger reset
+```

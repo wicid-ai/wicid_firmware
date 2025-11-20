@@ -195,32 +195,32 @@ The device includes robust error handling and will:
 
 ### Prerequisites
 - Python version 3.13+
-- `circup` for managing CircuitPython libraries
+- `pipenv` for managing Python dependencies. See installation instructions below.
 - (Optional) Mu Editor for code editing and serial console
 
-### Required Libraries
+### Code Style and Linting
 
-Install the following Python packages for building firmware:
+This project uses `ruff` for code formatting/linting and `mypy` for static type checking. These tools are enforced automatically using `pre-commit` git hooks.
 
-```bash
-pip install circup rcssmin rjsmin htmlmin beautifulsoup4
-```
+### Environment and Tooling Setup
 
-**Note**: For consistent package versions across the project, consider using `pipenv` with the included `Pipfile` and `Pipfile.lock`. See [pipenv](https://pipenv.pypa.io/) for installation and usage instructions.
+1.  **Install `pipenv`**: If you don't have it, install `pipenv` globally.
+    ```bash
+    pip install --user pipenv
+    ```
 
-**Required packages:**
-- `circup`: Manages CircuitPython libraries in `/src/lib/`
-- `rcssmin`: CSS minification for captive portal web assets
-- `rjsmin`: JavaScript minification for captive portal web assets
-- `htmlmin`: HTML minification for captive portal web assets
-- `beautifulsoup4`: HTML parsing for combining CSS/JS into single-file HTML
+2.  **Install Project Dependencies**: From the project root, install all dependencies from the `Pipfile`. This includes `circup`, `ruff`, `mypy`, and other build tools.
+    ```bash
+    pipenv install --dev
+    pipenv sync --dev
+    ```
 
-**Build tools:**
-- `mpy-cross`: CircuitPython bytecode compiler (must match target CircuitPython version)
-  - See [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md) for installation instructions
+3.  **Install Git Hooks**: This command installs the `pre-commit` hooks into your local `.git` directory. It will automatically run checks before you commit code.
+    ```bash
+    pipenv run pre-commit install
+    ```
 
-**Optional packages:**
-- `python-dotenv`: For `.env` file support in `installer.py` (simulated OTA updates)
+Now, when you run `git commit`, your code will be automatically formatted and checked for errors. If the tools make any changes, you will need to `git add` the modified files and commit again.
 
 ### Filesystem Modes
 
@@ -346,7 +346,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
    ```bash
    echo "Adafruit CircuitPython 10.0.3 on 2025-10-09;" > src/boot_out.txt
    ```
-   
+
    Note: This file is gitignored, so once created you can leave it in place. Update the version string if you change CircuitPython versions.
 
 5. **Install libraries** using circup from the project root:
@@ -359,7 +359,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
    ```bash
    circup --path src freeze
    ```
-  
+
 
 6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package
 

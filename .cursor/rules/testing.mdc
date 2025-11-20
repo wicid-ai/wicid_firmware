@@ -1,0 +1,18 @@
+---
+description: Rules for writing tests (Mocks vs Hardware)
+globs: tests/**/*.py
+alwaysApply: false
+---
+# Testing Rules
+
+Tests must run on non-microcontroller hardware (CI).
+
+## Critical Rules
+
+- **No Hardware Imports**: NEVER import `board` or `microcontroller` in logic tests.
+- **Use Mocks**: Use helpers like `create_mock_button_pin()` from `tests.test_helpers`.
+- **Mock Hardware**: All hardware interactions (GPIO, I2C, SPI) must be mocked.
+
+## Reference
+- `docs/PATTERNS_COOKBOOK.md` (Testing with Mocks)
+- `tests/README.md`

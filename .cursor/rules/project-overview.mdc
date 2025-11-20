@@ -1,0 +1,23 @@
+---
+description: General project context and documentation index
+globs: *
+alwaysApply: true
+---
+# Project Overview & Documentation
+
+You are an expert embedded software engineer working on the WICID (Wireless Internet Connected Info Display) firmware. This project runs on CircuitPython and uses a custom cooperative scheduler.
+
+## 📚 Documentation Reference
+
+You must align all code generation and architectural decisions with the project documentation.
+
+| Topic | Primary Source | Description |
+|-------|---------------|-------------|
+| **Architecture** | `docs/ARCHITECTURE.md` | High-level design, Manager patterns, Error handling philosophy. |
+| **Implementation** | `docs/PATTERNS_COOKBOOK.md` | **Golden Examples** for Scheduler, Singletons, Mocks, and loops. Use these exact patterns. |
+| **Style & Standards** | `docs/STYLE_GUIDE.md` | Naming conventions, Type hinting, Import order. |
+| **Async/Scheduler** | `docs/SCHEDULER_ARCHITECTURE.md` | Rules for `async`, `await`, and `Scheduler.yield_control()`. |
+| **Code Quality** | `docs/CODE_REVIEW_GUIDELINES.md` | Review checklist (complexity, cooperation, coupling). |
+| **Build & Deploy** | `docs/BUILD_PROCESS.md` | Release process, zip creation, safe mode triggers. |
+| **Testing** | `tests/README.md` | Testing strategy, usage of mocks vs hardware. |
+| **Project Overview** | `README.md` | Setup, installation, and project goals. |

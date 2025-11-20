@@ -14,6 +14,8 @@ The WICID architecture follows these core principles:
 
 ## System Patterns
 
+> **Note**: For concrete code examples of these patterns, see the [Patterns Cookbook](PATTERNS_COOKBOOK.md).
+
 ### Manager-Based Architecture
 
 The system is organized around specialized managers that encapsulate domain logic:
@@ -100,6 +102,30 @@ with InputManager.instance() as mgr:
 - Consistent pattern across all managers makes the codebase easier to understand
 
 ## Error Handling Strategy
+
+## Module Boundaries and Dependencies
+
+To maintain encapsulation and a clear, predictable structure, the firmware enforces strict rules about how components can interact.
+
+### Dependency Direction
+
+The dependency flow is one-way. Higher-level components can depend on lower-level ones, but not the other way around.
+
+- **Managers** can depend on Services and Controllers.
+- **Services** can depend on Controllers.
+- **Controllers** MUST NOT depend on Managers or Services. They are self-contained hardware abstractions.
+
+### `asyncio` Isolation
+
+The `Scheduler` is the sole owner of the `asyncio` event loop.
+
+- **Only `scheduler.py`** is permitted to import and use `asyncio` primitives directly (e.g., `asyncio.create_task`, `asyncio.sleep`).
+- All other modules **MUST** use the `Scheduler` facade for any asynchronous work (e.g., `await Scheduler.sleep(0.1)`). This is a critical architectural constraint enforced during code review.
+
+### Public vs. Private APIs
+
+For general rules on how to respect module boundaries in code (e.g., handling of `_private` members), see the Public vs. Private APIs section in the Style Guide.
+
 
 ### Error Classification
 

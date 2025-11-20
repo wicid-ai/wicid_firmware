@@ -1,0 +1,18 @@
+---
+description: Rules for using the cooperative scheduler
+globs: src/**/*.py
+alwaysApply: false
+---
+# Scheduler & Async Rules
+
+The system is cooperative. Blocking code kills the watchdog.
+
+## Critical Rules
+
+- **Use Scheduler.sleep**: ALWAYS use `await Scheduler.sleep(s)` instead of `time.sleep()` or `asyncio.sleep()`.
+- **Yield Control**: In `while True` or long loops, ALWAYS verify `await Scheduler.yield_control()` is present.
+- **No Blocking**: Avoid any blocking operations (e.g., long computations, synchronous network calls) without yielding.
+
+## Reference
+- `docs/PATTERNS_COOKBOOK.md` (Scheduler Usage)
+- `docs/SCHEDULER_ARCHITECTURE.md`

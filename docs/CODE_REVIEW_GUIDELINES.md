@@ -1,95 +1,106 @@
 # WICID Firmware Code Review Guidelines
 
-## 1. Philosophy
+## 1. Objective & Philosophy
 
-Code reviews are a critical process for maintaining the quality, consistency, and long-term health of the WICID firmware. The goal of every review is to ensure that new code is not only correct but also aligns with our established architectural patterns and design principles.
+Code reviews ensure the long-term health, reliability, and maintainability of the WICID firmware. The goal is to catch architectural drifts, enforce patterns, and ensure every line of code looks like it belongs in this specific project.
 
-Reviews should be constructive, collaborative, and educational. They are an opportunity to share knowledge and collectively improve the codebase.
+**For Reviewers (Human & AI):** Your job is to act as a gatekeeper for quality. You must verify that changes are not just "working" code, but "correct" code according to our specific project rules.
 
 ---
 
-## 2. Core Review Checklist
+## 2. Phase 1: Automated Checks
 
-Before approving a pull request, please evaluate the changes against the following criteria. Reference the project's documentation as the primary source of truth.
+Before inspecting logic, ensure the code passes all automated static analysis.
 
-### 2.1. Architectural Adherence
+**Step 1:** Run the pre-commit hooks on all files.
+```bash
+pipenv run pre-commit run --all-files
+```
 
-All code changes must align with the principles and patterns documented across the project's `README.md` files and design documents in the `/docs` directory.
+**Action:**
+- If this command fails, the review **fails immediately**.
+- Report the specific linting or formatting errors found.
+- Do not proceed to logic review until these are resolved.
 
-- **[ ] Overall Architecture (`docs/ARCHITECTURE.md`)**:
-  - Does the code adhere to the `Manager`, `Controller`, and `Service` naming conventions and roles?
-  - Does it correctly use the `ManagerBase` singleton lifecycle pattern (`instance()`, `_init()`, `shutdown()`) for shared resources?
-  - Is the error handling strategy consistent (recoverable errors handled locally, unrecoverable errors propagated)?
+---
 
-- **[ ] Scheduler Usage (`docs/SCHEDULER_ARCHITECTURE.md`)**:
-  - Does all asynchronous work use the `Scheduler` facade instead of `asyncio` primitives directly?
-  - Do long-running tasks yield control cooperatively via `Scheduler.sleep()` or `Scheduler.yield_control()`?
-  - Are task priorities chosen correctly based on their user-facing impact (e.g., `CRITICAL_UI`, `BACKGROUND`)?
+## 3. Phase 2: Comprehensive Review Checklist
 
-- **[ ] Testing Philosophy (`tests/README.md`)**:
-  - Does the code follow the **layered testing hierarchy**?
-  - **High-level components** (Managers, Modes): **MUST** use mocks for hardware dependencies.
-  - **Low-level components** (Controllers): **MAY** use real hardware only when safe and contention-free, but mocks are preferred.
-  - Are shared mocks from `test_helpers.py` used where applicable?
+Evaluate the code against the following criteria. Use the referenced documentation as the source of truth.
 
-- **[ ] Project Overview (`README.md`)**:
-  - Do changes align with the high-level features and user interaction flows described in the main project `README.md`?
-  - Are developer-facing concepts, like filesystem modes (Production vs. Safe Mode), respected?
+### 3.1 Architectural Adherence
+*Reference: `docs/ARCHITECTURE.md`, `docs/PATTERNS_COOKBOOK.md`*
 
-- **[ ] General Consistency**:
-  - Does the code feel consistent with the surrounding codebase in terms of style, naming, and structure? It should look like it was written by the original author.
+- **[ ] Manager Pattern**: Are Managers implemented as Singletons? Do they use `instance()` for access?
+- **[ ] Component Roles**:
+  - **Managers**: Orchestrate logic and state?
+  - **Controllers**: Wrap hardware only (no business logic)?
+  - **Services**: encapsulate external/network logic?
+- **[ ] Dependency Injection**: Are dependencies (like pins) passed into `instance()` to allow for testing?
+- **[ ] Error Handling**:
+  - Are recoverable errors raised as `TaskNonFatalError`?
+  - Are fatal hardware failures raised as `TaskFatalError`?
+  - **No silent failures**: Are errors caught and logged, not ignored?
 
-### 2.2. Code Quality and Best Practices
+### 3.2 Scheduler & Async Logic
+*Reference: `docs/SCHEDULER_ARCHITECTURE.md`, `docs/PATTERNS_COOKBOOK.md`*
 
-Is the code clean, efficient, and maintainable?
+- **[ ] Cooperative Multitasking**:
+  - Does the code use `await Scheduler.sleep()` instead of `time.sleep()` or `asyncio.sleep()`?
+  - Do long loops (`while True`) contain `await Scheduler.yield_control()`?
+- **[ ] No Blocking**: Are there any synchronous network calls or long computations that would starve the scheduler?
+- **[ ] Task Priorities**: Are tasks assigned appropriate priorities (Critical vs Background)?
 
-- **[ ] DRY (Don't Repeat Yourself)**: Is there duplicated code that could be refactored into a shared function, helper, or base class?
+### 3.3 Testing & Verification
+*Reference: `tests/README.md`, `docs/PATTERNS_COOKBOOK.md`*
 
-- **[ ] Readability**: Is the code clear, concise, and easy to understand? Favor simplicity over unnecessary complexity.
+- **[ ] Hardware Mocks**: Does the code use mocks (e.g., `create_mock_button_pin`) instead of importing `board` in logic tests?
+- **[ ] Coverage**: Do new features have corresponding unit tests?
+- **[ ] Layered Approach**: Are logic tests separated from hardware integration tests?
 
-- **[ ] Static Analysis**: Is the code free of unused imports, variables, methods, or unreachable code paths (dead code)?
+### 3.4 Style & Quality
+*Reference: `docs/STYLE_GUIDE.md`*
 
-### 2.3. Comment Quality
+- **[ ] Type Hinting**: Do all new functions have full type hints (`def foo(x: int) -> bool:`)?
+- **[ ] Docstrings**: Do public methods have Google-style docstrings?
+- **[ ] Comments**: Do comments explain "Why", not "What"? (Avoid "Increment i" style comments).
+- **[ ] Naming**: Do variables use `snake_case` and constants use `UPPER_CASE`?
 
-Do comments add real value?
+---
 
-- **[ ] Explain the "Why", Not the "What"**: Comments should explain the intent, trade-offs, or complex logic behind a piece of code. They should **never** describe obvious implementation details.
-  - **Bad**: `i += 1 # Increment counter`
-  - **Good**: `# We must yield here to allow the network stack to process incoming packets.`
+## 4. Phase 3: The Actionable Report
 
-- **[ ] No Historical Comments**: Comments must not describe historical changes or previous states of the code. This information belongs in the `git` history, not in the source.
-  - **Bad**: `# Timeout was increased from 5s to 10s to accommodate slower networks.`
-  - **Good**: (No comment is needed; the code `TIMEOUT = 10` speaks for itself).
+When the review is complete, generate a report in the following format.
 
-### 2.4. Error Handling
+### 4.1 Severity Levels
 
-Does the code handle potential failures gracefully?
+Rank every issue found using these levels:
 
-- **[ ] Resilience**: Does the code align with the error handling strategy in `ARCHITECTURE.md`?
-  - **Recoverable errors** (e.g., network timeout) should be handled gracefully within the component.
-  - **Unrecoverable errors** (e.g., filesystem corruption) should propagate up by raising an exception.
+- **🔴 CRITICAL**: Blocking. The code is broken, dangerous, or violates core architecture (e.g., using `time.sleep`, bypassing Singletons). **Must fix immediately.**
+- **🟠 MAJOR**: Important. Functional bugs, missing tests, or significant style violations (e.g., missing type hints on public APIs). **Should fix before merge.**
+- **🟡 MINOR**: Nitpicks. Typographical errors, comment clarity, or minor refactoring suggestions. **Can fix later.**
 
-- **[ ] Resource Management**: Are resources like files, network sockets, and hardware pins always released correctly, even when errors occur? (e.g., using `try...finally` or context managers).
+### 4.2 Report Template
 
-### 2.5. Scheduler and Asynchronous Code
+```markdown
+# Code Review Report
 
-If the code involves asynchronous operations, does it use the scheduler correctly?
+## Summary
+[Pass/Fail]. [Brief summary of the overall quality and readiness].
 
-- **[ ] Scheduler-Only**: Does the code use the `Scheduler` facade for all async operations, as defined in `SCHEDULER_ARCHITECTURE.md`? Direct calls to `asyncio` primitives (like `asyncio.create_task` or `asyncio.sleep`) are forbidden outside the scheduler itself.
+## 🔴 Critical Issues
+1. **[Category]**: [Description of the issue].
+   - *File*: `src/example.py`
+   - *Fix*: [Specific instruction on how to fix it]
 
-- **[ ] Cooperation**: Do long-running tasks yield control appropriately using `await Scheduler.sleep()` or `await Scheduler.yield_control()` to prevent blocking other tasks?
+## 🟠 Major Issues
+1. **[Category]**: [Description].
 
-- **[ ] Task Priority**: If a new task is scheduled, is its priority chosen correctly based on its impact on user experience (e.g., `CRITICAL_UI`, `CONNECTIVITY`, `BACKGROUND`)?
+## 🟡 Minor Issues
+1. **[Category]**: [Description].
 
-### 2.6. Testing
-
-Does the code include adequate tests that follow our testing philosophy?
-
-- **[ ] Test Coverage**: Are new features, code paths, and bug fixes covered by new or updated tests?
-
-- **[ ] Layered Testing Hierarchy**: Do the tests adhere to the rules in `tests/README.md`?
-  - **High-Level Components** (Managers, Modes): **MUST** use mocks for all hardware dependencies. Testing with real hardware at this level is a blocking issue.
-  - **Mid-Level Components** (Services): Should prefer mocks. Real hardware is only for specific integration tests.
-  - **Low-Level Components** (Controllers): **MAY** use real hardware only when it is safe and contention-free, but mocks are still preferred for automated testing.
-
-- **[ ] Test Independence**: Are tests independent and able to run in any order? Do they clean up their resources in `tearDown()` or `tearDownClass()`?
+## ✅ Verification
+- [ ] Pre-commit checks passed?
+- [ ] Architecture patterns followed?
+- [ ] Scheduler rules respected?
+```

@@ -1,0 +1,22 @@
+---
+description: Architectural patterns for Managers, Controllers, and Services
+globs: src/**/*.py
+alwaysApply: false
+---
+# Architecture Components
+
+## Managers
+- **Pattern**: Must be Singletons.
+- **Access**: Use `Manager.instance()`.
+- **Responsibility**: Encapsulate domain logic and state.
+
+## Controllers
+- **Pattern**: Direct hardware wrappers.
+- **Constraint**: No business logic.
+
+## Services
+- **Pattern**: Logic providers (often network-based).
+
+## Reference
+- `docs/ARCHITECTURE.md` (System Patterns)
+- `docs/PATTERNS_COOKBOOK.md` (Manager Singleton Pattern)

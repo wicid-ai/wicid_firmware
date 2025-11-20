@@ -1,0 +1,1 @@
+Please perform a full code review of all changes currently staged, using @docs/CODE_REVIEW_GUIDELINES.md as a guide. Output your findings to code_review_findings.md. Do not make any changes to the code. This is only a review.
