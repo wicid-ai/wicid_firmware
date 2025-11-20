@@ -197,6 +197,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Claude
+.claude/settings.local.json
+
 # Kiro
 .kiro/**
 
