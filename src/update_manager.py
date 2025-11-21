@@ -7,7 +7,7 @@ extracting them to /pending_update/root/, and managing the update process.
 CRITICAL: This module is the SINGLE SOURCE OF TRUTH for all OTA update operations.
 
 Usage:
-    update_manager = UpdateManager(progress_callback=my_callback)
+    update_manager = UpdateManager.instance(progress_callback=my_callback)
     await update_manager.check_download_and_reboot()  # Handles everything, reboots if update found
 
     # Or for manual control:
@@ -35,10 +35,11 @@ import os
 import time
 import traceback
 
-import adafruit_hashlib as hashlib
+import adafruit_hashlib as hashlib  # type: ignore[import-untyped]
 import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
 
 from logging_helper import logger
+from manager_base import ManagerBase
 from scheduler import Scheduler
 from utils import (
     check_release_compatibility,
@@ -50,8 +51,10 @@ from utils import (
 )
 
 
-class UpdateManager:
+class UpdateManager(ManagerBase):
     """Manages over-the-air firmware updates."""
+
+    _instance = None
 
     PENDING_UPDATE_DIR = "/pending_update"
     PENDING_ROOT_DIR = "/pending_update/root"
@@ -86,7 +89,7 @@ class UpdateManager:
         "/lib/adafruit_hashlib/__init__.mpy",  # Required by update_manager.mpy for checksum verification
     }
 
-    def __init__(self, progress_callback=None, connection_manager=None, service_callback=None):
+    def _init(self, progress_callback=None, connection_manager=None, service_callback=None):
         """
         Initialize the update manager.
 
@@ -101,7 +104,7 @@ class UpdateManager:
         if connection_manager is None:
             from connection_manager import ConnectionManager
 
-            self.connection_manager = ConnectionManager.get_instance()
+            self.connection_manager = ConnectionManager.instance()
         else:
             self.connection_manager = connection_manager
 
@@ -120,6 +123,8 @@ class UpdateManager:
             self.pixel_controller = PixelController()
         except (ImportError, Exception):
             self.pixel_controller = None
+
+        self._initialized = True
 
     @staticmethod
     def validate_critical_files():

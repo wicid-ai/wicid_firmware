@@ -424,6 +424,9 @@ class Scheduler:
 
         Use this in tight loops or CPU-bound operations to prevent
         monopolizing the scheduler. Equivalent to asyncio.sleep(0).
+        
+        Returns:
+            Awaitable that completes immediately after yielding
         """
         return asyncio.sleep(0)
 
@@ -433,6 +436,9 @@ class Scheduler:
 
         Args:
             seconds: Duration to sleep (can be fractional)
+            
+        Returns:
+            Awaitable that completes after specified duration
         """
         return asyncio.sleep(seconds)
 
@@ -642,7 +648,7 @@ class Scheduler:
     # Public API: Scheduler Lifecycle
     # -------------------------------------------------------------------------
 
-    def run_forever(self):
+    def run_forever(self) -> None:
         """Start the scheduler event loop.
 
         This method never returns under normal conditions. It runs the
@@ -673,8 +679,12 @@ class Scheduler:
     # Diagnostics
     # -------------------------------------------------------------------------
 
-    def dump_state(self):
-        """Return lightweight snapshot of scheduler state for debugging."""
+    def dump_state(self) -> dict:
+        """Return lightweight snapshot of scheduler state for debugging.
+        
+        Returns:
+            dict: Scheduler statistics and queued task information
+        """
         snapshot = []
         now = time.monotonic()
 
@@ -697,8 +707,12 @@ class Scheduler:
             "queued_tasks": snapshot,
         }
 
-    def describe(self):
-        """Return human-readable snapshot useful for REPL debugging."""
+    def describe(self) -> str:
+        """Return human-readable snapshot useful for REPL debugging.
+        
+        Returns:
+            str: Human-readable scheduler state and task queue
+        """
         state = self.dump_state()
         lines = [
             f"Scheduler State: scheduled={state['tasks_scheduled']}, "

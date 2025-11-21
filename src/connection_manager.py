@@ -9,7 +9,7 @@ This module encapsulates all WiFi connection behavior for the device, including:
 - WiFi radio lifecycle management via WiFiRadioController
 - Graceful error handling
 
-ConnectionManager is a singleton - use ConnectionManager.get_instance() to access it.
+ConnectionManager is a singleton - use ConnectionManager.instance() to access it.
 """
 
 import json
@@ -37,7 +37,7 @@ class ConnectionManager(ManagerBase):
     Singleton manager for all WiFi operations.
 
     Encapsulates station mode, AP mode, and all WiFi radio state management.
-    Use get_instance() to access the singleton instance.
+    Use instance() to access the singleton instance.
     """
 
     _instance = None

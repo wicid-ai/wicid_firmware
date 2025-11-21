@@ -152,7 +152,7 @@ class WeatherMode(Mode):
             # Get system manager singleton (periodic system checks)
             from system_manager import SystemManager
 
-            self.system_manager = SystemManager.get_instance()
+            self.system_manager = SystemManager.instance()
 
             self.logger.info(f"Initialized for ZIP {zip_code}")
             return True
@@ -235,8 +235,12 @@ class WeatherMode(Mode):
             return
 
         try:
+            # Yield after each blocking network call to keep LED/button responsive
             temp = self.weather.get_current_temperature()
+            await Scheduler.yield_control()
+
             precip = self.weather.get_precip_chance_in_window(0, 4)
+            await Scheduler.yield_control()
 
             if temp is not None:
                 self.current_temp = temp
@@ -343,7 +347,7 @@ class SetupPortalMode(Mode):
         super().__init__()
         self._error = error
         self._session = None
-        self._config_mgr = ConfigurationManager.get_instance()
+        self._config_mgr = ConfigurationManager.instance()
         self._button_router = ButtonActionRouter.instance()
 
     def initialize(self) -> bool:

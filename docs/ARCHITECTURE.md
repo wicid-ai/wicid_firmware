@@ -67,14 +67,14 @@ Critical shared resources (WiFi, LED, Logging) use the singleton pattern to ensu
 
 All managers inherit from `ManagerBase` which provides a consistent lifecycle pattern:
 
-- **Singleton Access**: Managers are accessed via `instance()` or `get_instance()` class methods
+- **Singleton Access**: Managers are accessed via `instance()` class methods
 - **Encapsulated Resource Management**: All resource allocation (pins, tasks, sessions) happens in `_init()` method
 - **Automatic Cleanup**: All resource cleanup happens in `shutdown()` method
 - **Smart Reinitialization**: When dependencies change (e.g., in tests), managers automatically shut down and reinitialize
 - **Context Manager Support**: Managers can be used in `with` blocks for explicit lifetime management
 
 **Key Principles:**
-- Callers only ever call `instance(...)` or `get_instance(...)` - never manipulate `_instance` directly
+- Callers only ever call `instance(...)` - never manipulate `_instance` directly
 - Resource cleanup is encapsulated inside each manager's `shutdown()` method
 - Tests can inject dependencies (pins, sessions, fake radios) via `instance(deps...)` without special test APIs
 - All managers follow the same lifecycle pattern, even if they don't own external resources (use no-op `shutdown()`)

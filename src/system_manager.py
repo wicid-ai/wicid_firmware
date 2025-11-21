@@ -30,7 +30,7 @@ class SystemManager(ManagerBase):
     SYSTEM_UPDATE_INITIAL_DELAY_SECONDS = 60
 
     @classmethod
-    def get_instance(cls, update_manager=None):
+    def instance(cls, update_manager=None):
         """
         Get singleton SystemManager instance.
 
@@ -57,7 +57,7 @@ class SystemManager(ManagerBase):
         if update_manager is None:
             from update_manager import UpdateManager
 
-            update_manager = UpdateManager()
+            update_manager = UpdateManager.instance()
 
         self.update_manager = update_manager
         self.boot_time = time.monotonic()
@@ -80,7 +80,7 @@ class SystemManager(ManagerBase):
         self._initialized = True
 
     def __init__(self, update_manager=None):
-        """Private constructor. Use get_instance() instead.
+        """Private constructor. Use instance() instead.
 
         Args:
             update_manager: Optional UpdateManager instance for testing

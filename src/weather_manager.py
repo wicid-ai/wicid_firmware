@@ -158,7 +158,7 @@ class WeatherManager(ManagerBase):
         Fetch weather data from API (called by scheduler every 20 minutes).
 
         This task runs periodically to update cached weather data.
-        Network I/O automatically yields to scheduler during HTTP requests.
+        Explicitly yields after each network call to ensure scheduler responsiveness.
         """
         if self._weather is None:
             self.logger.warning("Weather service not initialized - skipping update")
@@ -167,13 +167,17 @@ class WeatherManager(ManagerBase):
         try:
             self.logger.debug("Fetching weather data...")
 
-            # Network I/O automatically yields to scheduler during requests
-            # These calls are synchronous from our perspective but the underlying
-            # HTTP operations yield control during waits
+            # Network calls are blocking - yield after each to keep LED/button responsive
+            # adafruit_requests uses synchronous sockets which don't auto-yield to asyncio
             try:
                 temp = self._weather.get_current_temperature()
+                await Scheduler.yield_control()  # Yield after blocking network call
+
                 high = self._weather.get_daily_high()
+                await Scheduler.yield_control()  # Yield after blocking network call
+
                 precip = self._weather.get_daily_precip_chance()
+                await Scheduler.yield_control()  # Yield after blocking network call
             except Exception as fetch_error:
                 raise TaskNonFatalError(f"Weather API error: {fetch_error}") from fetch_error
 
@@ -206,7 +210,7 @@ class WeatherManager(ManagerBase):
             self.logger.error(f"Unexpected error fetching weather: {e}", exc_info=True)
             raise TaskNonFatalError(f"Weather fetch failed: {e}") from e
 
-    def get_current_temperature(self):
+    def get_current_temperature(self) -> float | None:
         """
         Get cached current temperature (synchronous).
 
@@ -215,7 +219,7 @@ class WeatherManager(ManagerBase):
         """
         return self._current_temp
 
-    def get_daily_high(self):
+    def get_daily_high(self) -> float | None:
         """
         Get cached daily high temperature (synchronous).
 
@@ -224,7 +228,7 @@ class WeatherManager(ManagerBase):
         """
         return self._daily_high
 
-    def get_daily_precip_chance(self):
+    def get_daily_precip_chance(self) -> int | None:
         """
         Get cached precipitation chance (synchronous).
 
@@ -233,7 +237,7 @@ class WeatherManager(ManagerBase):
         """
         return self._daily_precip_chance
 
-    def get_precip_chance_in_window(self, start_offset, duration):
+    def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
         """
         Get precipitation chance for a future time window.
 
@@ -257,7 +261,7 @@ class WeatherManager(ManagerBase):
             self.logger.error(f"Error fetching precip window: {e}")
             return None
 
-    def get_last_update_time(self):
+    def get_last_update_time(self) -> float | None:
         """
         Get timestamp of last successful update (monotonic time).
 
@@ -266,7 +270,7 @@ class WeatherManager(ManagerBase):
         """
         return self._last_update_time
 
-    def get_last_error(self):
+    def get_last_error(self) -> str | None:
         """
         Get last error message if update failed.
 
@@ -275,7 +279,7 @@ class WeatherManager(ManagerBase):
         """
         return self._last_error
 
-    def is_data_stale(self, max_age_seconds=1800):
+    def is_data_stale(self, max_age_seconds: float = 1800) -> bool:
         """
         Check if cached data is stale.
 
@@ -293,7 +297,7 @@ class WeatherManager(ManagerBase):
         age = time.monotonic() - self._last_update_time
         return age > max_age_seconds
 
-    async def force_update(self):
+    async def force_update(self) -> None:
         """
         Force an immediate weather update (bypasses schedule).
 

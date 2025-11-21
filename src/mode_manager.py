@@ -10,13 +10,14 @@ Handles:
 from button_action_router import ButtonAction, ButtonActionRouter
 from input_manager import InputManager
 from logging_helper import logger
+from manager_base import ManagerBase
 from modes import SetupPortalMode
 from pixel_controller import PixelController
 from scheduler import Scheduler
 from utils import trigger_safe_mode
 
 
-class ModeManager:
+class ModeManager(ManagerBase):
     """
     Manages the lifecycle and switching of user-selectable modes.
 
@@ -28,7 +29,9 @@ class ModeManager:
     - Handle safe mode entry (10s button hold)
     """
 
-    def __init__(self):
+    _instance = None
+
+    def _init(self):
         """
         Initialize ModeManager.
         """
@@ -38,6 +41,7 @@ class ModeManager:
         self.logger = logger("wicid.mode_mgr")
         self.input_mgr = InputManager.instance()
         self.button_router = ButtonActionRouter.instance()
+        self._initialized = True
 
     def register_modes(self, mode_classes):
         """

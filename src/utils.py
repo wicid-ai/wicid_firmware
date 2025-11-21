@@ -118,7 +118,7 @@ def get_mac_address():
         # Lazy import to avoid circular dependency
         from connection_manager import ConnectionManager
 
-        connection_manager = ConnectionManager.get_instance()
+        connection_manager = ConnectionManager.instance()
         return connection_manager.get_mac_address()
     except Exception:
         return None

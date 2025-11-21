@@ -60,11 +60,11 @@ async def _startup_sequence():
             APP_LOG.info("Continuing to normal mode after test run")
 
         APP_LOG.info("Initializing configuration...")
-        config_mgr = ConfigurationManager.get_instance()
+        config_mgr = ConfigurationManager.instance()
         await config_mgr.initialize(portal_runner=SetupPortalMode.execute)
 
         APP_LOG.info("Configuration complete - starting mode loop")
-        mode_mgr = ModeManager()
+        mode_mgr = ModeManager.instance()
         mode_mgr.register_modes([WeatherMode, TempDemoMode, PrecipDemoMode])
         await mode_mgr.run()
 

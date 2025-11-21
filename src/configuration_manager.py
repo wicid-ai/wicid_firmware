@@ -3,7 +3,7 @@ import os
 import time
 
 import supervisor  # type: ignore[import-untyped]  # CircuitPython-only module
-from adafruit_httpserver import JSONResponse, Request, Response
+from adafruit_httpserver import JSONResponse, Request, Response  # type: ignore[import-untyped]
 
 from connection_manager import ConnectionManager
 from dns_interceptor import DNSInterceptor
@@ -25,7 +25,7 @@ class ConfigurationManager(ManagerBase):
     - Update checking after successful connection
     - Restart decisions for configuration scenarios
 
-    Use get_instance() to access the singleton instance.
+    Use instance() to access the singleton instance.
     """
 
     _instance = None
@@ -40,7 +40,7 @@ class ConfigurationManager(ManagerBase):
     ERR_INVALID_ZIP = "ZIP code must be 5 digits."
 
     @classmethod
-    def get_instance(cls):
+    def instance(cls):
         """
         Get the singleton instance of ConfigurationManager.
 
@@ -101,7 +101,7 @@ class ConfigurationManager(ManagerBase):
         self._manager_initialized = True
 
     def __init__(self):
-        """Private constructor. Use get_instance() instead."""
+        """Private constructor. Use instance() instead."""
         # Guard against re-initialization
         if getattr(self, "_manager_initialized", False):
             return
@@ -526,7 +526,7 @@ class ConfigurationManager(ManagerBase):
 
     async def run_web_server(self):
         """Run a simple web server to handle the setup interface"""
-        from adafruit_httpserver import FileResponse, Request, Response, Server
+        from adafruit_httpserver import FileResponse, Request, Response, Server  # type: ignore[import-untyped]
 
         pool = self.connection_manager.get_socket_pool()
         server = Server(pool, "/www", debug=False)
@@ -1146,7 +1146,7 @@ class ConfigurationManager(ManagerBase):
         if self._update_manager is None:
             from update_manager import UpdateManager
 
-            self._update_manager = UpdateManager(
+            self._update_manager = UpdateManager.instance(
                 progress_callback=self._update_progress_callback, service_callback=self._service_update_timeslice
             )
         return self._update_manager
@@ -1209,7 +1209,7 @@ class ConfigurationManager(ManagerBase):
 
                 # Hard reset to trigger update installation in boot.py
                 self.logger.info("Rebooting to install update")
-                import microcontroller
+                import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
 
                 microcontroller.reset()
 

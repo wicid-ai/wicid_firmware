@@ -16,7 +16,7 @@ class WeatherService:
         self.logger = logger("wicid.weather")
         self.zip_code = weather_zip
 
-        connection_manager = ConnectionManager.get_instance()
+        connection_manager = ConnectionManager.instance()
         self.session = session or connection_manager.create_session()
 
         # Get coordinates first, then detect timezone from them

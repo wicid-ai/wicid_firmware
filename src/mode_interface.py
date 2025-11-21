@@ -17,9 +17,9 @@ class Mode:
     Base class for all user-selectable operating modes.
 
     Modes have access to shared singleton resources:
-    - ConnectionManager.get_instance() - for connectivity and session management
+    - ConnectionManager.instance() - for connectivity and session management
     - PixelController() - for LED control (singleton via __new__)
-    - SystemManager.get_instance() - for update checks and periodic reboots
+    - SystemManager.instance() - for update checks and periodic reboots
 
     Subclasses must implement:
     - name: str - Mode name for identification
@@ -44,7 +44,7 @@ class Mode:
         """
         Initialize mode with access to shared resources.
         """
-        self.connection_manager = ConnectionManager.get_instance()
+        self.connection_manager = ConnectionManager.instance()
         self.pixel = PixelController()
         self.input_mgr = InputManager.instance()
         self._running = False
