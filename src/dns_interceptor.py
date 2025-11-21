@@ -12,11 +12,11 @@ to all A record queries with the local IP address, effectively capturing
 all DNS traffic and redirecting it to the setup portal.
 """
 
-import contextlib
 import struct
 import time
 
 from logging_helper import logger
+from utils import suppress
 
 
 class DNSInterceptor:
@@ -178,7 +178,7 @@ class DNSInterceptor:
         except Exception as e:
             self.logger.warning(f"Error stopping DNS interceptor: {e}")
             # Force cleanup even if there are errors
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 self._cleanup_socket()
 
     def _cleanup_socket(self):
@@ -186,7 +186,7 @@ class DNSInterceptor:
         Clean up socket resources safely.
         """
         if self.socket:
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 self.socket.close()
             self.socket = None
 
@@ -329,13 +329,13 @@ class DNSInterceptor:
 
             # Send response with error handling
             if response:
-                with contextlib.suppress(OSError):
+                with suppress(OSError):
                     self.socket.sendto(response, client_addr)
 
         except Exception:
             # Try to send a generic error response if we have the transaction ID
             if response is None:
-                with contextlib.suppress(Exception):
+                with suppress(Exception):
                     if len(query_data) >= 2:
                         transaction_id = (query_data[0] << 8) | query_data[1]
                         error_response = self._create_error_response(transaction_id, "", self.DNS_RCODE_NAME_ERROR)

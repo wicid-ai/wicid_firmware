@@ -1,4 +1,3 @@
-import contextlib
 import json
 import os
 import time
@@ -12,6 +11,7 @@ from logging_helper import logger
 from manager_base import ManagerBase
 from pixel_controller import PixelController
 from scheduler import Scheduler
+from utils import suppress
 
 
 class ConfigurationManager(ManagerBase):
@@ -123,7 +123,7 @@ class ConfigurationManager(ManagerBase):
         try:
             # Use existing cleanup method if portal is active
             if hasattr(self, "_cleanup_setup_portal"):
-                with contextlib.suppress(Exception):
+                with suppress(Exception):
                     self._cleanup_setup_portal()
 
             # Clear references
@@ -337,7 +337,7 @@ class ConfigurationManager(ManagerBase):
             self.logger.warning(f"DNS interceptor error: {e}")
 
             if hasattr(self, "dns_interceptor") and self.dns_interceptor:
-                with contextlib.suppress(Exception):
+                with suppress(Exception):
                     self.dns_interceptor.stop()
 
             self.dns_interceptor = None
@@ -553,15 +553,13 @@ class ConfigurationManager(ManagerBase):
             try:
                 # Load current settings
                 current_settings = {"ssid": "", "password": "", "zip_code": ""}
-                try:
+                with suppress(Exception):
                     with open("/secrets.json") as f:
                         secrets = json.load(f)
 
                     current_settings["ssid"] = secrets.get("ssid", "")
                     current_settings["password"] = secrets.get("password", "")
                     current_settings["zip_code"] = secrets.get("weather_zip", "")
-                except Exception:  # noqa: SIM105
-                    pass  # Use empty values if secrets can't be loaded
 
                 # Package data for the frontend
                 try:
@@ -597,14 +595,12 @@ class ConfigurationManager(ManagerBase):
                 wicid_version = os.getenv("VERSION", "unknown")
 
                 # Load manifest for detailed machine type
-                try:
+                with suppress(Exception):
                     with open("/manifest.json") as f:
                         manifest = json.load(f)
                     machine_types = manifest.get("target_machine_types", [])
                     if machine_types:
                         machine_type = machine_types[0]
-                except Exception:
-                    pass
 
                 return self._json_ok(
                     request,

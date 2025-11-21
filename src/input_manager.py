@@ -13,13 +13,13 @@ hardware. Other components register callbacks for button events via InputManager
 Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 """
 
-import contextlib
 import time
 
 from button_controller import ButtonController
 from logging_helper import logger
 from manager_base import ManagerBase
 from scheduler import Scheduler
+from utils import suppress
 
 
 class ButtonEvent:
@@ -421,7 +421,7 @@ class InputManager(ManagerBase):
 
         # Deinitialize button controller (releases DigitalInOut pin)
         if hasattr(self, "_controller") and self._controller is not None:
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 self._controller.deinit()
             self._controller = None
 

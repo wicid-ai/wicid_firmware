@@ -30,7 +30,6 @@ Reset Types:
     - supervisor.reload() = Soft reboot, skips boot.py (use for config changes only)
 """
 
-import contextlib
 import json
 import os
 import time
@@ -47,6 +46,7 @@ from utils import (
     get_machine_type,
     get_os_version_string,
     mark_incompatible_release,
+    suppress,
 )
 
 
@@ -237,7 +237,7 @@ class UpdateManager:
                             if not part:
                                 continue
                             current_path += "/" + part
-                            with contextlib.suppress(OSError):
+                            with suppress(OSError):
                                 os.mkdir(current_path)  # Directory already exists
 
                     # Write to recovery location
@@ -327,7 +327,7 @@ class UpdateManager:
                             if not part:
                                 continue
                         current_path += "/" + part
-                        with contextlib.suppress(OSError):
+                        with suppress(OSError):
                             os.mkdir(current_path)
 
                     # Write to root location
@@ -449,7 +449,7 @@ class UpdateManager:
                         sub_items = os.listdir(item_path)
                         for sub_item in sub_items:
                             sub_item_path = f"{item_path}/{sub_item}"
-                            with contextlib.suppress(OSError):
+                            with suppress(OSError):
                                 os.remove(sub_item_path)
                         os.rmdir(item_path)
                     except OSError:
@@ -864,7 +864,7 @@ class UpdateManager:
                 self._cleanup_pending_root()
 
                 for directory in (self.PENDING_UPDATE_DIR, self.PENDING_ROOT_DIR):
-                    with contextlib.suppress(OSError):
+                    with suppress(OSError):
                         os.mkdir(directory)
 
                 zip_path = f"{self.PENDING_UPDATE_DIR}/update.zip"
@@ -965,7 +965,7 @@ class UpdateManager:
                         self._notify_progress("error", f"Verification failed: {checksum_msg}", None)
                         if "mismatch" in checksum_msg.lower():
                             self.logger.critical("SECURITY WARNING: Downloaded file may be corrupted or tampered with")
-                        with contextlib.suppress(OSError):
+                        with suppress(OSError):
                             os.remove(zip_path)
                         self._cleanup_pending_root()
                         self._record_failed_update(checksum_msg)
@@ -1027,7 +1027,7 @@ class UpdateManager:
                         self._update_download_led()
                     except (OSError, ValueError, KeyError) as e:
                         self.logger.error(f"Extracted manifest.json is corrupted or invalid: {e}")
-                        with contextlib.suppress(OSError):
+                        with suppress(OSError):
                             os.remove(zip_path)
                         self._cleanup_pending_root()
                         self._record_failed_update(f"Invalid manifest: {e}")
@@ -1047,7 +1047,7 @@ class UpdateManager:
                             self.logger.error(f"  ... and {len(missing_files) - 10} more")
                         self.logger.error("Installation would brick the device - aborting")
                         self._notify_progress("error", "Update package incomplete", None)
-                        with contextlib.suppress(OSError):
+                        with suppress(OSError):
                             os.remove(zip_path)
                         self._cleanup_pending_root()
                         self._record_failed_update("Update package incomplete", version=manifest.get("version"))
@@ -1066,7 +1066,7 @@ class UpdateManager:
                     self.logger.error(f"Error extracting update: {e}")
                     traceback.print_exception(e)
                     self._notify_progress("error", f"Extraction failed: {e}", None)
-                    with contextlib.suppress(OSError):
+                    with suppress(OSError):
                         os.remove(zip_path)
                     self._cleanup_pending_root()
                     self._record_failed_update(f"Extraction error: {e}")
@@ -1082,7 +1082,7 @@ class UpdateManager:
                 self.logger.error(f"Error downloading update: {e}")
                 traceback.print_exception(e)
                 self._notify_progress("error", f"Download failed: {e}", None)
-                with contextlib.suppress(OSError):
+                with suppress(OSError):
                     os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
                 self._cleanup_pending_root()
                 self._record_failed_update(str(e))

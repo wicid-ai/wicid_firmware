@@ -20,7 +20,6 @@ Or run specific test class:
     >>> unittest.main(module='tests.unit.test_input_manager', exit=False)
 """
 
-import contextlib
 import sys
 
 # Add root to path for imports (source files are in root on CircuitPython device)
@@ -36,6 +35,7 @@ from unittest import TestCase
 from hardware_mocks import MockButtonController
 from input_manager import ButtonEvent, InputManager
 from test_helpers import create_mock_button_pin
+from utils import suppress
 
 
 class TestInputManagerBasic(TestCase):
@@ -48,7 +48,7 @@ class TestInputManagerBasic(TestCase):
         # This is safe because we use the public API (accessing _instance is acceptable
         # for test setup only, as it's part of the singleton pattern interface)
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
         # Use mock pin - no hardware conflicts, deterministic testing
@@ -60,7 +60,7 @@ class TestInputManagerBasic(TestCase):
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
     def test_input_manager_singleton(self):
@@ -134,7 +134,7 @@ class TestInputManagerCallbacks(TestCase):
         # This is safe because we use the public API (accessing _instance is acceptable
         # for test setup only, as it's part of the singleton pattern interface)
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
         # Use mock pin - no hardware conflicts, deterministic testing
@@ -146,7 +146,7 @@ class TestInputManagerCallbacks(TestCase):
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
     def setUp(self):
@@ -234,7 +234,7 @@ class TestInputManagerEventFiring(TestCase):
         # This is safe because we use the public API (accessing _instance is acceptable
         # for test setup only, as it's part of the singleton pattern interface)
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
         # Use mock pin - no hardware conflicts, deterministic testing
@@ -246,7 +246,7 @@ class TestInputManagerEventFiring(TestCase):
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
     def setUp(self):
@@ -346,7 +346,7 @@ class TestInputManagerState(TestCase):
         # This is safe because we use the public API (accessing _instance is acceptable
         # for test setup only, as it's part of the singleton pattern interface)
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
         # Use mock pin - no hardware conflicts, deterministic testing
@@ -358,7 +358,7 @@ class TestInputManagerState(TestCase):
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
     def test_is_pressed_returns_bool(self):
@@ -404,7 +404,7 @@ class TestInputManagerHoldDetection(TestCase):
     @classmethod
     def setUpClass(cls):
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 InputManager._instance.shutdown()
 
         cls.test_button_pin = create_mock_button_pin(pin_number=101)
@@ -418,7 +418,7 @@ class TestInputManagerHoldDetection(TestCase):
         self.controller = self.mgr._controller
 
     def tearDown(self):
-        with contextlib.suppress(Exception):
+        with suppress(Exception):
             self.mgr.shutdown()
         InputManager._instance = None
 

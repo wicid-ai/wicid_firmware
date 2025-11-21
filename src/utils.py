@@ -15,6 +15,37 @@ import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only mod
 from logging_helper import logger
 
 
+class suppress:
+    """
+    Context manager to suppress specified exceptions.
+
+    Replacement for contextlib.suppress which is not available in CircuitPython.
+    This is a lightweight implementation that provides the same functionality
+    as contextlib.suppress from the Python standard library.
+
+    Usage:
+        with suppress(OSError):
+            os.remove(file_path)
+
+    Multiple exception types:
+        with suppress(OSError, ValueError):
+            risky_operation()
+
+    Note: CircuitPython does not include the contextlib module, so this
+    implementation is provided as part of the utils module.
+    """
+
+    def __init__(self, *exceptions):
+        self._exceptions = exceptions
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exctype, excinst, exctb):
+        # Return True if exception matches to suppress it
+        return exctype is not None and issubclass(exctype, self._exceptions)
+
+
 def get_os_name():
     """
     Get the OS name.

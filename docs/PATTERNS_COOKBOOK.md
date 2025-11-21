@@ -7,8 +7,9 @@ This document provides concrete, copy-pasteable examples of common architectural
 1. [Scheduler Usage](#scheduler-usage)
 2. [Manager Singleton Pattern](#manager-singleton-pattern)
 3. [Error Handling](#error-handling)
-4. [Testing with Mocks](#testing-with-mocks)
-5. [Cooperative Yielding](#cooperative-yielding)
+4. [Exception Suppression](#exception-suppression)
+5. [Testing with Mocks](#testing-with-mocks)
+6. [Cooperative Yielding](#cooperative-yielding)
 
 ---
 
@@ -100,6 +101,47 @@ def fetch_data():
         print("Error: API returned 404")
         return # Wrong: Scheduler doesn't know an error occurred
 ```
+
+---
+
+## Exception Suppression
+
+**Concept:** Use `suppress` context manager for clean exception handling when you want to ignore specific exceptions. CircuitPython doesn't include `contextlib`, so we provide our own implementation in `utils.py`.
+
+### ✅ Do (Correct)
+
+Use `suppress` from `utils` to cleanly ignore expected exceptions.
+
+```python
+from utils import suppress
+
+# Suppress a single exception type
+with suppress(OSError):
+    os.remove(file_path)  # Ignore if file doesn't exist
+
+# Suppress multiple exception types
+with suppress(OSError, ValueError):
+    risky_operation()
+```
+
+### ❌ Don't (Incorrect)
+
+Do not use `try-except-pass` blocks or import `contextlib` (not available in CircuitPython).
+
+```python
+# Wrong: Verbose and less clear
+try:
+    os.remove(file_path)
+except OSError:
+    pass
+
+# Wrong: contextlib not available in CircuitPython
+import contextlib
+with contextlib.suppress(OSError):
+    os.remove(file_path)
+```
+
+**Note:** Ruff SIM105 will flag `try-except-pass` patterns. When you see this warning, use `from utils import suppress` instead of `import contextlib`.
 
 ---
 

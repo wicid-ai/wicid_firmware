@@ -12,7 +12,6 @@ This module encapsulates all WiFi connection behavior for the device, including:
 ConnectionManager is a singleton - use ConnectionManager.get_instance() to access it.
 """
 
-import contextlib
 import json
 import os
 import ssl
@@ -23,6 +22,7 @@ import socketpool  # type: ignore[import-untyped]  # CircuitPython-only module
 from logging_helper import logger
 from manager_base import ManagerBase
 from scheduler import Scheduler
+from utils import suppress
 from wifi_radio_controller import WiFiRadioController
 
 
@@ -1053,7 +1053,7 @@ class ConnectionManager(ManagerBase):
 
             # Disable radio completely
             if hasattr(self, "_radio") and self._radio is not None:
-                with contextlib.suppress(Exception):
+                with suppress(Exception):
                     self._radio.enabled = False
 
             # Clear references

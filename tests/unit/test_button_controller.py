@@ -14,7 +14,6 @@ Or run specific test class:
     >>> unittest.main(module='tests.unit.test_button_controller', exit=False)
 """
 
-import contextlib
 import sys
 
 # Add root to path for imports (source files are in root on CircuitPython device)
@@ -31,6 +30,7 @@ from button_controller import ButtonController
 from hardware_mocks import MockDigitalInOut
 from logging_helper import logger
 from test_helpers import create_mock_button_pin
+from utils import suppress
 
 
 class TestButtonControllerBasic(TestCase):
@@ -49,7 +49,7 @@ class TestButtonControllerBasic(TestCase):
         """Clean up after each test."""
         # Clean up any controller instances
         if hasattr(self, "controller") and self.controller is not None:
-            with contextlib.suppress(Exception):
+            with suppress(Exception):
                 self.controller.deinit()
 
     def test_button_controller_init(self):

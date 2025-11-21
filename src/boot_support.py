@@ -9,7 +9,6 @@ This module contains all boot logic that runs before code.py:
 This module is compiled to bytecode (.mpy) for efficiency.
 """
 
-import contextlib
 import json
 import os
 
@@ -27,7 +26,7 @@ IMPORT_ERROR = None
 try:
     from pixel_controller import PixelController
     from update_manager import UpdateManager
-    from utils import check_release_compatibility, mark_incompatible_release
+    from utils import check_release_compatibility, mark_incompatible_release, suppress
 except ImportError as e:
     IMPORT_ERROR = str(e)
     print("=" * 50)
@@ -137,11 +136,11 @@ def remove_directory_recursive(path, installer=None):
         remove_directory_recursive(item_path, installer)
 
         # Remove the now-empty directory
-        with contextlib.suppress(OSError):
+        with suppress(OSError):
             os.rmdir(item_path)
 
     # Remove the directory itself
-    with contextlib.suppress(OSError):
+    with suppress(OSError):
         os.rmdir(path)
 
 
@@ -245,20 +244,20 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
         if dest_dir == "/" and item.lower() in [f.lower() for f in PRESERVED_FILES]:
             log_boot_message(f"  Skipping preserved file: {item}")
             # Remove from pending_update to avoid confusion
-            with contextlib.suppress(OSError):
+            with suppress(OSError):
                 os.remove(src_path)
             continue
 
         try:
             # Check if it's a directory
             is_dir = False
-            with contextlib.suppress(OSError):
+            with suppress(OSError):
                 os.listdir(src_path)
                 is_dir = True
 
             if is_dir:
                 # Create destination directory if it doesn't exist
-                with contextlib.suppress(OSError):
+                with suppress(OSError):
                     os.mkdir(dest_path)  # Directory might already exist
 
                 # Recursively move contents
@@ -649,7 +648,7 @@ def check_and_restore_from_recovery():
             pass  # Couldn't determine version, continue anyway
 
         # Clean up the failed update
-        with contextlib.suppress(Exception):
+        with suppress(Exception):
             remove_directory_recursive("/pending_update")
 
         log_boot_message("\n→ Device recovered successfully")

@@ -5,11 +5,11 @@ Implements basic ZIP file parsing and extraction using zlib for decompression.
 Supports stored (uncompressed) and deflated files.
 """
 
-import contextlib
 import struct
 import zlib
 
 from logging_helper import logger
+from utils import suppress
 
 
 class ZipFile:
@@ -186,7 +186,7 @@ class ZipFile:
 
         dir_path = "/".join(dest_path.split("/")[:-1])
         if dir_path and dir_path != "/":
-            with contextlib.suppress(OSError):
+            with suppress(OSError):
                 os.mkdir(dir_path)
 
         with open(dest_path, "wb") as f:
