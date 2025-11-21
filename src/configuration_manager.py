@@ -1,8 +1,9 @@
+import contextlib
 import json
 import os
 import time
 
-import supervisor
+import supervisor  # type: ignore[import-untyped]  # CircuitPython-only module
 from adafruit_httpserver import JSONResponse, Request, Response
 
 from connection_manager import ConnectionManager
@@ -122,10 +123,8 @@ class ConfigurationManager(ManagerBase):
         try:
             # Use existing cleanup method if portal is active
             if hasattr(self, "_cleanup_setup_portal"):
-                try:
+                with contextlib.suppress(Exception):
                     self._cleanup_setup_portal()
-                except Exception:
-                    pass
 
             # Clear references
             self.connection_manager = None
@@ -210,7 +209,7 @@ class ConfigurationManager(ManagerBase):
             # Configuration file missing or invalid - normal for first boot
             self.logger.info(f"No configuration found: {e}")
             if portal_runner is None:
-                raise ValueError("portal_runner is required to enter setup mode")
+                raise ValueError("portal_runner is required to enter setup mode") from e
             return await portal_runner(error=None)
 
     async def run_portal(self, error=None, button_session=None):
@@ -338,10 +337,8 @@ class ConfigurationManager(ManagerBase):
             self.logger.warning(f"DNS interceptor error: {e}")
 
             if hasattr(self, "dns_interceptor") and self.dns_interceptor:
-                try:
+                with contextlib.suppress(Exception):
                     self.dns_interceptor.stop()
-                except:
-                    pass
 
             self.dns_interceptor = None
             return False
@@ -364,7 +361,7 @@ class ConfigurationManager(ManagerBase):
         try:
             status = self.dns_interceptor.get_status()
             return status["healthy"]
-        except:
+        except Exception:
             return False
 
     def start_access_point(self):
@@ -411,7 +408,7 @@ class ConfigurationManager(ManagerBase):
 
             return "unknown"
 
-        except:
+        except Exception:
             return "unknown"
 
     def _create_captive_redirect_response(self, request: Request, target_url: str = "/") -> Response:
@@ -441,11 +438,11 @@ class ConfigurationManager(ManagerBase):
             else:
                 return Response(request, "", status=(302, "Found"), headers={"Location": target_url})
 
-        except:
+        except Exception:
             # Fallback to simple redirect
             try:
                 return Response(request, "", status=(302, "Found"), headers={"Location": target_url})
-            except:
+            except Exception:
                 # Last resort: HTML redirect
                 fallback_html = f'<html><head><meta http-equiv="refresh" content="0; url={target_url}"></head><body>Redirecting...</body></html>'
                 return Response(request, fallback_html, content_type="text/html")
@@ -563,7 +560,7 @@ class ConfigurationManager(ManagerBase):
                     current_settings["ssid"] = secrets.get("ssid", "")
                     current_settings["password"] = secrets.get("password", "")
                     current_settings["zip_code"] = secrets.get("weather_zip", "")
-                except:
+                except Exception:  # noqa: SIM105
                     pass  # Use empty values if secrets can't be loaded
 
                 # Package data for the frontend
@@ -580,7 +577,7 @@ class ConfigurationManager(ManagerBase):
 
                     return Response(request, html, content_type="text/html")
 
-                except:
+                except Exception:
                     return FileResponse(request, "index.html", "/www")
 
             except Exception as e:

@@ -9,6 +9,7 @@ This module contains all boot logic that runs before code.py:
 This module is compiled to bytecode (.mpy) for efficiency.
 """
 
+import contextlib
 import json
 import os
 
@@ -17,8 +18,8 @@ import sys
 import time
 import traceback
 
-import microcontroller
-import storage
+import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
+import storage  # type: ignore[import-untyped]  # CircuitPython-only module
 
 sys.path.insert(0, "/")
 
@@ -136,16 +137,12 @@ def remove_directory_recursive(path, installer=None):
         remove_directory_recursive(item_path, installer)
 
         # Remove the now-empty directory
-        try:
+        with contextlib.suppress(OSError):
             os.rmdir(item_path)
-        except OSError:
-            pass
 
     # Remove the directory itself
-    try:
+    with contextlib.suppress(OSError):
         os.rmdir(path)
-    except OSError:
-        pass
 
 
 def cleanup_pending_update(installer=None):
@@ -177,7 +174,7 @@ def delete_all_except(preserve_paths, installer=None):
     log_boot_message("Performing full reset (deleting all existing files)...")
 
     # Normalize preserve paths (case-insensitive for FAT32 filesystem)
-    preserve_set = set(path.rstrip("/").lower() for path in preserve_paths)
+    preserve_set = {path.rstrip("/").lower() for path in preserve_paths}
 
     # Get list of all items in root
     root_items = os.listdir("/")
@@ -248,27 +245,21 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
         if dest_dir == "/" and item.lower() in [f.lower() for f in PRESERVED_FILES]:
             log_boot_message(f"  Skipping preserved file: {item}")
             # Remove from pending_update to avoid confusion
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(src_path)
-            except:
-                pass
             continue
 
         try:
             # Check if it's a directory
             is_dir = False
-            try:
+            with contextlib.suppress(OSError):
                 os.listdir(src_path)
                 is_dir = True
-            except OSError:
-                pass  # Not a directory, it's a file
 
             if is_dir:
                 # Create destination directory if it doesn't exist
-                try:
-                    os.mkdir(dest_path)
-                except OSError:
-                    pass  # Directory might already exist
+                with contextlib.suppress(OSError):
+                    os.mkdir(dest_path)  # Directory might already exist
 
                 # Recursively move contents
                 move_directory_contents(src_path, dest_path, installer)
@@ -386,7 +377,7 @@ def process_pending_update():
         # Step 2: Get current version
         try:
             current_version = os.getenv("VERSION", "0.0.0")
-        except:
+        except Exception:
             current_version = "0.0.0"
 
         log_boot_message(f"Current version: {current_version}")
@@ -469,7 +460,7 @@ def process_pending_update():
                         secrets_size = len(secrets_data)
                     secrets_exists = True
                     log_boot_message(f"✓ secrets.json found ({secrets_size} bytes)")
-                except:
+                except OSError:
                     log_boot_message("ℹ No secrets.json (first-time setup)")
 
                 # Step 5: Delete everything except secrets, incompatible list, recovery, and DEVELOPMENT flag
@@ -492,9 +483,9 @@ def process_pending_update():
                             log_boot_message("ERROR: secrets.json was modified during deletion!")
                             raise Exception("Preservation failed - secrets.json corrupted")
                         log_boot_message("✓ secrets.json preserved after deletion")
-                    except OSError:
+                    except OSError as e:
                         log_boot_message("ERROR: secrets.json was deleted during cleanup!")
-                        raise Exception("Preservation failed - secrets.json deleted")
+                        raise Exception("Preservation failed - secrets.json deleted") from e
 
                 # Update LED after deletion
                 if installer:
@@ -513,9 +504,9 @@ def process_pending_update():
                             log_boot_message("ERROR: secrets.json was modified during file move!")
                             raise Exception("File move corrupted secrets.json")
                         log_boot_message("✓ secrets.json preserved after file move")
-                    except OSError:
+                    except OSError as e:
                         log_boot_message("ERROR: secrets.json was deleted during file move!")
-                        raise Exception("File move deleted secrets.json")
+                        raise Exception("File move deleted secrets.json") from e
 
                 # Step 7: Validate critical files are present after installation
                 # Use centralized validation from UpdateManager if available
@@ -654,14 +645,12 @@ def check_and_restore_from_recovery():
                         failed_version, "Automatic recovery triggered - update left device in unbootable state"
                     )
                 log_boot_message(f"Marked version {failed_version} as incompatible")
-        except:
+        except Exception:
             pass  # Couldn't determine version, continue anyway
 
         # Clean up the failed update
-        try:
+        with contextlib.suppress(Exception):
             remove_directory_recursive("/pending_update")
-        except:
-            pass
 
         log_boot_message("\n→ Device recovered successfully")
         log_boot_message("Continuing with normal boot")

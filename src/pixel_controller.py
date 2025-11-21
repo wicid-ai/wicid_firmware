@@ -1,7 +1,7 @@
 import time
 
-import board
-import neopixel
+import board  # type: ignore[import-untyped]  # CircuitPython-only module
+import neopixel  # type: ignore[import-untyped]  # CircuitPython-only module
 
 from logging_helper import logger
 from scheduler import Scheduler
@@ -56,7 +56,7 @@ class PixelController:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(PixelController, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
         return cls._instance
 
     @classmethod

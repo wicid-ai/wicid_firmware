@@ -5,6 +5,7 @@ Implements basic ZIP file parsing and extraction using zlib for decompression.
 Supports stored (uncompressed) and deflated files.
 """
 
+import contextlib
 import struct
 import zlib
 
@@ -185,10 +186,8 @@ class ZipFile:
 
         dir_path = "/".join(dest_path.split("/")[:-1])
         if dir_path and dir_path != "/":
-            try:
+            with contextlib.suppress(OSError):
                 os.mkdir(dir_path)
-            except OSError:
-                pass  # Directory might already exist
 
         with open(dest_path, "wb") as f:
             f.write(data)

@@ -12,6 +12,7 @@ to all A record queries with the local IP address, effectively capturing
 all DNS traffic and redirecting it to the setup portal.
 """
 
+import contextlib
 import struct
 import time
 
@@ -89,7 +90,7 @@ class DNSInterceptor:
 
             return bytes([int(part) for part in parts])
         except ValueError as e:
-            raise ValueError(f"Invalid IP address '{ip_str}': {e}")
+            raise ValueError(f"Invalid IP address '{ip_str}': {e}") from e
 
     def start(self):
         """
@@ -177,22 +178,17 @@ class DNSInterceptor:
         except Exception as e:
             self.logger.warning(f"Error stopping DNS interceptor: {e}")
             # Force cleanup even if there are errors
-            try:
+            with contextlib.suppress(Exception):
                 self._cleanup_socket()
-            except:
-                pass
 
     def _cleanup_socket(self):
         """
         Clean up socket resources safely.
         """
         if self.socket:
-            try:
+            with contextlib.suppress(Exception):
                 self.socket.close()
-            except:
-                pass
-            finally:
-                self.socket = None
+            self.socket = None
 
         # Clear socket pool reference
         self.socket_pool = None
@@ -293,7 +289,7 @@ class DNSInterceptor:
                 self.logger.warning(f"DNS query processing took {processing_time:.2f}s")
 
         except Exception as e:
-            raise Exception(f"DNS query processing failed: {e}")
+            raise Exception(f"DNS query processing failed: {e}") from e
 
     def _handle_dns_query(self, query_data, client_addr):
         """
@@ -333,22 +329,18 @@ class DNSInterceptor:
 
             # Send response with error handling
             if response:
-                try:
+                with contextlib.suppress(OSError):
                     self.socket.sendto(response, client_addr)
-                except OSError:
-                    pass  # Continue processing other queries
 
         except Exception:
             # Try to send a generic error response if we have the transaction ID
             if response is None:
-                try:
+                with contextlib.suppress(Exception):
                     if len(query_data) >= 2:
                         transaction_id = (query_data[0] << 8) | query_data[1]
                         error_response = self._create_error_response(transaction_id, "", self.DNS_RCODE_NAME_ERROR)
                         if error_response:
                             self.socket.sendto(error_response, client_addr)
-                except:
-                    pass
 
     def _parse_dns_query(self, data):
         """
@@ -390,7 +382,7 @@ class DNSInterceptor:
 
             return transaction_id, domain, qtype, qclass
 
-        except:
+        except Exception:
             return None
 
     def _parse_domain_name(self, data, offset):
@@ -422,7 +414,7 @@ class DNSInterceptor:
 
                 try:
                     label = data[offset : offset + length].decode("ascii")
-                except:
+                except Exception:
                     label = ""
                 domain_parts.append(label)
                 offset += length
@@ -473,7 +465,7 @@ class DNSInterceptor:
 
             return header + question + answer
 
-        except:
+        except Exception:
             return None
 
     def _create_error_response(self, transaction_id, domain, rcode):
@@ -510,7 +502,7 @@ class DNSInterceptor:
 
             return header + question
 
-        except:
+        except Exception:
             return None
 
     def _encode_domain_name(self, domain):
@@ -533,7 +525,7 @@ class DNSInterceptor:
 
             try:
                 part_bytes = part.encode("ascii")
-            except:
+            except Exception:
                 part_bytes = b""
             encoded += bytes([len(part_bytes)]) + part_bytes
 

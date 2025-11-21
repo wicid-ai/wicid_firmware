@@ -3,6 +3,7 @@ import time
 
 from button_action_router import ButtonActionRouter
 from configuration_manager import ConfigurationManager
+from mode_interface import Mode
 from scheduler import Scheduler
 
 
@@ -105,8 +106,6 @@ async def blink_for_precip(pixel_controller, color, precip_percent, is_pressed_f
 # ============================================================================
 # Mode Classes (New Architecture)
 # ============================================================================
-
-from mode_interface import Mode
 
 
 class WeatherMode(Mode):

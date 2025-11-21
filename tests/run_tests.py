@@ -262,7 +262,7 @@ def run_all_tests(verbosity=2, tick_callback=None):
 
                                 if hasattr(unittest_mod, "SkipTest") and isinstance(e, unittest_mod.SkipTest):
                                     skip_test = e
-                            except:
+                            except Exception:
                                 pass
 
                         if skip_test:

@@ -13,6 +13,8 @@ Subclasses are expected to:
 - Optionally override ``instance()`` or ``_is_compatible_with()`` for smart reinitialization when dependencies change.
 """
 
+import contextlib
+
 from scheduler import Scheduler
 
 
@@ -108,10 +110,8 @@ class ManagerBase:
         if hasattr(self, "_scheduled_handles"):
             scheduler = Scheduler.instance()
             for handle in self._scheduled_handles:
-                try:
+                with contextlib.suppress(Exception):
                     scheduler.cancel(handle)
-                except Exception:
-                    pass
             self._scheduled_handles = []
 
         self._initialized = False

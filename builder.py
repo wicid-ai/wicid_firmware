@@ -880,7 +880,7 @@ def get_commit_message(version, release_notes):
 def commit_files(commit_message):
     """Commit staged files and return commit SHA."""
     try:
-        result = subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True, check=True)
+        subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True, check=True)
         # Get the commit SHA
         sha_result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
         return sha_result.stdout.strip()

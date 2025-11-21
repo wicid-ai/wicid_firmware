@@ -175,7 +175,7 @@ class WeatherManager(ManagerBase):
                 high = self._weather.get_daily_high()
                 precip = self._weather.get_daily_precip_chance()
             except Exception as fetch_error:
-                raise TaskNonFatalError(f"Weather API error: {fetch_error}")
+                raise TaskNonFatalError(f"Weather API error: {fetch_error}") from fetch_error
 
             # Update cached data
             self._current_temp = temp
@@ -198,13 +198,13 @@ class WeatherManager(ManagerBase):
 
         except MemoryError as e:
             # Fatal: out of memory
-            raise TaskFatalError(f"OOM during weather fetch: {e}")
+            raise TaskFatalError(f"OOM during weather fetch: {e}") from e
 
         except Exception as e:
             # Unknown exception - treat as non-fatal
             self._last_error = str(e)
             self.logger.error(f"Unexpected error fetching weather: {e}", exc_info=True)
-            raise TaskNonFatalError(f"Weather fetch failed: {e}")
+            raise TaskNonFatalError(f"Weather fetch failed: {e}") from e
 
     def get_current_temperature(self):
         """

@@ -12,12 +12,13 @@ This module encapsulates all WiFi connection behavior for the device, including:
 ConnectionManager is a singleton - use ConnectionManager.get_instance() to access it.
 """
 
+import contextlib
 import json
 import os
 import ssl
 import time
 
-import socketpool
+import socketpool  # type: ignore[import-untyped]  # CircuitPython-only module
 
 from logging_helper import logger
 from manager_base import ManagerBase
@@ -366,7 +367,7 @@ class ConnectionManager(ManagerBase):
                     self._connected = True
 
                     # Create socket pool and session
-                    pool = socketpool.SocketPool(self._radio)
+                    # pool = socketpool.SocketPool(self._radio)  # Unused
                     self.session = None  # Will be created by caller if needed
 
                     return True, None
@@ -402,7 +403,7 @@ class ConnectionManager(ManagerBase):
                     # Total time: ~6-7 seconds with short backoff between attempts
                     if auth_failure_count >= 3:
                         self.logger.error("Authentication failed - invalid credentials")
-                        raise AuthenticationError("Invalid password")
+                        raise AuthenticationError("Invalid password") from e
                 else:
                     # Reset counter on non-auth errors
                     auth_failure_count = 0
@@ -414,7 +415,7 @@ class ConnectionManager(ManagerBase):
                 # Continue loop for retry
 
             except ConnectionError as e:
-                errno_code = getattr(e, "errno", None)
+                # errno_code = getattr(e, "errno", None)  # Unused
                 error_msg = str(e)
                 self.logger.debug(f"Attempt #{attempts} failed: {e}")
 
@@ -432,7 +433,7 @@ class ConnectionManager(ManagerBase):
                     # Total time to fail: ~6-7 seconds with short backoff between attempts
                     if auth_failure_count >= 3:
                         self.logger.error("Authentication failed - invalid credentials")
-                        raise AuthenticationError("Invalid password")
+                        raise AuthenticationError("Invalid password") from e
                 else:
                     # Reset counter on non-auth errors
                     auth_failure_count = 0
@@ -530,7 +531,6 @@ class ConnectionManager(ManagerBase):
 
         # Attempt connection with explicit exception handling
         start_time = time.monotonic()
-        connection_success = False
         error_result = None
 
         try:
@@ -542,7 +542,6 @@ class ConnectionManager(ManagerBase):
             if self._radio.connected and self._radio.ipv4_address:
                 self.logger.info(f"Connected - IP: {self._radio.ipv4_address}")
                 self._connected = True
-                connection_success = True
                 return True, None
             else:
                 # Connection method returned but no connection established
@@ -769,7 +768,7 @@ class ConnectionManager(ManagerBase):
                     self._radio.start_ap(ssid_b, None)
         except Exception as e:
             self.logger.error(f"start_ap failed: {e}")
-            raise RuntimeError(f"Failed to start access point: {e}")
+            raise RuntimeError(f"Failed to start access point: {e}") from e
 
         self.logger.info(f"AP Mode Active. Connect to: {ssid}")
         self._ap_active = True
@@ -777,7 +776,7 @@ class ConnectionManager(ManagerBase):
 
         # Wait for AP IP address to be assigned
         ap_ip = None
-        for attempt in range(10):
+        for _attempt in range(10):
             ap_ip = self._radio.ipv4_address_ap
             if ap_ip:
                 break
@@ -870,11 +869,6 @@ class ConnectionManager(ManagerBase):
 
         if not self._ap_active:
             return False, "Not in AP mode"
-
-        # Store AP config to restart if needed
-        ap_ssid = "WICID-Setup"  # Known from setup_portal
-        ap_password = None
-        ap_ip = "192.168.4.1"
 
         try:
             # Try connecting in station mode while AP is still running
@@ -996,8 +990,7 @@ class ConnectionManager(ManagerBase):
             Network objects with ssid, rssi, channel, etc.
         """
         try:
-            for network in self._radio.start_scanning_networks():
-                yield network
+            yield from self._radio.start_scanning_networks()
         finally:
             try:
                 self._radio.stop_scanning_networks()
@@ -1060,10 +1053,8 @@ class ConnectionManager(ManagerBase):
 
             # Disable radio completely
             if hasattr(self, "_radio") and self._radio is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._radio.enabled = False
-                except Exception:
-                    pass
 
             # Clear references
             self.session = None

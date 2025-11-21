@@ -5,7 +5,7 @@ Orchestrates system initialization and mode execution using manager classes.
 
 import os
 
-import microcontroller
+import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
 
 import test_mode
 from configuration_manager import ConfigurationManager

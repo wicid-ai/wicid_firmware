@@ -71,11 +71,8 @@ class AssertRaisesContext:
         self.raised = exc_type
         self.exception_value = exc_value
         if exc_type is None:
-            assert False, "%r not raised" % self.expected
-        if issubclass(exc_type, self.expected):
-            return True
-        # unhandled exceptions will get re-raise: Returning false indicates not handled
-        return False
+            raise AssertionError(f"{self.expected!r} not raised")
+        return issubclass(exc_type, self.expected)
 
 
 class TestCase:
@@ -158,15 +155,15 @@ class TestCase:
             if abs(x - y) <= delta:
                 return
             if not msg:
-                msg = "%r != %r within %r delta" % (x, y, delta)
+                msg = f"{x!r} != {y!r} within {delta!r} delta"
         else:
             if places is None:
                 places = 7
             if round(abs(y - x), places) == 0:
                 return
             if not msg:
-                msg = "%r != %r within %r places" % (x, y, places)
-        assert False, msg
+                msg = f"{x!r} != {y!r} within {places!r} places"
+        raise AssertionError(msg)
 
     def fail(self, msg=""):  # noqa
         """
@@ -175,7 +172,7 @@ class TestCase:
         Params:
             msg: str, optional
         """
-        assert False, msg
+        raise AssertionError(msg)
 
     def assertEqual(self, x, y, msg=""):  # noqa
         """
@@ -187,7 +184,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:  # noqa
-            msg = "%r vs (expected) %r" % (x, y)
+            msg = f"{x!r} vs (expected) {y!r}"
         assert x == y, msg
 
     def assertNotEqual(self, x, y, msg=""):  # noqa
@@ -200,7 +197,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "%r not expected to be equal %r" % (x, y)
+            msg = f"{x!r} not expected to be equal {y!r}"
         assert x != y, msg
 
     def assertNotAlmostEqual(self, x, y, places=None, msg="", delta=None):  # noqa
@@ -220,15 +217,15 @@ class TestCase:
             if x != y and abs(x - y) > delta:
                 return
             if not msg:
-                msg = "%r == %r within %r delta" % (x, y, delta)
+                msg = f"{x!r} == {y!r} within {delta!r} delta"
         else:
             if places is None:
                 places = 7
             if x != y and round(abs(y - x), places) != 0:
                 return
             if not msg:
-                msg = "%r == %r within %r places" % (x, y, places)
-        assert False, msg
+                msg = f"{x!r} == {y!r} within {places!r} places"
+        raise AssertionError(msg)
 
     def assertIs(self, x, y, msg=""):  # noqa
         """
@@ -240,7 +237,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "%r is not %r" % (x, y)
+            msg = f"{x!r} is not {y!r}"
         assert x is y, msg
 
     def assertIsNot(self, x, y, msg=""):  # noqa
@@ -253,7 +250,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "%r is %r" % (x, y)
+            msg = f"{x!r} is {y!r}"
         assert x is not y, msg
 
     def assertIsNone(self, x, msg=""):  # noqa
@@ -265,7 +262,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "%r is not None" % x
+            msg = f"{x!r} is not None"
         assert x is None, msg
 
     def assertIsNotNone(self, x, msg=""):  # noqa
@@ -277,7 +274,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "%r is None" % x
+            msg = f"{x!r} is None"
         assert x is not None, msg
 
     def assertTrue(self, x, msg=""):  # noqa
@@ -289,7 +286,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "Expected %r to be True" % x
+            msg = f"Expected {x!r} to be True"
         assert x, msg
 
     def assertFalse(self, x, msg=""):  # noqa
@@ -301,7 +298,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "Expected %r to be False" % x
+            msg = f"Expected {x!r} to be False"
         assert not x, msg
 
     def assertIn(self, x, y, msg=""):  # noqa
@@ -314,7 +311,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "Expected %r to be in %r" % (x, y)
+            msg = f"Expected {x!r} to be in {y!r}"
         assert x in y, msg
 
     def assertNotIn(self, x, y, msg=""):  # noqa
@@ -327,7 +324,7 @@ class TestCase:
             msg: str, optional
         """
         if not msg:
-            msg = "Expected %r to not be in %r" % (x, y)
+            msg = f"Expected {x!r} to not be in {y!r}"
         assert x not in y, msg
 
     def assertIsInstance(self, x, y, msg=""):  # noqa
@@ -359,7 +356,7 @@ class TestCase:
             return AssertRaisesContext(exc)
         try:
             func(*args, **kwargs)
-            assert False, "%r not raised" % exc
+            raise AssertionError(f"{exc!r} not raised")
         except Exception as e:
             if isinstance(e, exc):
                 return None

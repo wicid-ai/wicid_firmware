@@ -9,8 +9,8 @@ import json
 import os
 import sys
 
-import board
-import microcontroller
+import board  # type: ignore[import-untyped]  # CircuitPython-only module
+import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
 
 from logging_helper import logger
 
@@ -83,7 +83,6 @@ def get_mac_address():
     Returns:
         str: MAC address in colon-separated hex format, or None if Wi-Fi unavailable
     """
-    log = logger("wicid.utils")
     try:
         # Lazy import to avoid circular dependency
         from connection_manager import ConnectionManager
@@ -274,9 +273,8 @@ def is_release_incompatible(version, max_attempts=1):
             incompatible = json.load(f)
 
             # Support old format (list of versions) - treat as permanent block
-            if "versions" in incompatible:
-                if version in incompatible["versions"]:
-                    return (True, "Unknown (old format)", max_attempts)
+            if "versions" in incompatible and version in incompatible["versions"]:
+                return (True, "Unknown (old format)", max_attempts)
 
             # New format (dict with reasons and attempt counts)
             if "releases" in incompatible and version in incompatible["releases"]:

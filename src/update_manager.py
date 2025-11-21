@@ -30,13 +30,14 @@ Reset Types:
     - supervisor.reload() = Soft reboot, skips boot.py (use for config changes only)
 """
 
+import contextlib
 import json
 import os
 import time
 import traceback
 
 import adafruit_hashlib as hashlib
-import microcontroller
+import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
 
 from logging_helper import logger
 from scheduler import Scheduler
@@ -236,10 +237,8 @@ class UpdateManager:
                             if not part:
                                 continue
                             current_path += "/" + part
-                            try:
-                                os.mkdir(current_path)
-                            except OSError:
-                                pass  # Directory already exists
+                            with contextlib.suppress(OSError):
+                                os.mkdir(current_path)  # Directory already exists
 
                     # Write to recovery location
                     with open(recovery_path, "wb") as dst:
@@ -327,11 +326,9 @@ class UpdateManager:
                         for part in parts:
                             if not part:
                                 continue
-                            current_path += "/" + part
-                            try:
-                                os.mkdir(current_path)
-                            except OSError:
-                                pass
+                        current_path += "/" + part
+                        with contextlib.suppress(OSError):
+                            os.mkdir(current_path)
 
                     # Write to root location
                     with open(file_path, "wb") as dst:
@@ -452,10 +449,8 @@ class UpdateManager:
                         sub_items = os.listdir(item_path)
                         for sub_item in sub_items:
                             sub_item_path = f"{item_path}/{sub_item}"
-                            try:
+                            with contextlib.suppress(OSError):
                                 os.remove(sub_item_path)
-                            except OSError:
-                                pass
                         os.rmdir(item_path)
                     except OSError:
                         pass
@@ -605,7 +600,7 @@ class UpdateManager:
                 with open("/secrets.json") as f:
                     secrets = json.load(f)
                     weather_zip = secrets.get("weather_zip", "")
-            except:
+            except Exception:
                 weather_zip = ""
 
             # Include device info in User-Agent header
@@ -869,10 +864,8 @@ class UpdateManager:
                 self._cleanup_pending_root()
 
                 for directory in (self.PENDING_UPDATE_DIR, self.PENDING_ROOT_DIR):
-                    try:
+                    with contextlib.suppress(OSError):
                         os.mkdir(directory)
-                    except OSError:
-                        pass
 
                 zip_path = f"{self.PENDING_UPDATE_DIR}/update.zip"
                 self.logger.info(f"Downloading update: {zip_url}")
@@ -972,10 +965,8 @@ class UpdateManager:
                         self._notify_progress("error", f"Verification failed: {checksum_msg}", None)
                         if "mismatch" in checksum_msg.lower():
                             self.logger.critical("SECURITY WARNING: Downloaded file may be corrupted or tampered with")
-                        try:
+                        with contextlib.suppress(OSError):
                             os.remove(zip_path)
-                        except OSError:
-                            pass
                         self._cleanup_pending_root()
                         self._record_failed_update(checksum_msg)
                         return False
@@ -1008,9 +999,8 @@ class UpdateManager:
 
                         file_count = 0
                         total_files = len(files_to_extract)
-                        for filename in files_to_extract:
+                        for file_count, filename in enumerate(files_to_extract, start=1):
                             zf.extract(filename, self.PENDING_ROOT_DIR)
-                            file_count += 1
 
                             if file_count % 3 == 0 or file_count == total_files:
                                 self._update_download_led()
@@ -1037,10 +1027,8 @@ class UpdateManager:
                         self._update_download_led()
                     except (OSError, ValueError, KeyError) as e:
                         self.logger.error(f"Extracted manifest.json is corrupted or invalid: {e}")
-                        try:
+                        with contextlib.suppress(OSError):
                             os.remove(zip_path)
-                        except OSError:
-                            pass
                         self._cleanup_pending_root()
                         self._record_failed_update(f"Invalid manifest: {e}")
                         return False
@@ -1059,10 +1047,8 @@ class UpdateManager:
                             self.logger.error(f"  ... and {len(missing_files) - 10} more")
                         self.logger.error("Installation would brick the device - aborting")
                         self._notify_progress("error", "Update package incomplete", None)
-                        try:
+                        with contextlib.suppress(OSError):
                             os.remove(zip_path)
-                        except OSError:
-                            pass
                         self._cleanup_pending_root()
                         self._record_failed_update("Update package incomplete", version=manifest.get("version"))
                         return False
@@ -1080,10 +1066,8 @@ class UpdateManager:
                     self.logger.error(f"Error extracting update: {e}")
                     traceback.print_exception(e)
                     self._notify_progress("error", f"Extraction failed: {e}", None)
-                    try:
+                    with contextlib.suppress(OSError):
                         os.remove(zip_path)
-                    except OSError:
-                        pass
                     self._cleanup_pending_root()
                     self._record_failed_update(f"Extraction error: {e}")
                     return False
@@ -1098,10 +1082,8 @@ class UpdateManager:
                 self.logger.error(f"Error downloading update: {e}")
                 traceback.print_exception(e)
                 self._notify_progress("error", f"Download failed: {e}", None)
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
-                except OSError:
-                    pass
                 self._cleanup_pending_root()
                 self._record_failed_update(str(e))
                 return False
@@ -1141,7 +1123,7 @@ class UpdateManager:
         if interval_hours is None:
             try:
                 interval_hours = int(os.getenv("SYSTEM_UPDATE_CHECK_INTERVAL", "24"))
-            except:
+            except ValueError:
                 interval_hours = 24
 
         try:

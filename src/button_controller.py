@@ -5,8 +5,8 @@ Provides a simple polling interface that is scheduler-friendly
 and does not spin up its own asyncio tasks.
 """
 
-import board
-import digitalio
+import board  # type: ignore[import-untyped]  # CircuitPython-only module
+import digitalio  # type: ignore[import-untyped]  # CircuitPython-only module
 
 
 class ButtonController:

@@ -67,7 +67,7 @@ class WicidLogger:
                 print(msg)
             else:
                 level_name = _LEVEL_NAMES.get(level, "UNKNOWN")
-                print("[%s: %s] %s" % (level_name, self.module, msg))
+                print(f"[{level_name}: {self.module}] {msg}")
         if exc_info:
             try:
                 import sys

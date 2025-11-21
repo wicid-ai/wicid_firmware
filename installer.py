@@ -8,6 +8,7 @@ installation methods for WICID firmware packages to CIRCUITPY devices.
 """
 
 import argparse
+import contextlib
 import filecmp
 import glob
 import json
@@ -122,7 +123,7 @@ def detect_circuitpy_drive():
                     )
                     if volume_name_buffer.value == "CIRCUITPY":
                         return drive_path
-                except:
+                except Exception:
                     pass
 
     return None
@@ -337,10 +338,8 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
                     copied_count += 1
                 except Exception as e:
                     # Clean up temp file if something failed
-                    try:
+                    with contextlib.suppress(Exception):
                         temp_dst.unlink()
-                    except:
-                        pass
                     raise e
 
     except OSError as e:
@@ -383,7 +382,7 @@ def cleanup_macos_artifacts(circuitpy_path):
     removed_count = 0
 
     try:
-        for root, dirs, files in os.walk(circuitpy_path):
+        for root, _dirs, files in os.walk(circuitpy_path):
             for file in files:
                 if file.startswith("."):
                     # Never attempt to remove .Trashes (system-managed on macOS)
@@ -485,9 +484,9 @@ def _drain_stdout(pipe):
         pipe: File object to drain
     """
     try:
-        for line in pipe:
+        for _line in pipe:
             pass  # Discard output
-    except:
+    except Exception:
         pass  # Pipe closed or process died
 
 
@@ -590,15 +589,15 @@ def start_wicid_web_server(web_root_dir):
 
         return process, local_url
 
-    except FileNotFoundError:
-        raise Exception("npm command not found. Please ensure Node.js and npm are installed.")
+    except FileNotFoundError as err:
+        raise Exception("npm command not found. Please ensure Node.js and npm are installed.") from err
     except Exception:
         # Try to clean up process if it exists
         try:
             if "process" in locals() and process.poll() is None:
                 process.terminate()
                 process.wait(timeout=5)
-        except:
+        except Exception:
             pass
         raise
 
@@ -757,24 +756,23 @@ def copy_file_safely(src_path, dst_path):
     # Check each path component from root to parent (reverse order)
     # This ensures we handle conflicts at the root level before deeper levels
     for path_component in reversed(path_components):
-        if path_component.exists():
-            if path_component.is_file():
-                # Check if it's a preserved file - if so, we can't remove it
-                if path_component.name.lower() in [f.lower() for f in PRESERVED_FILES]:
-                    raise OSError(
-                        f"Cannot create directory {parent}: path component {path_component} exists as preserved file {path_component.name}. "
-                        f"This may indicate filesystem corruption. "
-                        f"Try removing {path_component} manually or use HARD update mode."
-                    )
-                # Remove the file so we can create it as a directory
-                try:
-                    path_component.unlink()
-                except Exception as e:
-                    raise OSError(
-                        f"Cannot create directory {parent}: path component {path_component} exists as file and could not be removed: {e}. "
-                        f"This may indicate filesystem corruption. "
-                        f"Try removing {path_component} manually or use HARD update mode."
-                    ) from e
+        if path_component.exists() and path_component.is_file():
+            # Check if it's a preserved file - if so, we can't remove it
+            if path_component.name.lower() in [f.lower() for f in PRESERVED_FILES]:
+                raise OSError(
+                    f"Cannot create directory {parent}: path component {path_component} exists as preserved file {path_component.name}. "
+                    f"This may indicate filesystem corruption. "
+                    f"Try removing {path_component} manually or use HARD update mode."
+                )
+            # Remove the file so we can create it as a directory
+            try:
+                path_component.unlink()
+            except Exception as e:
+                raise OSError(
+                    f"Cannot create directory {parent}: path component {path_component} exists as file and could not be removed: {e}. "
+                    f"This may indicate filesystem corruption. "
+                    f"Try removing {path_component} manually or use HARD update mode."
+                ) from e
 
     # Create parent directories (all path conflicts should now be resolved)
     try:
@@ -797,10 +795,8 @@ def copy_file_safely(src_path, dst_path):
         temp_dst.rename(dst_path)
     except Exception as e:
         # Clean up temp file if something failed
-        try:
+        with contextlib.suppress(Exception):
             temp_dst.unlink()
-        except:
-            pass
         raise e
 
 
@@ -910,7 +906,7 @@ def copy_tests_incremental(circuitpy_path, tests_dir):
                 added_count += 1
 
     # Handle directories - ensure they exist on CIRCUITPY
-    for root, dirs, files in os.walk(tests_dir):
+    for root, dirs, _files in os.walk(tests_dir):
         # Skip hidden directories
         dirs[:] = [d for d in dirs if not d.startswith(".")]
 
@@ -1053,7 +1049,7 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
                     added_count += 1
 
         # Handle directories - ensure they exist on CIRCUITPY
-        for root, dirs, files in os.walk(temp_dir):
+        for root, dirs, _files in os.walk(temp_dir):
             # Skip hidden directories
             dirs[:] = [d for d in dirs if not d.startswith(".")]
 
@@ -1252,7 +1248,7 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
             try:
                 secrets_size = secrets_path.stat().st_size
                 print(f"    Size: {secrets_size} bytes")
-            except:
+            except Exception:
                 pass
         else:
             print("  ℹ No secrets.json found (first-time setup)")
@@ -1266,7 +1262,7 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
             import os as os_module
 
             os_module.sync()
-        except:
+        except Exception:
             pass  # sync() not available on all platforms
 
         # Verify secrets.json still exists after deletion (preservation check)
@@ -1287,7 +1283,7 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
             import os as os_module
 
             os_module.sync()
-        except:
+        except Exception:
             pass
 
         # Final verification that secrets.json still exists (copy operation check)
@@ -1301,7 +1297,7 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
                 try:
                     final_size = secrets_path.stat().st_size
                     print(f"    Final size: {final_size} bytes")
-                except:
+                except Exception:
                     pass
 
         # Remove any newly created macOS metadata files
@@ -1456,10 +1452,8 @@ def simulated_ota_update(circuitpy_path, zip_path):
         # Only stop server if it was started and we encountered an error before user prompt
         # If we've already prompted the user, they control the server lifecycle
         if process and process.poll() is None:
-            try:
+            with contextlib.suppress(Exception):
                 stop_wicid_web_server(process)
-            except:
-                pass
 
         return False
 

@@ -65,7 +65,7 @@ class ModeManager:
 
         # Warn about duplicate orders (non-deterministic)
         orders = [m.order for m in self.modes]
-        duplicates = set([order for order in orders if orders.count(order) > 1])
+        duplicates = {order for order in orders if orders.count(order) > 1}
         if duplicates:
             for dup_order in duplicates:
                 dup_modes = [m.name for m in self.modes if m.order == dup_order]

@@ -9,7 +9,7 @@ import os
 import time
 import traceback
 
-import microcontroller
+import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
 
 from logging_helper import logger
 from manager_base import ManagerBase

@@ -6,7 +6,7 @@ components (e.g., connection managers) can interact with WiFi hardware
 via a testable, injectable dependency.
 """
 
-import wifi
+import wifi  # type: ignore[import-untyped]  # CircuitPython-only module
 
 
 class WiFiRadioController:

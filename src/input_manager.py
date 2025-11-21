@@ -13,6 +13,7 @@ hardware. Other components register callbacks for button events via InputManager
 Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 """
 
+import contextlib
 import time
 
 from button_controller import ButtonController
@@ -201,11 +202,7 @@ class InputManager(ManagerBase):
             return True
 
         # Same object reference means compatible
-        if self._init_button_pin is button_pin:
-            return True
-
-        # Different pins mean incompatible (need reinit)
-        return False
+        return self._init_button_pin is button_pin
 
     def register_callback(self, event_type, callback):
         """
@@ -424,10 +421,8 @@ class InputManager(ManagerBase):
 
         # Deinitialize button controller (releases DigitalInOut pin)
         if hasattr(self, "_controller") and self._controller is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._controller.deinit()
-            except Exception:
-                pass
             self._controller = None
 
         # Clear references
