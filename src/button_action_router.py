@@ -5,9 +5,9 @@ Provides a shared queue used by ModeManager and temporary sessions
 (e.g., setup portal) so button semantics stay consistent across modes.
 """
 
-from input_manager import InputManager, ButtonEvent
-from pixel_controller import PixelController
+from input_manager import ButtonEvent, InputManager
 from logging_helper import logger
+from pixel_controller import PixelController
 
 
 class ButtonAction:

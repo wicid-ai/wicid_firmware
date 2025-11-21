@@ -7,38 +7,38 @@ Provides cached weather data accessible synchronously by other components.
 Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 """
 
-from scheduler import Scheduler, TaskNonFatalError, TaskFatalError
-from weather_service import WeatherService
+from connection_manager import ConnectionManager
 from logging_helper import logger
 from manager_base import ManagerBase
-from connection_manager import ConnectionManager
+from scheduler import Scheduler, TaskFatalError, TaskNonFatalError
+from weather_service import WeatherService
 
 
 class WeatherManager(ManagerBase):
     """
     Singleton manager for weather data with scheduled updates.
-    
+
     Fetches weather data periodically via scheduler and caches results
     for synchronous access by display and other components.
     """
-    
+
     _instance = None
-    
+
     # Update interval: 20 minutes (1200 seconds)
     UPDATE_INTERVAL = 1200.0
-    
+
     @classmethod
     def instance(cls, session=None, weather_zip=None):
         """
         Get the WeatherManager singleton.
-        
+
         Supports smart reinitialization: if session/weather_zip changes (e.g., in tests),
         the existing instance will be shut down and reinitialized.
 
         Args:
             session: Optional HTTP session (for initialization)
             weather_zip: Optional ZIP code (for initialization)
-        
+
         Returns:
             WeatherManager: The global WeatherManager instance
         """
@@ -53,10 +53,10 @@ class WeatherManager(ManagerBase):
                 cls._instance.shutdown()
                 cls._instance._init(session, weather_zip)
         return cls._instance
-    
+
     def __init__(self, session=None, weather_zip=None):
         """Initialize weather manager (called via singleton pattern or directly).
-        
+
         Args:
             session: Optional HTTP session (for initialization)
             weather_zip: Optional ZIP code (for initialization)
@@ -71,32 +71,32 @@ class WeatherManager(ManagerBase):
 
     def _init(self, session=None, weather_zip=None):
         """Internal initialization method.
-        
+
         Args:
             session: Optional HTTP session (for initialization)
             weather_zip: Optional ZIP code (for initialization)
         """
-        self.logger = logger('wicid.weather_mgr')
+        self.logger = logger("wicid.weather_mgr")
         self.logger.info("Initializing WeatherManager")
-        
+
         # Store init parameters for compatibility checking
         self._init_weather_zip = weather_zip
-        
+
         # Cached weather data
         self._current_temp = None
         self._daily_high = None
         self._daily_precip_chance = None
         self._last_update_time = None
         self._last_error = None
-        
+
         # Weather service instance (lazy-initialized)
         self._weather = None
         self._weather_zip = weather_zip
         self.connection_manager = ConnectionManager.instance()
-        
+
         # Task handle for cancellation
         self._task_handle = None
-        
+
         self._initialized = True
         self.logger.info("WeatherManager initialized (weather service will be initialized on first update)")
 
@@ -114,29 +114,29 @@ class WeatherManager(ManagerBase):
         # If not initialized yet, always compatible (will initialize)
         if not getattr(self, "_initialized", False):
             return True
-        
+
         # Compare stored init parameters with requested ones
         # Same object references or both None means compatible
         zip_compat = (self._init_weather_zip is None and weather_zip is None) or (self._init_weather_zip == weather_zip)
         return zip_compat
-    
+
     def initialize_weather_service(self, session, weather_zip):
         """
         Initialize the weather service with session and ZIP code.
-        
+
         Must be called before scheduling updates (typically after WiFi connects).
-        
+
         Args:
             session: Legacy placeholder (ignored; kept for compatibility)
             weather_zip: ZIP code for weather location
         """
         self.logger.info(f"Initializing weather service for ZIP: {weather_zip}")
-        
+
         try:
             session = self.connection_manager.create_session()
             self._weather = WeatherService(weather_zip, session=session)
             self._weather_zip = weather_zip
-            
+
             # Schedule recurring weather update task
             if self._task_handle is None:
                 scheduler = Scheduler.instance()
@@ -144,29 +144,29 @@ class WeatherManager(ManagerBase):
                     coroutine=self._update_weather,
                     interval=self.UPDATE_INTERVAL,
                     priority=40,  # Background data fetching
-                    name="Weather Updates"
+                    name="Weather Updates",
                 )
                 self._task_handle = self._track_task_handle(handle)
                 self.logger.info(f"Scheduled weather updates every {self.UPDATE_INTERVAL}s")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to initialize weather service: {e}")
             raise
-    
+
     async def _update_weather(self):
         """
         Fetch weather data from API (called by scheduler every 20 minutes).
-        
+
         This task runs periodically to update cached weather data.
         Network I/O automatically yields to scheduler during HTTP requests.
         """
         if self._weather is None:
             self.logger.warning("Weather service not initialized - skipping update")
             return
-        
+
         try:
             self.logger.debug("Fetching weather data...")
-            
+
             # Network I/O automatically yields to scheduler during requests
             # These calls are synchronous from our perspective but the underlying
             # HTTP operations yield control during waits
@@ -176,132 +176,132 @@ class WeatherManager(ManagerBase):
                 precip = self._weather.get_daily_precip_chance()
             except Exception as fetch_error:
                 raise TaskNonFatalError(f"Weather API error: {fetch_error}")
-            
+
             # Update cached data
             self._current_temp = temp
             self._daily_high = high
             self._daily_precip_chance = precip
-            
+
             import time
+
             self._last_update_time = time.monotonic()
             self._last_error = None
-            
+
             temp_msg = f"{temp}°F" if temp is not None else "n/a"
             high_msg = f"{high}°F" if high is not None else "n/a"
             precip_msg = f"{precip}%" if precip is not None else "n/a"
-            self.logger.info(
-                f"Weather updated: {temp_msg} (high: {high_msg}, precip: {precip_msg})"
-            )
-            
+            self.logger.info(f"Weather updated: {temp_msg} (high: {high_msg}, precip: {precip_msg})")
+
         except TaskNonFatalError:
             # Re-raise to let scheduler handle retry
             raise
-            
+
         except MemoryError as e:
             # Fatal: out of memory
             raise TaskFatalError(f"OOM during weather fetch: {e}")
-            
+
         except Exception as e:
             # Unknown exception - treat as non-fatal
             self._last_error = str(e)
             self.logger.error(f"Unexpected error fetching weather: {e}", exc_info=True)
             raise TaskNonFatalError(f"Weather fetch failed: {e}")
-    
+
     def get_current_temperature(self):
         """
         Get cached current temperature (synchronous).
-        
+
         Returns:
             float: Temperature in °F, or None if no data available
         """
         return self._current_temp
-    
+
     def get_daily_high(self):
         """
         Get cached daily high temperature (synchronous).
-        
+
         Returns:
             float: High temperature in °F, or None if no data available
         """
         return self._daily_high
-    
+
     def get_daily_precip_chance(self):
         """
         Get cached precipitation chance (synchronous).
-        
+
         Returns:
             int: Precipitation probability 0-100%, or None if no data available
         """
         return self._daily_precip_chance
-    
+
     def get_precip_chance_in_window(self, start_offset, duration):
         """
         Get precipitation chance for a future time window.
-        
+
         Note: This makes a synchronous API call and should be used sparingly.
         Consider caching or scheduling if used frequently.
-        
+
         Args:
             start_offset: Hours from now to start window
             duration: Window duration in hours
-        
+
         Returns:
             int: Maximum precipitation probability in window, or None on error
         """
         if self._weather is None:
             self.logger.warning("Weather service not initialized")
             return None
-        
+
         try:
             return self._weather.get_precip_chance_in_window(start_offset, duration)
         except Exception as e:
             self.logger.error(f"Error fetching precip window: {e}")
             return None
-    
+
     def get_last_update_time(self):
         """
         Get timestamp of last successful update (monotonic time).
-        
+
         Returns:
             float: Monotonic timestamp, or None if never updated
         """
         return self._last_update_time
-    
+
     def get_last_error(self):
         """
         Get last error message if update failed.
-        
+
         Returns:
             str: Error message, or None if no error
         """
         return self._last_error
-    
+
     def is_data_stale(self, max_age_seconds=1800):
         """
         Check if cached data is stale.
-        
+
         Args:
             max_age_seconds: Maximum age before data is considered stale (default: 30min)
-        
+
         Returns:
             bool: True if data is stale or unavailable
         """
         if self._last_update_time is None:
             return True
-        
+
         import time
+
         age = time.monotonic() - self._last_update_time
         return age > max_age_seconds
-    
+
     async def force_update(self):
         """
         Force an immediate weather update (bypasses schedule).
-        
+
         Returns when update completes. Use sparingly.
         """
         self.logger.info("Forcing weather update")
         await self._update_weather()
-    
+
     def shutdown(self):
         """
         Release all resources owned by WeatherManager.

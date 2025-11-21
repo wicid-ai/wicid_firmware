@@ -8,7 +8,7 @@ feedback are functioning correctly on the device.
 import sys
 
 # Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, '/')
+sys.path.insert(0, "/")
 
 # Import unittest framework
 from unittest import TestCase

@@ -100,7 +100,7 @@ Always prefer `.static` builds and avoid pre-release versions (those with `-` su
    ```bash
    # macOS example
    mv mpy-cross-macos-10.0.3-universal.static mpy-cross
-   
+
    # Linux example
    mv mpy-cross-linux-amd64-10.0.3.static mpy-cross
    ```
@@ -369,15 +369,15 @@ When a device downloads an update:
 1. **Pre-flight Checks**:
    - Check available disk space (requires ~200KB minimum)
    - Verify update manifest is reachable
-   
+
 2. **Download**: ZIP saved to `/pending_update/`
    - Download in 4KB chunks for reliability
    - Calculate SHA-256 checksum of downloaded file
-   
+
 3. **Verification**: Validate download integrity
    - Compare calculated checksum against manifest
    - Abort if checksum mismatch (corrupted/tampered download)
-   
+
 4. **Extract**: Contents extracted to `/pending_update/root/`
    - Extract all non-hidden files
    - Validate manifest.json is present and valid
@@ -391,24 +391,24 @@ When a device downloads an update:
    - If missing, restore from `/recovery/` backup
    - Mark failed update as incompatible
    - Reboot after recovery
-   
+
 7. **Verify**: Bootloader checks compatibility:
    - Machine type must match
-   - OS version must be compatible  
+   - OS version must be compatible
    - Version must be newer
    - Not previously marked incompatible
    - All critical files present in update package
-   
+
 8. **Install**: If compatible, perform full reset:
    - Delete all existing firmware
    - Preserve `/secrets.json`, `/incompatible_releases.json`, and `/recovery/`
    - Move new files to root
    - Validate all critical files present after installation
-   
+
 9. **Backup**: Create/update recovery backup
    - Back up all critical files to `/recovery/`
    - Persistent across updates for catastrophic failure recovery
-   
+
 10. **Reboot**: Device starts with new firmware
 
 If incompatible or validation fails at any stage, the release is marked to prevent retry loops and the device boots with current firmware.
@@ -435,7 +435,7 @@ This ensures the device can always recover from:
 Format: `MAJOR.MINOR.PATCH[-PRERELEASE]`
 
 **Patch** (0.0.x): Bug fixes, performance improvements
-**Minor** (0.x.0): New features, backward compatible  
+**Minor** (0.x.0): New features, backward compatible
 **Major** (x.0.0): Breaking changes, incompatible updates
 
 **Pre-release** tags: `-alpha.1`, `-beta.2`, `-rc.1`

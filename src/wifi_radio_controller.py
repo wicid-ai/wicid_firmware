@@ -30,5 +30,3 @@ class WiFiRadioController:
     def radio(self):
         """Underlying radio object (typically `wifi.radio`)."""
         return self._radio
-
-

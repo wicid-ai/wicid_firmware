@@ -4,21 +4,23 @@ Orchestrates system initialization and mode execution using manager classes.
 """
 
 import os
+
 import microcontroller
-from pixel_controller import PixelController
-from configuration_manager import ConfigurationManager
-from mode_manager import ModeManager
-from modes import WeatherMode, TempDemoMode, PrecipDemoMode, SetupPortalMode
-from logging_helper import configure_logging, logger
-from input_manager import InputManager
-from utils import trigger_safe_mode
+
 import test_mode
+from configuration_manager import ConfigurationManager
+from input_manager import InputManager
+from logging_helper import configure_logging, logger
+from mode_manager import ModeManager
+from modes import PrecipDemoMode, SetupPortalMode, TempDemoMode, WeatherMode
+from pixel_controller import PixelController
 from scheduler import Scheduler
+from utils import trigger_safe_mode
 
 # Configure logging from settings
 log_level = os.getenv("LOG_LEVEL", "INFO")
 configure_logging(log_level)
-APP_LOG = logger('wicid')
+APP_LOG = logger("wicid")
 
 # Initialize InputManager early (owns board.BUTTON)
 # Managers should use InputManager callbacks instead of polling
@@ -29,7 +31,7 @@ print("\n" + "=" * 60)
 print("BOOT LOG")
 print("=" * 60)
 try:
-    with open("/boot_log.txt", "r") as f:
+    with open("/boot_log.txt") as f:
         print(f.read())
     os.remove("/boot_log.txt")
 except OSError:
@@ -45,9 +47,9 @@ async def _startup_sequence():
             pixel = PixelController()
             next_mode = await test_mode.run_tests_and_await_action(pixel)
 
-            if next_mode == 'safe':
+            if next_mode == "safe":
                 trigger_safe_mode()
-            elif next_mode == 'setup':
+            elif next_mode == "setup":
                 APP_LOG.info("Entering setup mode (user requested after tests)")
                 setup_success = await SetupPortalMode.execute()
                 if setup_success:
@@ -70,6 +72,7 @@ async def _startup_sequence():
         APP_LOG.critical(f"Fatal error: {e}", exc_info=True)
         try:
             import traceback
+
             with open("/crash_log.txt", "w") as crash_file:
                 traceback.print_exception(type(e), e, e.__traceback__, file=crash_file)
                 crash_file.flush()

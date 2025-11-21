@@ -1,17 +1,20 @@
+import time
+
 import board
 import neopixel
-import time
-from scheduler import Scheduler
+
 from logging_helper import logger
+from scheduler import Scheduler
+
 
 class _OperationContext:
     """Async context manager for LED operations that auto-restores previous state."""
-    
+
     def __init__(self, pixel_controller, operation_method):
         self.pixel_controller = pixel_controller
         self.operation_method = operation_method
         self.saved_state = None
-    
+
     async def __aenter__(self):
         # Save current state
         self.saved_state = self.pixel_controller._save_state()
@@ -19,7 +22,7 @@ class _OperationContext:
         if callable(self.operation_method):
             self.operation_method()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         # Restore previous state
         self.pixel_controller._restore_state(self.saved_state)
@@ -29,40 +32,41 @@ class _OperationContext:
 class PixelController:
     """
     Singleton class that encapsulates NeoPixel control for a single-pixel device.
-    
+
     Provides semantic, high-level operations (indicate_downloading, indicate_setup_mode, etc.)
     that hide implementation details. All animations are non-blocking and time-based.
-    
+
     External code should:
     - Call semantic operation methods to express intent
     - Use context managers for automatic state management
-    
+
     External code should NOT:
     - Access internal state (_mode, MODE_* constants)
     - Call low-level animation methods directly (start_flashing, start_pulsing)
     - Manage animation parameters (colors, rates)
     """
+
     _instance = None
     _initialized = False
-    
+
     # Animation modes (private - do not access from external code)
     _MODE_SOLID = 0
     _MODE_PULSING = 1
     _MODE_FLASHING = 2
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(PixelController, cls).__new__(cls)
         return cls._instance
-    
+
     @classmethod
     def instance(cls, pixel=None):
         """
         Get the PixelController singleton instance.
-        
+
         Args:
             pixel: Optional NeoPixel instance. If None, creates from board.NEOPIXEL
-        
+
         Returns:
             The global PixelController instance
         """
@@ -70,63 +74,63 @@ class PixelController:
             cls._instance = cls()
             cls._instance._init(pixel)
         return cls._instance
-    
+
     def __init__(self, pixel=None):
         """
         Initialize PixelController (called via singleton pattern).
-        
+
         Args:
             pixel: Optional NeoPixel instance. If None, creates from board.NEOPIXEL
         """
         if PixelController._initialized:
             return
         self._init(pixel)
-    
+
     def _init(self, pixel=None):
         """
         Internal initialization method.
-        
+
         Args:
             pixel: Optional NeoPixel instance. If None, creates from board.NEOPIXEL
         """
-        self.logger = logger('wicid.pixel')
-        
+        self.logger = logger("wicid.pixel")
+
         # Initialize the NeoPixel hardware
         if pixel is None:
             self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.3, auto_write=True)
         else:
             self.pixels = pixel
-        
+
         # Animation state (frame-based, not time-based)
         self._mode = self._MODE_SOLID
         self._frame_counter = 0
-        
+
         # Pulsing parameters
         self._pulse_color = (255, 255, 255)
         self._min_b = 0.3
         self._max_b = 1.0
         self._brightness = 0.5
         self._direction = 1
-        
+
         # Flashing parameters
         self._flash_colors = [(0, 0, 255), (0, 255, 0)]  # Blue/Green
         self._flash_frame_duration = 12  # Frames per color change at 25Hz (0.5s per color)
         self._manual_tick_interval = 0.04  # seconds between manual animation ticks
         self._last_manual_tick = 0.0
-        
+
         # Operation stack for state management
         self._state_stack = []
-        
+
         # Register LED animation task with scheduler (25Hz = 40ms period)
         animation_period = 0.04
         scheduler = Scheduler.instance()
         self._task_handle = scheduler.schedule_periodic(
             coroutine=self._animation_task,
             period=animation_period,
-            priority=0,   # Highest priority (critical real-time)
-            name="LED Animation"
+            priority=0,  # Highest priority (critical real-time)
+            name="LED Animation",
         )
-        
+
         PixelController._initialized = True
         self.logger.info("PixelController initialized with scheduled animation task")
 
@@ -135,7 +139,7 @@ class PixelController:
             r, g, b = rgb
             self.pixels[0] = (int(r), int(g), int(b))
             # Some builds require explicit show
-            if hasattr(self.pixels, 'show'):
+            if hasattr(self.pixels, "show"):
                 self.pixels.show()
         except Exception as e:
             self.logger.warning(f"set_color error: {e}")
@@ -151,32 +155,32 @@ class PixelController:
     def _save_state(self):
         """Save current animation state for later restoration."""
         return {
-            'mode': self._mode,
-            'pulse_color': self._pulse_color,
-            'min_b': self._min_b,
-            'max_b': self._max_b,
-            'brightness': self._brightness,
-            'direction': self._direction,
-            'flash_colors': self._flash_colors[:],
-            'flash_frame_duration': self._flash_frame_duration,
-            'frame_counter': self._frame_counter,
+            "mode": self._mode,
+            "pulse_color": self._pulse_color,
+            "min_b": self._min_b,
+            "max_b": self._max_b,
+            "brightness": self._brightness,
+            "direction": self._direction,
+            "flash_colors": self._flash_colors[:],
+            "flash_frame_duration": self._flash_frame_duration,
+            "frame_counter": self._frame_counter,
         }
-    
+
     def _restore_state(self, state):
         """Restore animation state from saved state."""
         if state is None:
             return
-        
-        self._mode = state['mode']
-        self._pulse_color = state['pulse_color']
-        self._min_b = state['min_b']
-        self._max_b = state['max_b']
-        self._brightness = state['brightness']
-        self._direction = state['direction']
-        self._flash_colors = state['flash_colors']
-        self._flash_frame_duration = state['flash_frame_duration']
-        self._frame_counter = state['frame_counter']
-        
+
+        self._mode = state["mode"]
+        self._pulse_color = state["pulse_color"]
+        self._min_b = state["min_b"]
+        self._max_b = state["max_b"]
+        self._brightness = state["brightness"]
+        self._direction = state["direction"]
+        self._flash_colors = state["flash_colors"]
+        self._flash_frame_duration = state["flash_frame_duration"]
+        self._frame_counter = state["frame_counter"]
+
         # Re-render current frame based on mode
         if self._mode == self._MODE_PULSING:
             self.set_color(self._apply_brightness(self._pulse_color, self._brightness))
@@ -185,7 +189,7 @@ class PixelController:
         elif self._mode == self._MODE_SOLID:
             # Keep current color
             pass
-    
+
     def _start_pulsing(self, color=(255, 255, 255), min_b=0.3, max_b=1.0, start_brightness=0.5):
         """Internal method to start pulsing animation (frame-based)."""
         self._mode = self._MODE_PULSING
@@ -196,10 +200,10 @@ class PixelController:
         self._direction = 1
         self._frame_counter = 0
         self.set_color(self._apply_brightness(self._pulse_color, self._brightness))
-    
+
     def _start_flashing(self, colors=None, frame_duration=12):
         """Internal method to start flashing animation (frame-based).
-        
+
         Args:
             colors: List of RGB colors to flash between
             frame_duration: Frames per color (at 25Hz, 12 frames = 0.5s per color)
@@ -212,35 +216,35 @@ class PixelController:
         self._flash_frame_duration = frame_duration
         self._frame_counter = 0
         self._render_flash_frame()
-    
+
     def _indicate_updating(self):
         """
         Internal method for all update-related operations.
         Blue/green flashing (slow) for better visibility during long operations.
         """
         self._start_flashing([(0, 0, 255), (0, 255, 0)], frame_duration=12)
-    
+
     def indicate_downloading(self):
         """
         Indicate firmware download in progress.
         Shows blue/green flashing pattern.
         """
         self._indicate_updating()
-    
+
     def indicate_verifying(self):
         """
         Indicate firmware verification in progress.
         Shows blue/green flashing pattern (same as downloading).
         """
         self._indicate_updating()
-    
+
     def indicate_installing(self):
         """
         Indicate firmware installation in progress.
         Shows blue/green flashing pattern (same as downloading).
         """
         self._indicate_updating()
-    
+
     def indicate_setup_mode(self):
         """
         Indicate setup mode is active.
@@ -252,14 +256,14 @@ class PixelController:
             max_b=0.7,
             start_brightness=0.4,
         )
-    
+
     def indicate_safe_mode(self):
         """
         Indicate safe mode entry (10+ second button hold).
         Shows blue/green flashing pattern.
         """
         self._indicate_updating()
-    
+
     def restore_previous(self):
         """Restore the previous LED state from the state stack."""
         if self._state_stack:
@@ -268,23 +272,23 @@ class PixelController:
         else:
             # No saved state, turn off
             self.clear()
-    
+
     def clear(self):
         """Turn off LED and reset to solid mode."""
         self._mode = self._MODE_SOLID
         self.off()
-    
+
     def indicate_operation(self, operation_name):
         """
         Context manager for semantic operations.
         Automatically restores previous state on exit.
-        
+
         Args:
             operation_name: Name of operation ('downloading', 'verifying', 'installing', 'setup_mode')
-        
+
         Returns:
             Context manager that handles state save/restore
-        
+
         Example:
             with pixel_controller.indicate_operation('downloading'):
                 # Download code here
@@ -292,19 +296,19 @@ class PixelController:
             # LED automatically restored to previous state
         """
         operation_map = {
-            'downloading': self.indicate_downloading,
-            'verifying': self.indicate_verifying,
-            'installing': self.indicate_installing,
-            'setup_mode': self.indicate_setup_mode,
-            'safe_mode': self.indicate_safe_mode,
+            "downloading": self.indicate_downloading,
+            "verifying": self.indicate_verifying,
+            "installing": self.indicate_installing,
+            "setup_mode": self.indicate_setup_mode,
+            "safe_mode": self.indicate_safe_mode,
         }
-        
+
         operation_method = operation_map.get(operation_name)
         if operation_method is None:
             raise ValueError(f"Unknown operation: {operation_name}")
-        
+
         return _OperationContext(self, operation_method)
-    
+
     def _render_pulse_frame(self):
         """Render one frame of pulsing animation (frame-based, called at 25Hz)."""
         # Update brightness every frame (0.02 step at 25Hz = 0.5 brightness change per second)
@@ -316,7 +320,7 @@ class PixelController:
             self._brightness = self._min_b
             self._direction = 1
         self.set_color(self._apply_brightness(self._pulse_color, self._brightness))
-    
+
     def _render_flash_frame(self):
         """Render one frame of flashing animation (frame-based, called at 25Hz)."""
         # Calculate which color to show based on frame counter
@@ -330,7 +334,7 @@ class PixelController:
             self._render_pulse_frame()
         elif self._mode == self._MODE_FLASHING:
             self._render_flash_frame()
-    
+
     async def _animation_task(self):
         """
         Scheduler task that renders a single animation frame.
@@ -351,13 +355,13 @@ class PixelController:
             # Save previous state
             saved_state = self._save_state()
             self._mode = self._MODE_SOLID
-            
+
             for _ in range(times):
                 self.set_color((0, 255, 0))
                 await Scheduler.sleep(on_time)
                 self.off()
                 await Scheduler.sleep(off_time)
-            
+
             # Restore previous animation state if requested
             if restore_previous_state:
                 self._restore_state(saved_state)
@@ -370,13 +374,13 @@ class PixelController:
             # Save previous state
             saved_state = self._save_state()
             self._mode = self._MODE_SOLID
-            
+
             for _ in range(times):
                 self.set_color((255, 0, 0))
                 await Scheduler.sleep(on_time)
                 self.off()
                 await Scheduler.sleep(off_time)
-            
+
             # Restore previous animation state if requested
             if restore_previous_state:
                 self._restore_state(saved_state)
@@ -387,13 +391,13 @@ class PixelController:
         """
         Flash blue and green alternately.
         Used for Safe Mode indicator and update installation.
-        
+
         DEPRECATED: Use indicate_installing() or indicate_safe_mode() for new code.
         This method is kept for backward compatibility.
-        
+
         Args:
             start_time: Monotonic timestamp when flashing started (for compatibility, ignored)
-        
+
         Note: Animation is now scheduler-driven. No manual updates needed.
         """
         try:

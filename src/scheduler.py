@@ -10,6 +10,7 @@ Version: 0.1
 
 import asyncio
 import time
+
 from logging_helper import logger
 
 
@@ -105,6 +106,7 @@ class TaskNonFatalError(Exception):
     - Network timeout
     - Invalid sensor reading
     """
+
     pass
 
 
@@ -122,13 +124,15 @@ class TaskFatalError(Exception):
     - Corrupted critical configuration
     - File system corruption
     """
+
     pass
 
 
 class TaskType:
     """Task scheduling type (CircuitPython-compatible)."""
-    PERIODIC = _EnumMember("PERIODIC", 1)   # Fixed-rate: next_run = last_scheduled + period
-    ONE_SHOT = _EnumMember("ONE_SHOT", 2)   # Run once after delay
+
+    PERIODIC = _EnumMember("PERIODIC", 1)  # Fixed-rate: next_run = last_scheduled + period
+    ONE_SHOT = _EnumMember("ONE_SHOT", 2)  # Run once after delay
     RECURRING = _EnumMember("RECURRING", 3)  # Interval starts after task completes
 
 
@@ -138,6 +142,7 @@ class TaskHandle:
     Returned by schedule_* methods. Can be used to cancel tasks.
     Do not construct directly.
     """
+
     _next_id = 0
 
     def __init__(self, task_id):
@@ -176,7 +181,7 @@ class Task:
 
         # Runtime state
         self.next_run_time = None  # Monotonic timestamp
-        self.ready_since = None    # For starvation prevention
+        self.ready_since = None  # For starvation prevention
         self.effective_priority = priority
         self.last_run_time = None
         self.last_scheduled_time = None  # For fixed-rate periodic tasks
@@ -193,8 +198,7 @@ class Task:
         return self.task_id < other.task_id
 
     def __repr__(self):
-        return (f"Task(id={self.task_id}, name='{self.name}', "
-                f"pri={self.priority}, type={self.task_type.name})")
+        return f"Task(id={self.task_id}, name='{self.name}', " f"pri={self.priority}, type={self.task_type.name})"
 
 
 class Scheduler:
@@ -211,7 +215,7 @@ class Scheduler:
     STARVATION_PRIORITY_BOOST = 30  # priority points
     TASK_WARNING_THRESHOLD_MS = 100  # milliseconds
     FALL_BEHIND_DEBUG_THRESHOLD = 30.0  # seconds
-    FALL_BEHIND_INFO_THRESHOLD = 120.0   # seconds
+    FALL_BEHIND_INFO_THRESHOLD = 120.0  # seconds
     FALL_BEHIND_WARNING_THRESHOLD = 180.0  # seconds
 
     def __new__(cls):
@@ -234,7 +238,7 @@ class Scheduler:
         if self._initialized:
             return
 
-        self.logger = logger('wicid.scheduler')
+        self.logger = logger("wicid.scheduler")
         self.logger.info("Initializing Scheduler v0.1")
 
         # Task management
@@ -265,27 +269,17 @@ class Scheduler:
     def _make_coroutine_factory(self, coroutine):
         """Normalize callable into a factory that returns awaitables."""
         if not callable(coroutine):
-            raise TypeError(
-                "Scheduler requires coroutine functions (pass the async function without calling it)"
-            )
+            raise TypeError("Scheduler requires coroutine functions (pass the async function without calling it)")
 
         def factory():
             result = coroutine()
             if not self._is_awaitable(result):
-                raise TypeError(
-                    f"Scheduled callable '{coroutine}' must return an awaitable coroutine"
-                )
+                raise TypeError(f"Scheduled callable '{coroutine}' must return an awaitable coroutine")
             return result
 
         return factory
 
-    def schedule_periodic(
-        self,
-        coroutine,
-        period: float,
-        priority: int = 50,
-        name: str = "Unnamed Task"
-    ) -> TaskHandle:
+    def schedule_periodic(self, coroutine, period: float, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
         """Schedule a task to run every N seconds at fixed rate.
 
         Uses fixed-rate scheduling: next run = last_scheduled_time + period.
@@ -317,13 +311,7 @@ class Scheduler:
         self._register_task(task)
         return TaskHandle(task.task_id)
 
-    def schedule_once(
-        self,
-        coroutine,
-        delay: float,
-        priority: int = 50,
-        name: str = "Unnamed Task"
-    ) -> TaskHandle:
+    def schedule_once(self, coroutine, delay: float, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
         """Schedule a task to run once after N seconds delay.
 
         Args:
@@ -352,11 +340,7 @@ class Scheduler:
         return TaskHandle(task.task_id)
 
     def schedule_recurring(
-        self,
-        coroutine,
-        interval: float,
-        priority: int = 50,
-        name: str = "Unnamed Task"
+        self, coroutine, interval: float, priority: int = 50, name: str = "Unnamed Task"
     ) -> TaskHandle:
         """Schedule a task to run repeatedly with N seconds between completions.
 
@@ -388,12 +372,7 @@ class Scheduler:
         self._register_task(task)
         return TaskHandle(task.task_id)
 
-    def schedule_now(
-        self,
-        coroutine,
-        priority: int = 50,
-        name: str = "Unnamed Task"
-    ) -> TaskHandle:
+    def schedule_now(self, coroutine, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
         """Schedule a task to run as soon as possible (one-shot).
 
         Args:
@@ -486,20 +465,11 @@ class Scheduler:
             if task.next_run_time < now:
                 delay = now - task.next_run_time
                 if delay >= self.FALL_BEHIND_WARNING_THRESHOLD:
-                    self.logger.warning(
-                        f"Task '{task.name}' fell behind schedule "
-                        f"(behind by {delay:.3f}s)"
-                    )
+                    self.logger.warning(f"Task '{task.name}' fell behind schedule " f"(behind by {delay:.3f}s)")
                 elif delay >= self.FALL_BEHIND_INFO_THRESHOLD:
-                    self.logger.info(
-                        f"Task '{task.name}' fell behind schedule "
-                        f"(behind by {delay:.3f}s)"
-                    )
+                    self.logger.info(f"Task '{task.name}' fell behind schedule " f"(behind by {delay:.3f}s)")
                 elif delay >= self.FALL_BEHIND_DEBUG_THRESHOLD:
-                    self.logger.debug(
-                        f"Task '{task.name}' fell behind schedule "
-                        f"(behind by {delay:.3f}s)"
-                    )
+                    self.logger.debug(f"Task '{task.name}' fell behind schedule " f"(behind by {delay:.3f}s)")
                 task.next_run_time = now
                 task.last_scheduled_time = now
 
@@ -579,8 +549,7 @@ class Scheduler:
                 )
 
             self.logger.debug(
-                f"Task '{task.name}' completed in {runtime_ms:.1f}ms "
-                f"(total executions: {task.execution_count})"
+                f"Task '{task.name}' completed in {runtime_ms:.1f}ms " f"(total executions: {task.execution_count})"
             )
 
             # Reschedule if periodic/recurring
@@ -604,10 +573,7 @@ class Scheduler:
 
         except Exception as e:
             # Unknown exception - treat as non-fatal by default
-            self.logger.error(
-                f"Task '{task.name}' raised unexpected exception: {e}",
-                exc_info=True
-            )
+            self.logger.error(f"Task '{task.name}' raised unexpected exception: {e}", exc_info=True)
             self.total_tasks_failed += 1
 
             # Reschedule periodic/recurring tasks
@@ -687,9 +653,11 @@ class Scheduler:
             Exception: If the scheduler itself crashes
         """
         self.logger.info("Starting scheduler event loop...")
-        self.logger.info(f"Configuration: MAX_STARVATION_TIME={self.MAX_STARVATION_TIME}s, "
-                        f"STARVATION_PRIORITY_BOOST={self.STARVATION_PRIORITY_BOOST}, "
-                        f"TASK_WARNING_THRESHOLD_MS={self.TASK_WARNING_THRESHOLD_MS}ms")
+        self.logger.info(
+            f"Configuration: MAX_STARVATION_TIME={self.MAX_STARVATION_TIME}s, "
+            f"STARVATION_PRIORITY_BOOST={self.STARVATION_PRIORITY_BOOST}, "
+            f"TASK_WARNING_THRESHOLD_MS={self.TASK_WARNING_THRESHOLD_MS}ms"
+        )
 
         try:
             # Run the event loop
@@ -711,14 +679,16 @@ class Scheduler:
         now = time.monotonic()
 
         for task in self.ready_queue.heap:
-            snapshot.append({
-                "id": task.task_id,
-                "name": task.name,
-                "priority": task.priority,
-                "next_in": task.next_run_time - now,
-                "effective_priority": task.effective_priority,
-                "ready_since": task.ready_since,
-            })
+            snapshot.append(
+                {
+                    "id": task.task_id,
+                    "name": task.name,
+                    "priority": task.priority,
+                    "next_in": task.next_run_time - now,
+                    "effective_priority": task.effective_priority,
+                    "ready_since": task.ready_since,
+                }
+            )
 
         return {
             "tasks_scheduled": self.total_tasks_scheduled,

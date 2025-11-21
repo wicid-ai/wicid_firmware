@@ -1,8 +1,10 @@
-import time
 import os
-from scheduler import Scheduler
-from configuration_manager import ConfigurationManager
+import time
+
 from button_action_router import ButtonActionRouter
+from configuration_manager import ConfigurationManager
+from scheduler import Scheduler
+
 
 def temperature_color(temp_f):
     """
@@ -10,15 +12,15 @@ def temperature_color(temp_f):
     clamped between 0°F and 100°F (white->purple->blue->green->yellow->orange->red).
     """
     color_steps = [
-        (0,   (55, 55, 55)),   # really cold: white
-        (15,  (54,   1,   63)),   # cold: purple
-        (35,  (0,    0,   220)),  # cool: blue
-        (50,  (0,    100, 220)),  # lighter blue
-        (60,  (0,    160, 100)),  # teal
-        (70,  (10,   220,  10)),  # greenish
-        (80,  (255,  135,  0)),   # yellow
-        (90,  (255,  60,   0)),   # orange
-        (100, (235,  0,    0)),   # red
+        (0, (55, 55, 55)),  # really cold: white
+        (15, (54, 1, 63)),  # cold: purple
+        (35, (0, 0, 220)),  # cool: blue
+        (50, (0, 100, 220)),  # lighter blue
+        (60, (0, 160, 100)),  # teal
+        (70, (10, 220, 10)),  # greenish
+        (80, (255, 135, 0)),  # yellow
+        (90, (255, 60, 0)),  # orange
+        (100, (235, 0, 0)),  # red
     ]
 
     if temp_f is None:
@@ -41,6 +43,7 @@ def temperature_color(temp_f):
             return (r, g, b)
 
     return color_steps[-1][1]
+
 
 async def blink_for_precip(pixel_controller, color, precip_percent, is_pressed_fn=None):
     """
@@ -99,7 +102,6 @@ async def blink_for_precip(pixel_controller, color, precip_percent, is_pressed_f
     return True
 
 
-
 # ============================================================================
 # Mode Classes (New Architecture)
 # ============================================================================
@@ -110,16 +112,16 @@ from mode_interface import Mode
 class WeatherMode(Mode):
     """
     Main weather mode showing current temperature and precipitation probability.
-    
+
     Displays:
     - LED color based on current temperature
     - Blinks to indicate precipitation probability (0-100%, rounded to nearest 10%)
     """
-    
+
     name = "Weather"
     requires_wifi = True
     order = 0  # Primary mode
-    
+
     def __init__(self):
         super().__init__()
         self.weather = None
@@ -128,71 +130,73 @@ class WeatherMode(Mode):
         self.current_temp = None
         self.precip_chance = None
         self._weather_refresh_handle = None
-    
+
     def initialize(self) -> bool:
         """Initialize weather service."""
         if not super().initialize():
             return False
-        
+
         try:
             # Load weather ZIP from credentials
             credentials = self.connection_manager.get_credentials()
-            if not credentials or not credentials.get('weather_zip'):
+            if not credentials or not credentials.get("weather_zip"):
                 self.logger.warning("No weather ZIP configured")
                 return False
-            
-            zip_code = credentials['weather_zip']
-            
+
+            zip_code = credentials["weather_zip"]
+
             # Create weather service
             from weather_service import WeatherService
+
             self.weather = WeatherService(zip_code)
-            
+
             # Get system manager singleton (periodic system checks)
             from system_manager import SystemManager
+
             self.system_manager = SystemManager.get_instance()
-            
+
             self.logger.info(f"Initialized for ZIP {zip_code}")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Initialization error: {e}")
             return False
-    
+
     async def run(self) -> None:
         """Run weather display loop."""
         self._running = True
-        
+
         # Wait for button release
         await self.wait_for_button_release()
-        
+
         self.logger.info("Starting display loop")
         self._start_weather_refresh_task()
-        
+
         while self._running:
             if self.current_temp is None or self.precip_chance is None:
                 await Scheduler.sleep(0.1)
                 continue
-            
+
             # Display temperature color with precipitation blinks
             current_color = temperature_color(self.current_temp)
-            
+
             if not await blink_for_precip(self.pixel, current_color, self.precip_chance, self.is_button_pressed):
                 # Button pressed during blink
                 break
-            
+
             # Check button after blink cycle
             if self.is_button_pressed():
                 break
-            
+
             # System manager checks (updates, periodic reboot)
             if self.system_manager:
                 await self.system_manager.tick()
-            
+
             await Scheduler.sleep(0.05)
-        
+
         self._stop_weather_refresh_task()
         self.logger.info("Exiting")
-    
+
     def cleanup(self) -> None:
         """Clean up weather mode resources."""
         super().cleanup()
@@ -252,36 +256,36 @@ class TempDemoMode(Mode):
     """
     Temperature demo mode - cycles through 0°F to 100°F showing color gradient.
     """
-    
+
     name = "TempDemo"
     requires_wifi = False
     order = 10  # Secondary mode
-    
+
     async def run(self) -> None:
         """Run temperature demo loop."""
         self._running = True
-        
+
         # Wait for button release
         await self.wait_for_button_release()
-        
+
         self.logger.info("Starting demo")
-        
+
         while self._running:
             self.logger.debug("Temp Demo: 0->100°F cycle")
-            
+
             # Cycle through temperatures
             step_time = 0.15
             for temp_f in range(101):
                 color = temperature_color(temp_f)
                 self.pixel.set_color(color)
-                
+
                 # Check button in small increments
                 for _ in range(int(step_time / 0.05)):
                     if self.is_button_pressed():
                         self._running = False
                         return
                     await Scheduler.sleep(0.05)
-            
+
             # Pause with LED off
             self.pixel.off()
             pause_time = 2.0
@@ -290,7 +294,7 @@ class TempDemoMode(Mode):
                     self._running = False
                     return
                 await Scheduler.sleep(0.05)
-        
+
         self.logger.info("Exiting")
 
 
@@ -298,32 +302,32 @@ class PrecipDemoMode(Mode):
     """
     Precipitation demo mode - shows blink pattern for 30% precipitation chance at 10°F.
     """
-    
+
     name = "PrecipDemo"
     requires_wifi = False
     order = 20  # Secondary mode
-    
+
     async def run(self) -> None:
         """Run precipitation demo loop."""
         self._running = True
-        
+
         # Wait for button release
         await self.wait_for_button_release()
-        
+
         self.logger.info("Starting demo (10°F, 30% precip)")
-        
+
         color_for_10f = temperature_color(10)
-        
+
         while self._running:
             # Show precipitation blink pattern
             if not await blink_for_precip(self.pixel, color_for_10f, 30, self.is_button_pressed):
                 # Button pressed during blink
                 break
-            
+
             # Check button after blink cycle
             if self.is_button_pressed():
                 break
-        
+
         self.logger.debug("Exiting")
 
 

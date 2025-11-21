@@ -18,11 +18,12 @@ After tests complete, user can select next mode:
 import os
 import sys
 import traceback
-from logging_helper import logger, configure_logging
-from input_manager import InputManager, ButtonEvent
+
+from input_manager import ButtonEvent, InputManager
+from logging_helper import configure_logging, logger
 from scheduler import Scheduler
 
-TEST_LOG = logger('wicid.test_mode')
+TEST_LOG = logger("wicid.test_mode")
 
 
 def is_enabled():
@@ -33,7 +34,7 @@ def is_enabled():
         bool: True if /TESTMODE file exists, False otherwise
     """
     try:
-        with open("/TESTMODE", "r"):
+        with open("/TESTMODE"):
             return True
     except OSError:
         return False
@@ -90,8 +91,8 @@ async def run_tests_and_await_action(pixel):
     test_passed = False
     try:
         # Add tests directory to path
-        if '/tests' not in sys.path:
-            sys.path.insert(0, '/tests')
+        if "/tests" not in sys.path:
+            sys.path.insert(0, "/tests")
 
         # Import and run test runner
         from run_tests import run_all_tests
@@ -102,7 +103,7 @@ async def run_tests_and_await_action(pixel):
         # Check if all tests passed
         test_passed = result.wasSuccessful()
 
-    except ImportError as e:   
+    except ImportError as e:
         TEST_LOG.error(f"Failed to import test runner: {e}", exc_info=True)
         TEST_LOG.testing("\n" + "=" * 70)
         TEST_LOG.testing("!!! IMPORT ERROR")
@@ -182,15 +183,15 @@ async def run_tests_and_await_action(pixel):
     finally:
         decision.cleanup()
 
-    if choice == 'safe':
+    if choice == "safe":
         TEST_LOG.info("10s+ button hold detected - entering Safe Mode")
-        return 'safe'
-    if choice == 'setup':
+        return "safe"
+    if choice == "setup":
         TEST_LOG.info("3s+ button hold detected - entering Setup Mode")
-        return 'setup'
+        return "setup"
 
     TEST_LOG.info("Short button press detected - entering Normal Mode")
-    return 'normal'
+    return "normal"
 
 
 class _ButtonDecision:
@@ -216,13 +217,13 @@ class _ButtonDecision:
             self._choice = choice
 
     def _on_normal(self, event):
-        self._set_choice('normal')
+        self._set_choice("normal")
 
     def _on_setup(self, event):
-        self._set_choice('setup')
+        self._set_choice("setup")
 
     def _on_safe(self, event):
-        self._set_choice('safe')
+        self._set_choice("safe")
 
     async def wait(self):
         while self._choice is None:

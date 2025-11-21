@@ -41,7 +41,7 @@ Usage Examples:
 """
 
 # Import comprehensive mocks from hardware_mocks module
-from hardware_mocks import MockPin, MockAsyncButton, MockPixel
+from hardware_mocks import MockAsyncButton, MockPin, MockPixel
 
 
 def create_mock_button_pin(pin_number=42, initial_value=True):

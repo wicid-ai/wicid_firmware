@@ -1,6 +1,6 @@
+from connection_manager import ConnectionManager
 from logging_helper import logger
 from utils import get_location_data_from_zip
-from connection_manager import ConnectionManager
 
 
 class WeatherService:
@@ -8,12 +8,12 @@ class WeatherService:
         """
         Initialize the WeatherService with an active HTTP session.
         Retrieves latitude/longitude for the target ZIP code using Open-Meteo's geocoding API.
-        
+
         Args:
             weather_zip: ZIP code string for weather location
             session: Optional adafruit_requests.Session instance (for tests)
         """
-        self.logger = logger('wicid.weather')
+        self.logger = logger("wicid.weather")
         self.zip_code = weather_zip
 
         connection_manager = ConnectionManager.get_instance()
@@ -87,7 +87,7 @@ class WeatherService:
         data = response.json()
         response.close()
 
-        times = data["hourly"]["time"]                  # e.g., ["2025-02-06T14:00", ...]
+        times = data["hourly"]["time"]  # e.g., ["2025-02-06T14:00", ...]
         probs = data["hourly"]["precipitation_probability"]
         current_time_str = data["current_weather"]["time"]  # e.g. "2025-02-06T14:15"
 

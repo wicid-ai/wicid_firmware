@@ -17,19 +17,19 @@ Or run specific test class:
 import sys
 
 # Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, '/')
+sys.path.insert(0, "/")
 
 # Add tests directory to path for test helpers
-if '/tests' not in sys.path:
-    sys.path.insert(0, '/tests')
-
-from logging_helper import logger
-from test_helpers import create_mock_button_pin
-from hardware_mocks import MockDigitalInOut
-from button_controller import ButtonController
+if "/tests" not in sys.path:
+    sys.path.insert(0, "/tests")
 
 # Import unittest framework
 from unittest import TestCase
+
+from button_controller import ButtonController
+from hardware_mocks import MockDigitalInOut
+from logging_helper import logger
+from test_helpers import create_mock_button_pin
 
 
 class TestButtonControllerBasic(TestCase):
@@ -37,7 +37,7 @@ class TestButtonControllerBasic(TestCase):
 
     def setUp(self):
         """Set up each test."""
-        self.logger = logger('test.button_controller')
+        self.logger = logger("test.button_controller")
         self.mock_pin = create_mock_button_pin(pin_number=42)
         self._controller_kwargs = {
             "button_pin": self.mock_pin,
@@ -47,7 +47,7 @@ class TestButtonControllerBasic(TestCase):
     def tearDown(self):
         """Clean up after each test."""
         # Clean up any controller instances
-        if hasattr(self, 'controller') and self.controller is not None:
+        if hasattr(self, "controller") and self.controller is not None:
             try:
                 self.controller.deinit()
             except Exception:

@@ -77,19 +77,19 @@ document.addEventListener('DOMContentLoaded', () => {
   toggleManualSsid(isManualSelection());
 
   populateNetworks();
-  
+
   // Poll validation status endpoint
   async function pollValidationStatus(statusUrl, timeout = 120000) {
     const startTime = Date.now();
     const pollInterval = 2000; // 2 seconds
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 3;
-    
+
     while (Date.now() - startTime < timeout) {
       try {
         // Update button text based on elapsed time
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        
+
         const response = await fetch(statusUrl);
         if (!response.ok) {
           // Network error - retry with backoff
@@ -107,12 +107,12 @@ document.addEventListener('DOMContentLoaded', () => {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
-        
+
         // Reset error counter on successful response
         consecutiveErrors = 0;
-        
+
         const data = await response.json();
-        
+
         // Update button text based on state
         if (data.state === 'validating_wifi') {
           if (buttonText) buttonText.textContent = 'Testing WiFi…';
@@ -136,10 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
           };
         }
-        
+
         // Wait before next poll
         await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
+
       } catch (error) {
         // Network/parsing error - retry with backoff
         consecutiveErrors++;
@@ -156,7 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
       }
     }
-    
+
     // Timeout
     return {
       success: false,
@@ -166,12 +166,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
   }
-  
+
   // Show success state with appropriate content
   function showSuccessState(updateAvailable, updateInfo) {
     // Hide setup form
     if (setupState) setupState.classList.add('hidden');
-    
+
     if (updateAvailable && updateInfo) {
       // Show update state
       if (successStateUpdate) {
@@ -180,7 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (versionElement && updateInfo.version) {
           versionElement.textContent = " to firmware version " + updateInfo.version;
         }
-        
+
         successStateUpdate.style.display = 'block';
         scrollIntoViewWithOffset(successStateUpdate);
       }
@@ -218,10 +218,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (setupForm) {
     setupForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      
+
       // Prevent multiple submissions
       if (saveButton && saveButton.disabled) return;
-      
+
       hideError();
 
       const ssid = ssidSelect && ssidSelect.value && ssidSelect.value !== 'manual'
@@ -283,11 +283,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Parse response to get status URL
         const data = await res.json();
-        
+
         if (data.status === 'validation_started' && data.status_url) {
           // Start polling for validation status
           const validationResult = await pollValidationStatus(data.status_url);
-          
+
           if (validationResult.success) {
             // Validation successful - show appropriate success state
             // Button stays disabled - don't re-enable it
@@ -338,11 +338,11 @@ document.addEventListener('DOMContentLoaded', () => {
     activateButton.addEventListener('click', async () => {
       // Prevent multiple clicks
       if (activateButton.disabled) return;
-      
+
       activateButton.disabled = true;
       const buttonTextSpan = activateButton.querySelector('.button-text');
       const originalText = buttonTextSpan?.textContent || '';
-      
+
       try {
         if (buttonTextSpan) buttonTextSpan.textContent = 'Activating…';
         const response = await fetch('/activate', { method: 'POST' });
@@ -365,25 +365,25 @@ document.addEventListener('DOMContentLoaded', () => {
     updateNowButton.addEventListener('click', async () => {
       // Prevent multiple clicks
       if (updateNowButton.disabled) return;
-      
+
       updateNowButton.disabled = true;
       const buttonTextSpan = updateNowButton.querySelector('.button-text');
       const progressSpan = document.querySelector('.progress-text');
       const originalText = buttonTextSpan?.textContent || '';
-      
+
       try {
         if (buttonTextSpan) buttonTextSpan.textContent = 'Starting update…';
         if (progressSpan) progressSpan.textContent = '';
-        
+
         // Trigger update and get status URL
         const response = await fetch('/update-now', { method: 'POST' });
         const data = await response.json();
-        
+
         if (data.status === 'update_started' && data.status_url) {
           // Poll for update progress
           await pollUpdateProgress(data.status_url, buttonTextSpan, progressSpan);
         }
-        
+
         // Device will reboot after update completes - button stays disabled
       } catch (err) {
         // Only re-enable on error
@@ -394,7 +394,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-  
+
   function formatProgressLabel(baseText, progressValue) {
     if (progressValue === null || progressValue === undefined) {
       return `${baseText}...`;
@@ -428,7 +428,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pollInterval = 500; // Poll every 500ms for smoother updates
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 10; // Allow more retries before giving up
-    
+
     while (true) {
       try {
         const response = await fetch(statusUrl);
@@ -441,12 +441,12 @@ document.addEventListener('DOMContentLoaded', () => {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           continue;
         }
-        
+
         // Reset error counter on successful response
         consecutiveErrors = 0;
-        
+
         const data = await response.json();
-        
+
         // Update button text and progress based on state
         if (data.state === 'downloading') {
           setButtonProgress(buttonTextElement, progressElement, 'Downloading', data.progress);
@@ -462,10 +462,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (data.state === 'error') {
           throw new Error('Update failed');
         }
-        
+
         // Wait before next poll
         await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
+
       } catch (error) {
         consecutiveErrors++;
         if (consecutiveErrors >= maxConsecutiveErrors) {

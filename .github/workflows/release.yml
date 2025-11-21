@@ -11,11 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Validate tag format
         run: |
           echo "→ Validating tag format..."
@@ -26,7 +26,7 @@ jobs:
             exit 1
           fi
           echo "✓ Valid tag: $TAG"
-      
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -36,7 +36,7 @@ jobs:
         run: curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python3
       - name: Install dependencies
         run: pipenv sync --dev
-      
+
       - name: Determine CircuitPython version from manifest
         id: cp_version
         run: |
@@ -44,71 +44,71 @@ jobs:
           TARGET_OS=$(python -c "import json; manifest = json.load(open('src/manifest.json')); print(manifest['target_operating_systems'][0])")
           echo "target_os=$TARGET_OS" >> $GITHUB_OUTPUT
           echo "✓ Target OS: $TARGET_OS"
-          
+
           echo "→ Parsing version pattern..."
           VERSION_PATTERN=$(echo "$TARGET_OS" | sed 's/circuitpython_//' | sed 's/_/./')
           echo "version_pattern=$VERSION_PATTERN" >> $GITHUB_OUTPUT
           echo "✓ Version pattern: ${VERSION_PATTERN}.x"
-          
+
           echo "→ Querying S3 bucket for available mpy-cross versions..."
           S3_BUCKET_URL="https://adafruit-circuit-python.s3.amazonaws.com/?prefix=bin/mpy-cross/linux-amd64/&delimiter=/"
-          
+
           AVAILABLE_VERSIONS=$(curl -fsSL "$S3_BUCKET_URL" | \
             grep -o 'mpy-cross-linux-amd64-[0-9]\+\.[0-9]\+\.[0-9]\+\.static' | \
             sed 's/mpy-cross-linux-amd64-//' | \
             sed 's/\.static$//' | \
             sort -V)
-          
+
           echo "✓ Found available versions:"
           echo "$AVAILABLE_VERSIONS"
-          
+
           echo "→ Finding latest version matching ${VERSION_PATTERN}.x..."
           MATCHING_VERSION=$(echo "$AVAILABLE_VERSIONS" | \
             grep "^${VERSION_PATTERN}\." | \
             tail -n 1)
-          
+
           if [ -z "$MATCHING_VERSION" ]; then
             echo "✗ Error: No matching mpy-cross version found for CircuitPython ${VERSION_PATTERN}.x"
             echo "Available versions:"
             echo "$AVAILABLE_VERSIONS"
             exit 1
           fi
-          
+
           echo "cp_version=$MATCHING_VERSION" >> $GITHUB_OUTPUT
           echo "✓ Selected mpy-cross version: $MATCHING_VERSION"
-      
+
       - name: Download and setup mpy-cross
         run: |
           CP_VERSION="${{ steps.cp_version.outputs.cp_version }}"
           MPY_CROSS_URL="https://adafruit-circuit-python.s3.amazonaws.com/bin/mpy-cross/linux-amd64/mpy-cross-linux-amd64-${CP_VERSION}.static"
-          
+
           echo "→ Downloading mpy-cross for CircuitPython ${CP_VERSION}..."
           echo "URL: ${MPY_CROSS_URL}"
           curl -fsSL -o mpy-cross "${MPY_CROSS_URL}"
-          
+
           echo "→ Verifying download..."
           if [ ! -f mpy-cross ] || [ ! -s mpy-cross ]; then
             echo "✗ Error: Failed to download mpy-cross"
             exit 1
           fi
           echo "✓ Downloaded successfully ($(ls -lh mpy-cross | awk '{print $5}'))"
-          
+
           echo "→ Making executable..."
           chmod +x mpy-cross
-          
+
           echo "→ Verifying mpy-cross version..."
           ./mpy-cross --version
           echo "✓ mpy-cross ready"
-          
+
           echo "→ Adding to PATH..."
           echo "${PWD}" >> $GITHUB_PATH
           echo "✓ Added to PATH"
-      
+
       - name: Setup wicid_web repository
         run: |
           echo "→ Cloning wicid_web repository..."
           git clone https://x-access-token:${{ secrets.WICID_WEB_RELEASES_TOKEN }}@github.com/wicid-ai/wicid_web.git
-          
+
           echo "→ Checking for existing releases.json..."
           if [ -f wicid_web/public/releases.json ]; then
             echo "✓ Found releases.json, copying to workspace root..."
@@ -117,13 +117,13 @@ jobs:
           else
             echo "ℹ releases.json not found in wicid_web (builder.py will create it)"
           fi
-      
+
       - name: Build release package
         run: |
           echo "→ Building release package with builder.py..."
           pipenv run python builder.py --build
           echo "✓ Build complete"
-      
+
       - name: Verify build artifacts
         run: |
           echo "→ Verifying build artifacts..."
@@ -132,13 +132,13 @@ jobs:
             exit 1
           fi
           echo "✓ Build artifact verified: $(ls -lh releases/wicid_install.zip)"
-          
+
           if [ ! -f releases.json ]; then
             echo "✗ Error: releases.json not generated"
             exit 1
           fi
           echo "✓ releases.json verified: $(ls -lh releases.json | awk '{print $5}')"
-      
+
       - name: Generate release notes
         run: |
           echo "→ Extracting release notes from manifest.json..."
@@ -146,7 +146,7 @@ jobs:
           echo "✓ Release notes generated"
           echo "Release notes content:"
           cat RELEASE_NOTES.md
-      
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         env:
@@ -155,30 +155,30 @@ jobs:
           files: releases/*.zip
           body_path: RELEASE_NOTES.md
           tag_name: ${{ github.ref_name }}
-      
+
       - name: Sync releases.json to wicid_web
         run: |
           cd wicid_web
           echo "→ Pulling latest changes..."
           git pull origin main
-          
+
           echo "→ Configuring git identity..."
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           echo "→ Copying updated releases.json..."
           cp ../releases.json public/
-          
+
           echo "→ Checking for changes..."
           if git diff --quiet public/releases.json; then
             echo "ℹ No changes detected in releases.json"
           else
             echo "✓ Changes detected in releases.json:"
             git diff public/releases.json
-            
+
             echo "→ Staging changes..."
             git add public/releases.json
-            
+
             echo "→ Committing changes..."
             if git commit -m "build: update releases.json from wicid_firmware"; then
               echo "✓ Changes committed"
@@ -193,4 +193,3 @@ jobs:
               echo "ℹ No changes to commit - releases.json is already up to date"
             fi
           fi
-

@@ -19,7 +19,6 @@ Usage:
 """
 
 import time
-from async_button import Button
 
 
 class MockPin:
@@ -49,6 +48,7 @@ class MockPin:
     # Mock Pin.Pull enum matching CircuitPython's digitalio.Pull
     class Pull:
         """Mock Pull configuration enum."""
+
         UP = 1
         DOWN = 2
 
@@ -239,7 +239,7 @@ class MockAsyncButton:
             self._pressed = True
             self._press_start_time = time.monotonic()
             self._pin.value = self._value_when_pressed
-            self._event_history.append(('press', time.monotonic()))
+            self._event_history.append(("press", time.monotonic()))
             self._press_events.append(time.monotonic())
 
     def simulate_release(self):
@@ -255,17 +255,17 @@ class MockAsyncButton:
             if self._press_start_time is not None:
                 duration = time.monotonic() - self._press_start_time
             self._pin.value = not self._value_when_pressed
-            self._event_history.append(('release', time.monotonic(), duration))
+            self._event_history.append(("release", time.monotonic(), duration))
             self._release_events.append(time.monotonic())
 
             # Determine click type based on duration
             if duration is not None:
                 if duration < 0.05:
-                    click_type = 'short'
+                    click_type = "short"
                 elif duration >= 2.0:
-                    click_type = 'long'
+                    click_type = "long"
                 else:
-                    click_type = 'single'
+                    click_type = "single"
                 self._click_events.append((click_type, time.monotonic()))
 
     def simulate_click(self, duration=0.1):
@@ -346,7 +346,7 @@ class MockAsyncButton:
 
         Provided for API compatibility with async_button.Button.
         """
-        self._event_history.append(('deinit', time.monotonic()))
+        self._event_history.append(("deinit", time.monotonic()))
 
     @property
     def pin(self):
@@ -388,7 +388,7 @@ class MockPixel:
     def __init__(self):
         """Initialize mock pixel."""
         self._color = (0, 0, 0)  # RGB tuple, default to off
-        self._brightness = 1.0   # 0.0 to 1.0
+        self._brightness = 1.0  # 0.0 to 1.0
         self._auto_write = True
         self._pixel_history = []  # Track color changes for test assertions
 
@@ -401,7 +401,7 @@ class MockPixel:
     def brightness(self, value):
         """Set brightness (0.0 to 1.0)."""
         self._brightness = max(0.0, min(1.0, float(value)))
-        self._pixel_history.append(('brightness', self._brightness))
+        self._pixel_history.append(("brightness", self._brightness))
 
     @property
     def auto_write(self):
@@ -429,7 +429,7 @@ class MockPixel:
         if index != 0:
             raise IndexError(f"Mock pixel only has index 0, got {index}")
         self._color = tuple(color)
-        self._pixel_history.append(('set', self._color))
+        self._pixel_history.append(("set", self._color))
 
     def __getitem__(self, index):
         """
@@ -453,7 +453,7 @@ class MockPixel:
             color: RGB tuple (r, g, b) where each value is 0-255
         """
         self._color = tuple(color)
-        self._pixel_history.append(('fill', self._color))
+        self._pixel_history.append(("fill", self._color))
 
     def show(self):
         """
@@ -461,7 +461,7 @@ class MockPixel:
 
         NeoPixels require explicit show() calls when auto_write is False.
         """
-        self._pixel_history.append(('show', self._color))
+        self._pixel_history.append(("show", self._color))
 
     def deinit(self):
         """
@@ -469,7 +469,7 @@ class MockPixel:
 
         Provided for API compatibility with real NeoPixel objects.
         """
-        self._pixel_history.append(('deinit', None))
+        self._pixel_history.append(("deinit", None))
 
     def get_history(self):
         """

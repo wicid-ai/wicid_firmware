@@ -14,10 +14,11 @@ Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 """
 
 import time
-from scheduler import Scheduler
-from logging_helper import logger
+
 from button_controller import ButtonController
+from logging_helper import logger
 from manager_base import ManagerBase
+from scheduler import Scheduler
 
 
 class ButtonEvent:
@@ -97,9 +98,8 @@ class InputManager(ManagerBase):
             return cls._instance
 
         # Reinitialize if dependencies changed
-        if (
-            cls._instance._controller_factory is not desired_factory
-            or not cls._instance._is_compatible_with(button_pin=button_pin)
+        if cls._instance._controller_factory is not desired_factory or not cls._instance._is_compatible_with(
+            button_pin=button_pin
         ):
             cls._instance.shutdown()
             cls._instance._init(button_pin, desired_factory)
@@ -109,7 +109,7 @@ class InputManager(ManagerBase):
     def __init__(self, button_pin=None, controller_factory=None):
         """
         Initialize input manager (called via singleton pattern or directly).
-        
+
         Args:
             button_pin: Optional DigitalInOut pin. If None, ButtonController creates from board.BUTTON
             controller_factory: Optional ButtonController factory (see ``instance``)
@@ -125,7 +125,7 @@ class InputManager(ManagerBase):
     def _init(self, button_pin=None, controller_factory=None):
         """
         Internal initialization method.
-        
+
         Args:
             button_pin: Optional DigitalInOut pin. If None, ButtonController creates from board.BUTTON
             controller_factory: Optional ButtonController factory/callable
@@ -169,12 +169,14 @@ class InputManager(ManagerBase):
         self._queued_hold_event = None
 
         scheduler = Scheduler.instance()
-        self._task_handle = self._track_task_handle(scheduler.schedule_periodic(
-            coroutine=self._monitor_button,
-            period=self.BUTTON_MONITOR_PERIOD,
-            priority=0,
-            name="Button Monitor",
-        ))
+        self._task_handle = self._track_task_handle(
+            scheduler.schedule_periodic(
+                coroutine=self._monitor_button,
+                period=self.BUTTON_MONITOR_PERIOD,
+                priority=0,
+                name="Button Monitor",
+            )
+        )
 
         self._initialized = True
         self.logger.info("InputManager initialized with scheduled monitoring task")
@@ -192,16 +194,16 @@ class InputManager(ManagerBase):
         # If not initialized yet, always compatible (will initialize)
         if not getattr(self, "_initialized", False):
             return True
-        
+
         # Compare the stored init pin with the requested pin
         # Both None means both use default board.BUTTON, so compatible
         if self._init_button_pin is None and button_pin is None:
             return True
-        
+
         # Same object reference means compatible
         if self._init_button_pin is button_pin:
             return True
-        
+
         # Different pins mean incompatible (need reinit)
         return False
 
@@ -404,7 +406,6 @@ class InputManager(ManagerBase):
             bool: True if button is currently pressed
         """
         return self._is_pressed
-
 
     def shutdown(self):
         """

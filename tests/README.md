@@ -605,11 +605,11 @@ class TestInputManager(TestCase):
                 InputManager._instance.shutdown()
             except Exception:
                 pass
-        
+
         # Create test pin
         cls.test_button_pin = DigitalInOut(board.BUTTON)
         cls.test_button_pin.switch_to_input(pull=digitalio.Pull.UP)
-    
+
     @classmethod
     def tearDownClass(cls):
         # Clean up test pin
@@ -618,7 +618,7 @@ class TestInputManager(TestCase):
                 cls.test_button_pin.deinit()
             except Exception:
                 pass
-    
+
     def setUp(self):
         # Get manager instance with test dependencies
         # Manager will automatically reinitialize if needed

@@ -16,7 +16,7 @@ Usage from REPL:
 import sys
 
 # Add src to path for imports
-sys.path.insert(0, '/src')
+sys.path.insert(0, "/src")
 
 
 def run_all():
@@ -27,10 +27,11 @@ def run_all():
         >>> tests.run_all()
     """
     from unittest import main
+
     print("\n" + "=" * 60)
     print("WICID FIRMWARE - ALL TESTS")
     print("=" * 60)
-    main(module='tests', exit=False, verbosity=2)
+    main(module="tests", exit=False, verbosity=2)
 
 
 def run_unit():
@@ -41,10 +42,11 @@ def run_unit():
         >>> tests.run_unit()
     """
     from unittest import main
+
     print("\n" + "=" * 60)
     print("WICID FIRMWARE - UNIT TESTS")
     print("=" * 60)
-    main(module='tests.unit', exit=False, verbosity=2)
+    main(module="tests.unit", exit=False, verbosity=2)
 
 
 def run_integration():
@@ -55,10 +57,11 @@ def run_integration():
         >>> tests.run_integration()
     """
     from unittest import main
+
     print("\n" + "=" * 60)
     print("WICID FIRMWARE - INTEGRATION TESTS")
     print("=" * 60)
-    main(module='tests.integration', exit=False, verbosity=2)
+    main(module="tests.integration", exit=False, verbosity=2)
 
 
 def run_functional():
@@ -69,7 +72,8 @@ def run_functional():
         >>> tests.run_functional()
     """
     from unittest import main
+
     print("\n" + "=" * 60)
     print("WICID FIRMWARE - FUNCTIONAL TESTS")
     print("=" * 60)
-    main(module='tests.functional', exit=False, verbosity=2)
+    main(module="tests.functional", exit=False, verbosity=2)

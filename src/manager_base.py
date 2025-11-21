@@ -130,4 +130,3 @@ class ManagerBase:
         """
         self.shutdown()
         return False
-

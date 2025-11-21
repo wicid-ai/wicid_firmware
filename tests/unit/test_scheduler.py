@@ -19,20 +19,15 @@ Or run specific test class:
 """
 
 import sys
-import time
-import asyncio
 
 # Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, '/')
-
-from scheduler import (
-    Scheduler, TaskNonFatalError, TaskFatalError,
-    TaskType, Task, TaskHandle
-)
+sys.path.insert(0, "/")
 
 # Import unittest framework
 from unittest import TestCase
 from unittest.mock import patch
+
+from scheduler import Scheduler, Task, TaskFatalError, TaskHandle, TaskNonFatalError, TaskType
 
 
 class TestSchedulerBasic(TestCase):
@@ -43,9 +38,9 @@ class TestSchedulerBasic(TestCase):
         # Note: Scheduler is a singleton, so we can't truly reset it
         # Tests must be independent and not interfere with each other
         self.test_results = {
-            'executions': 0,
-            'last_value': None,
-            'error_caught': False,
+            "executions": 0,
+            "last_value": None,
+            "error_caught": False,
         }
 
     def test_scheduler_singleton(self):
@@ -66,15 +61,12 @@ class TestSchedulerBasic(TestCase):
 
     def test_task_creation(self):
         """Verify Task object creation."""
+
         async def dummy_coro():
             pass
 
         task = Task(
-            name="Test Task",
-            priority=50,
-            coroutine_factory=dummy_coro,
-            task_type=TaskType.PERIODIC,
-            timing_param=1.0
+            name="Test Task", priority=50, coroutine_factory=dummy_coro, task_type=TaskType.PERIODIC, timing_param=1.0
         )
 
         self.assertEqual(task.name, "Test Task")
@@ -86,6 +78,7 @@ class TestSchedulerBasic(TestCase):
 
     def test_task_comparison(self):
         """Verify task heap ordering."""
+
         async def dummy():
             pass
 
@@ -126,15 +119,11 @@ class TestSchedulerTaskScheduling(TestCase):
 
     def test_schedule_periodic_returns_handle(self):
         """Verify schedule_periodic returns TaskHandle."""
+
         async def task():
             await Scheduler.sleep(0.01)
 
-        handle = self.scheduler.schedule_periodic(
-            coroutine=task,
-            period=1.0,
-            priority=50,
-            name="Test Periodic"
-        )
+        handle = self.scheduler.schedule_periodic(coroutine=task, period=1.0, priority=50, name="Test Periodic")
 
         self.assertIsInstance(handle, TaskHandle)
 
@@ -143,15 +132,11 @@ class TestSchedulerTaskScheduling(TestCase):
 
     def test_schedule_once_returns_handle(self):
         """Verify schedule_once returns TaskHandle."""
+
         async def task():
             await Scheduler.sleep(0.01)
 
-        handle = self.scheduler.schedule_once(
-            coroutine=task,
-            delay=1.0,
-            priority=50,
-            name="Test Once"
-        )
+        handle = self.scheduler.schedule_once(coroutine=task, delay=1.0, priority=50, name="Test Once")
 
         self.assertIsInstance(handle, TaskHandle)
 
@@ -160,15 +145,11 @@ class TestSchedulerTaskScheduling(TestCase):
 
     def test_schedule_recurring_returns_handle(self):
         """Verify schedule_recurring returns TaskHandle."""
+
         async def task():
             await Scheduler.sleep(0.01)
 
-        handle = self.scheduler.schedule_recurring(
-            coroutine=task,
-            interval=1.0,
-            priority=50,
-            name="Test Recurring"
-        )
+        handle = self.scheduler.schedule_recurring(coroutine=task, interval=1.0, priority=50, name="Test Recurring")
 
         self.assertIsInstance(handle, TaskHandle)
 
@@ -177,14 +158,11 @@ class TestSchedulerTaskScheduling(TestCase):
 
     def test_schedule_now_returns_handle(self):
         """Verify schedule_now returns TaskHandle."""
+
         async def task():
             await Scheduler.sleep(0.01)
 
-        handle = self.scheduler.schedule_now(
-            coroutine=task,
-            priority=50,
-            name="Test Now"
-        )
+        handle = self.scheduler.schedule_now(coroutine=task, priority=50, name="Test Now")
 
         self.assertIsInstance(handle, TaskHandle)
 
@@ -193,6 +171,7 @@ class TestSchedulerTaskScheduling(TestCase):
 
     def test_cancel_task(self):
         """Verify task cancellation."""
+
         async def task():
             await Scheduler.sleep(0.01)
 
@@ -200,7 +179,7 @@ class TestSchedulerTaskScheduling(TestCase):
             coroutine=task,
             delay=10.0,  # Far in future
             priority=50,
-            name="Test Cancel"
+            name="Test Cancel",
         )
 
         # Cancel should succeed
@@ -218,7 +197,7 @@ class TestSchedulerAsyncWrappers(TestCase):
     def test_yield_control(self):
         """Verify yield_control proxies to asyncio.sleep(0)."""
         sentinel = object()
-        with patch('scheduler.asyncio.sleep', return_value=sentinel) as mock_sleep:
+        with patch("scheduler.asyncio.sleep", return_value=sentinel) as mock_sleep:
             awaitable = Scheduler.yield_control()
 
         mock_sleep.assert_called_once_with(0)
@@ -227,7 +206,7 @@ class TestSchedulerAsyncWrappers(TestCase):
     def test_sleep(self):
         """Verify sleep proxies to asyncio.sleep with duration."""
         sentinel = object()
-        with patch('scheduler.asyncio.sleep', return_value=sentinel) as mock_sleep:
+        with patch("scheduler.asyncio.sleep", return_value=sentinel) as mock_sleep:
             awaitable = Scheduler.sleep(1.23)
 
         mock_sleep.assert_called_once_with(1.23)
@@ -248,12 +227,7 @@ class TestSchedulerIntegration(TestCase):
         async def task():
             await Scheduler.sleep(0.01)
 
-        handle = scheduler.schedule_periodic(
-            coroutine=task,
-            period=1.0,
-            priority=50,
-            name="Test Registration"
-        )
+        handle = scheduler.schedule_periodic(coroutine=task, period=1.0, priority=50, name="Test Registration")
 
         # Task should be in registry
         task_obj = scheduler.task_registry.get(handle.task_id)
@@ -272,25 +246,17 @@ class TestSchedulerIntegration(TestCase):
         async def task():
             await Scheduler.sleep(0.01)
 
-        handle = scheduler.schedule_periodic(
-            coroutine=task,
-            period=1.0,
-            priority=50,
-            name="Test Queue"
-        )
+        handle = scheduler.schedule_periodic(coroutine=task, period=1.0, priority=50, name="Test Queue")
 
         # Queue should have one more task
-        self.assertEqual(
-            len(scheduler.ready_queue),
-            initial_queue_size + 1,
-            "Task added to ready queue"
-        )
+        self.assertEqual(len(scheduler.ready_queue), initial_queue_size + 1, "Task added to ready queue")
 
         # Clean up
         scheduler.cancel(handle)
 
 
 # Entry point for running tests
-if __name__ == '__main__':
+if __name__ == "__main__":
     import unittest
+
     unittest.main()

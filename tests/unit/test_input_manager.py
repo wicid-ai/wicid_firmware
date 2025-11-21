@@ -21,21 +21,20 @@ Or run specific test class:
 """
 
 import sys
-import time
 
 # Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, '/')
+sys.path.insert(0, "/")
 
 # Add tests directory to path for test helpers
-if '/tests' not in sys.path:
-    sys.path.insert(0, '/tests')
-
-from input_manager import InputManager, ButtonEvent
-from test_helpers import create_mock_button_pin
-from hardware_mocks import MockButtonController
+if "/tests" not in sys.path:
+    sys.path.insert(0, "/tests")
 
 # Import unittest framework
 from unittest import TestCase
+
+from hardware_mocks import MockButtonController
+from input_manager import ButtonEvent, InputManager
+from test_helpers import create_mock_button_pin
 
 
 class TestInputManagerBasic(TestCase):
@@ -56,7 +55,7 @@ class TestInputManagerBasic(TestCase):
         # Use mock pin - no hardware conflicts, deterministic testing
         cls.test_button_pin = create_mock_button_pin(pin_number=99)
         cls.controller_factory = MockButtonController
-    
+
     @classmethod
     def tearDownClass(cls):
         """Clean up after tests."""
@@ -146,7 +145,7 @@ class TestInputManagerCallbacks(TestCase):
         # Use mock pin - no hardware conflicts, deterministic testing
         cls.test_button_pin = create_mock_button_pin(pin_number=99)
         cls.controller_factory = MockButtonController
-    
+
     @classmethod
     def tearDownClass(cls):
         """Clean up after tests."""
@@ -174,6 +173,7 @@ class TestInputManagerCallbacks(TestCase):
 
     def test_register_callback(self):
         """Verify callback registration."""
+
         def my_callback(event):
             pass
 
@@ -182,17 +182,14 @@ class TestInputManagerCallbacks(TestCase):
         self.mgr.register_callback(ButtonEvent.PRESS, my_callback)
 
         # Should have one more callback
-        self.assertEqual(
-            len(self.mgr._callbacks[ButtonEvent.PRESS]),
-            initial_count + 1,
-            "Callback added to registry"
-        )
+        self.assertEqual(len(self.mgr._callbacks[ButtonEvent.PRESS]), initial_count + 1, "Callback added to registry")
 
         # Clean up
         self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
 
     def test_unregister_callback(self):
         """Verify callback unregistration."""
+
         def my_callback(event):
             pass
 
@@ -208,6 +205,7 @@ class TestInputManagerCallbacks(TestCase):
 
     def test_unregister_nonexistent_callback(self):
         """Verify unregistering non-existent callback fails gracefully."""
+
         def my_callback(event):
             pass
 
@@ -216,6 +214,7 @@ class TestInputManagerCallbacks(TestCase):
 
     def test_register_unknown_event_type(self):
         """Verify registering unknown event type fails gracefully."""
+
         def my_callback(event):
             pass
 
@@ -250,7 +249,7 @@ class TestInputManagerEventFiring(TestCase):
         # Use mock pin - no hardware conflicts, deterministic testing
         cls.test_button_pin = create_mock_button_pin(pin_number=99)
         cls.controller_factory = MockButtonController
-    
+
     @classmethod
     def tearDownClass(cls):
         """Clean up after tests."""
@@ -272,6 +271,7 @@ class TestInputManagerEventFiring(TestCase):
 
     def test_fire_event_invokes_callback(self):
         """Verify _fire_event invokes registered callbacks."""
+
         def my_callback(event):
             self.callback_invoked = True
             self.callback_event = event
@@ -365,7 +365,7 @@ class TestInputManagerState(TestCase):
         # Use mock pin - no hardware conflicts, deterministic testing
         cls.test_button_pin = create_mock_button_pin(pin_number=99)
         cls.controller_factory = MockButtonController
-    
+
     @classmethod
     def tearDownClass(cls):
         """Clean up after tests."""
@@ -473,10 +473,10 @@ class TestInputManagerHoldDetection(TestCase):
         events = []
 
         def on_setup(event):
-            events.append('setup')
+            events.append("setup")
 
         def on_safe(event):
-            events.append('safe')
+            events.append("safe")
 
         self.mgr.register_callback(ButtonEvent.SETUP_MODE, on_setup)
         self.mgr.register_callback(ButtonEvent.SAFE_MODE, on_safe)
@@ -486,7 +486,7 @@ class TestInputManagerHoldDetection(TestCase):
         self._run_monitor_with_time(3.5)
         self._run_monitor_with_time(10.5)
 
-        self.assertEqual(events, ['setup', 'safe'], "Safe should override setup once per hold")
+        self.assertEqual(events, ["setup", "safe"], "Safe should override setup once per hold")
 
         self.controller.simulate_release()
         self._run_monitor_with_time(11.0)
@@ -497,6 +497,7 @@ class TestInputManagerHoldDetection(TestCase):
 
 
 # Entry point for running tests
-if __name__ == '__main__':
+if __name__ == "__main__":
     import unittest
+
     unittest.main()
