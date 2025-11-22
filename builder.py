@@ -990,7 +990,7 @@ def show_build_summary(version, package_path, committed, tagged, pushed, commit_
         print("  ✗ Not tagged")
         if committed:
             print("\n  Manual tag steps:")
-            print(f"    1. Create tag: git tag -a {f'v{version}'} -m \"Release {version}\"")
+            print(f'    1. Create tag: git tag -a {f"v{version}"} -m "Release {version}"')
 
     if pushed:
         print("  ✓ Pushed:       remote updated")

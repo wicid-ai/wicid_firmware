@@ -839,7 +839,7 @@ def _validate_boot_file(circuitpy_path):
     """Ensure boot.py exists after installation."""
     boot_path = circuitpy_path / "boot.py"
     if not boot_path.exists() or not boot_path.is_file():
-        raise Exception("CRITICAL: boot.py missing after installation. " "Device will not boot without this file.")
+        raise Exception("CRITICAL: boot.py missing after installation. Device will not boot without this file.")
 
 
 def copy_tests_incremental(circuitpy_path, tests_dir):
