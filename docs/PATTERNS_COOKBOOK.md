@@ -10,6 +10,7 @@ This document provides concrete, copy-pasteable examples of common architectural
 4. [Exception Suppression](#exception-suppression)
 5. [Testing with Mocks](#testing-with-mocks)
 6. [Cooperative Yielding](#cooperative-yielding)
+7. [Type Hinting](#type-hinting)
 
 ---
 
@@ -201,4 +202,35 @@ Do not write blocking infinite loops without yielding.
 async def processing_loop():
     while True:
         pass # Wrong: Blocks the entire system, watchdog will trigger reset
+```
+
+---
+
+## Type Hinting
+
+**Concept:** CircuitPython lacks the `typing` module to save space. We use a centralized `app_typing.py` shim that provides real types for development/static analysis but lightweight dummy classes for the device runtime.
+
+### ✅ Do (Correct)
+
+Import types from `app_typing` instead of `typing`. This allows standard syntax `List[int]` without runtime crashes or memory overhead.
+
+```python
+from app_typing import List, Dict, Optional
+
+def process_data(data: List[int]) -> Optional[Dict[str, int]]:
+    # ... implementation ...
+    pass
+```
+
+### ❌ Don't (Incorrect)
+
+Do not import directly from `typing` (crashes on device) or use stringified types everywhere (messy).
+
+```python
+# Wrong: Will crash on device (ImportError)
+from typing import List
+
+# Wrong: Messy and harder to read
+def process_data(data: "List[int]") -> "Optional[Dict[str, int]]":
+    pass
 ```

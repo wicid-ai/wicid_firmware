@@ -9,7 +9,7 @@ All boot logic is in boot_support.py (compiled to bytecode for efficiency).
 
 # CRITICAL: Configure USB serial console FIRST, before anything that could fail
 # This ensures serial debugging is available even if boot_support.py is corrupted
-import usb_cdc  # type: ignore[import-untyped]  # CircuitPython-only module
+import usb_cdc  # type: ignore[import-not-found]  # CircuitPython-only module
 
 import boot_support
 

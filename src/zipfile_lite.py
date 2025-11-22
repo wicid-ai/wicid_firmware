@@ -8,6 +8,7 @@ Supports stored (uncompressed) and deflated files.
 import struct
 import zlib
 
+from app_typing import Any, Dict, List
 from logging_helper import logger
 from utils import suppress
 
@@ -24,7 +25,7 @@ class ZipFile:
     STORED = 0  # No compression
     DEFLATED = 8  # DEFLATE compression
 
-    def __init__(self, filename):
+    def __init__(self, filename: str) -> None:
         """
         Initialize ZIP file reader.
 
@@ -32,20 +33,20 @@ class ZipFile:
             filename: Path to ZIP file
         """
         self.filename = filename
-        self.file_list = []
+        self.file_list: List[Dict[str, Any]] = []
         self.logger = logger("wicid.zipfile")
         self._find_central_directory()
 
-    def __enter__(self):
+    def __enter__(self) -> "ZipFile":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         # Nothing to clean up
-        return False
+        pass
 
-    def _find_central_directory(self):
+    def _find_central_directory(self) -> None:
         """Find and parse the central directory to get file list."""
         with open(self.filename, "rb") as f:
             # Read last 64KB to find end of central directory
@@ -117,11 +118,11 @@ class ZipFile:
                 # Move to next entry
                 offset += 46 + filename_len + extra_len + comment_len
 
-    def namelist(self):
+    def namelist(self) -> list[str]:
         """Return list of filenames in the ZIP."""
         return [f["filename"] for f in self.file_list]
 
-    def extract(self, member, path="/"):
+    def extract(self, member: str | dict[str, Any], path: str = "/") -> None:
         """
         Extract a member to the specified path.
 
@@ -132,9 +133,9 @@ class ZipFile:
         # Find file info
         if isinstance(member, str):
             file_info = None
-            for f in self.file_list:
-                if f["filename"] == member:
-                    file_info = f
+            for entry in self.file_list:
+                if entry["filename"] == member:
+                    file_info = entry
                     break
             if not file_info:
                 raise KeyError(f"File not found in ZIP: {member}")
@@ -194,7 +195,7 @@ class ZipFile:
 
         self.logger.debug(f"Extracted: {filename} ({len(data)} bytes)")
 
-    def extractall(self, path="/"):
+    def extractall(self, path: str = "/") -> None:
         """
         Extract all members to the specified path.
 
@@ -205,7 +206,7 @@ class ZipFile:
             if not file_info["filename"].endswith("/"):
                 self.extract(file_info, path)
 
-    def read(self, member):
+    def read(self, member: str) -> bytes:
         """
         Read a member's contents without extracting to disk.
 
@@ -217,9 +218,9 @@ class ZipFile:
         """
         # Find file info
         file_info = None
-        for f in self.file_list:
-            if f["filename"] == member:
-                file_info = f
+        for entry in self.file_list:
+            if entry["filename"] == member:
+                file_info = entry
                 break
 
         if not file_info:

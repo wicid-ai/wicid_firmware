@@ -7,6 +7,7 @@ Provides cached weather data accessible synchronously by other components.
 Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 """
 
+from app_typing import Any, Optional
 from connection_manager import ConnectionManager
 from logging_helper import logger
 from manager_base import ManagerBase
@@ -28,7 +29,7 @@ class WeatherManager(ManagerBase):
     UPDATE_INTERVAL = 1200.0
 
     @classmethod
-    def instance(cls, session=None, weather_zip=None):
+    def instance(cls, session: Optional[Any] = None, weather_zip: Optional[str] = None) -> "WeatherManager":
         """
         Get the WeatherManager singleton.
 
@@ -54,7 +55,7 @@ class WeatherManager(ManagerBase):
                 cls._instance._init(session, weather_zip)
         return cls._instance
 
-    def __init__(self, session=None, weather_zip=None):
+    def __init__(self, session: Optional[Any] = None, weather_zip: Optional[str] = None) -> None:
         """Initialize weather manager (called via singleton pattern or directly).
 
         Args:
@@ -69,7 +70,7 @@ class WeatherManager(ManagerBase):
             WeatherManager._instance = self
         self._init(session, weather_zip)
 
-    def _init(self, session=None, weather_zip=None):
+    def _init(self, session: Optional[Any] = None, weather_zip: Optional[str] = None) -> None:
         """Internal initialization method.
 
         Args:
@@ -83,14 +84,14 @@ class WeatherManager(ManagerBase):
         self._init_weather_zip = weather_zip
 
         # Cached weather data
-        self._current_temp = None
-        self._daily_high = None
-        self._daily_precip_chance = None
-        self._last_update_time = None
-        self._last_error = None
+        self._current_temp: Optional[float] = None
+        self._daily_high: Optional[float] = None
+        self._daily_precip_chance: Optional[int] = None
+        self._last_update_time: Optional[float] = None
+        self._last_error: Optional[str] = None
 
         # Weather service instance (lazy-initialized)
-        self._weather = None
+        self._weather: Optional[Any] = None
         self._weather_zip = weather_zip
         self.connection_manager = ConnectionManager.instance()
 
@@ -100,7 +101,7 @@ class WeatherManager(ManagerBase):
         self._initialized = True
         self.logger.info("WeatherManager initialized (weather service will be initialized on first update)")
 
-    def _is_compatible_with(self, session=None, weather_zip=None):
+    def _is_compatible_with(self, session: Optional[Any] = None, weather_zip: Optional[str] = None) -> bool:
         """
         Check if this instance is compatible with the given session/weather_zip.
 
@@ -120,7 +121,7 @@ class WeatherManager(ManagerBase):
         zip_compat = (self._init_weather_zip is None and weather_zip is None) or (self._init_weather_zip == weather_zip)
         return zip_compat
 
-    def initialize_weather_service(self, session, weather_zip):
+    def initialize_weather_service(self, session: Any, weather_zip: str) -> None:
         """
         Initialize the weather service with session and ZIP code.
 
@@ -153,7 +154,7 @@ class WeatherManager(ManagerBase):
             self.logger.error(f"Failed to initialize weather service: {e}")
             raise
 
-    async def _update_weather(self):
+    async def _update_weather(self) -> None:
         """
         Fetch weather data from API (called by scheduler every 20 minutes).
 
@@ -306,7 +307,7 @@ class WeatherManager(ManagerBase):
         self.logger.info("Forcing weather update")
         await self._update_weather()
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """
         Release all resources owned by WeatherManager.
 

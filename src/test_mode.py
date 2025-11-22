@@ -19,6 +19,7 @@ import os
 import sys
 import traceback
 
+from app_typing import Any
 from input_manager import ButtonEvent, InputManager
 from logging_helper import configure_logging, logger
 from scheduler import Scheduler
@@ -26,7 +27,7 @@ from scheduler import Scheduler
 TEST_LOG = logger("wicid.test_mode")
 
 
-def is_enabled():
+def is_enabled() -> bool:
     """
     Check if test mode is enabled via flag file.
 
@@ -40,7 +41,7 @@ def is_enabled():
         return False
 
 
-async def run_tests_and_await_action(pixel):
+async def run_tests_and_await_action(pixel: Any) -> str:
     """
     Run all tests with LED feedback, then wait for user action.
 
@@ -197,9 +198,9 @@ async def run_tests_and_await_action(pixel):
 class _ButtonDecision:
     """Helper that maps InputManager callbacks to mode decisions."""
 
-    def __init__(self, input_mgr):
+    def __init__(self, input_mgr: InputManager) -> None:
         self._input_mgr = input_mgr
-        self._choice = None
+        self._choice: str | None = None
         self._callbacks = [
             (ButtonEvent.SINGLE_CLICK, self._on_normal),
             (ButtonEvent.SETUP_MODE, self._on_setup),
@@ -208,24 +209,24 @@ class _ButtonDecision:
         for event, callback in self._callbacks:
             self._input_mgr.register_callback(event, callback)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         for event, callback in self._callbacks:
             self._input_mgr.unregister_callback(event, callback)
 
-    def _set_choice(self, choice):
+    def _set_choice(self, choice: str) -> None:
         if self._choice is None:
             self._choice = choice
 
-    def _on_normal(self, event):
+    def _on_normal(self, event: Any) -> None:
         self._set_choice("normal")
 
-    def _on_setup(self, event):
+    def _on_setup(self, event: Any) -> None:
         self._set_choice("setup")
 
-    def _on_safe(self, event):
+    def _on_safe(self, event: Any) -> None:
         self._set_choice("safe")
 
-    async def wait(self):
+    async def wait(self) -> str:
         while self._choice is None:
             await Scheduler.sleep(0.05)
         return self._choice

@@ -17,12 +17,15 @@ import sys
 import time
 import traceback
 
-import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
-import storage  # type: ignore[import-untyped]  # CircuitPython-only module
+import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
+import storage  # type: ignore[import-not-found]  # CircuitPython-only module
+
+from app_typing import Any
 
 sys.path.insert(0, "/")
 
 IMPORT_ERROR = None
+
 try:
     from pixel_controller import PixelController
     from update_manager import UpdateManager
@@ -33,15 +36,29 @@ except ImportError as e:
     print(f"CRITICAL: Import failed - {e}")
     print("Update functionality DISABLED")
     print("=" * 50)
-    check_release_compatibility = None
-    mark_incompatible_release = None
-    PixelController = None
-    UpdateManager = None
+    check_release_compatibility = None  # type: ignore
+    mark_incompatible_release = None  # type: ignore
+    PixelController = None  # type: ignore
+    UpdateManager = None  # type: ignore
+
+    # Define fallback suppress if needed
+    class _DummySuppress:
+        def __init__(self, *args: Any) -> None:
+            pass
+
+        def __enter__(self) -> None:
+            pass
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+    suppress = _DummySuppress  # type: ignore
 
 # Check for pending firmware update
 PENDING_UPDATE_DIR = "/pending_update"
 PENDING_ROOT_DIR = "/pending_update/root"
 BOOT_LOG_FILE = "/boot_log.txt"
+_LOGGED_BOOT_ERROR = False
 
 
 class UpdateInstaller:
@@ -52,10 +69,11 @@ class UpdateInstaller:
     multiple helper functions. Uses PixelController singleton for LED access.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        self.pixel_controller: Any = None
         """Initialize the installer with LED feedback from singleton."""
         # Access singleton for LED feedback (optional, gracefully handles if unavailable)
-        if PixelController:
+        if PixelController is not None:
             try:
                 self.pixel_controller = PixelController()
                 # Start installation indicator (blue/green flashing)
@@ -66,7 +84,7 @@ class UpdateInstaller:
         else:
             self.pixel_controller = None
 
-    def update_led(self):
+    def update_led(self) -> None:
         """Update LED animation."""
         if self.pixel_controller:
             try:
@@ -74,13 +92,13 @@ class UpdateInstaller:
             except Exception as e:
                 print(f"LED manual tick error: {e}")
 
-    def turn_off_led(self):
+    def turn_off_led(self) -> None:
         """Turn off LED (used on error conditions)."""
         if self.pixel_controller:
             self.pixel_controller.clear()
 
 
-def log_boot_message(message):
+def log_boot_message(message: str) -> None:
     """
     Write a message to the boot log file and console.
     Always prints to console for serial debugging.
@@ -88,22 +106,23 @@ def log_boot_message(message):
     # Always print to console first (critical for debugging)
     print(message)
 
+    global _LOGGED_BOOT_ERROR
     # Try to write to file, but don't let failures block boot
     try:
         with open(BOOT_LOG_FILE, "a") as f:
             f.write(message + "\n")
     except OSError as e:
         # Only print filesystem errors once to avoid spam
-        if not hasattr(log_boot_message, "_logged_error"):
+        if not _LOGGED_BOOT_ERROR:
             print(f"! Boot log write failed (OSError): {e}")
-            log_boot_message._logged_error = True
+            _LOGGED_BOOT_ERROR = True
     except Exception as e:
-        if not hasattr(log_boot_message, "_logged_error"):
+        if not _LOGGED_BOOT_ERROR:
             print(f"! Boot log write failed: {e}")
-            log_boot_message._logged_error = True
+            _LOGGED_BOOT_ERROR = True
 
 
-def remove_directory_recursive(path, installer=None):
+def remove_directory_recursive(path: str, installer: Any = None) -> None:
     """
     Recursively remove a directory and all its contents.
     CircuitPython-compatible (no os.walk).
@@ -144,7 +163,7 @@ def remove_directory_recursive(path, installer=None):
         os.rmdir(path)
 
 
-def cleanup_pending_update(installer=None):
+def cleanup_pending_update(installer: Any = None) -> None:
     """
     Remove pending update directory and all its contents.
     Logs errors but continues to attempt cleanup.
@@ -161,7 +180,7 @@ def cleanup_pending_update(installer=None):
         log_boot_message(f"Warning: Cleanup error: {e}")
 
 
-def delete_all_except(preserve_paths, installer=None):
+def delete_all_except(preserve_paths: list[str], installer: Any = None) -> None:
     """
     Delete all files and directories in root except specified paths.
     Forces recursive deletion but logs errors and continues.
@@ -211,7 +230,7 @@ def delete_all_except(preserve_paths, installer=None):
     log_boot_message("✓ Full reset complete")
 
 
-def move_directory_contents(src_dir, dest_dir, installer=None):
+def move_directory_contents(src_dir: str, dest_dir: str, installer: Any = None) -> None:
     """
     Move all files and directories from src to dest.
     Logs errors but continues to attempt moving remaining files.
@@ -299,7 +318,7 @@ def move_directory_contents(src_dir, dest_dir, installer=None):
     log_boot_message("✓ File move complete")
 
 
-def configure_storage():
+def configure_storage() -> None:
     """
     Configure storage for production mode.
     Disables USB mass storage and makes filesystem writable from code.
@@ -326,7 +345,7 @@ def configure_storage():
         log_boot_message("=" * 50)
 
 
-def process_pending_update():
+def process_pending_update() -> None:
     """
     Check for and process pending firmware updates.
     """
@@ -383,7 +402,7 @@ def process_pending_update():
         log_boot_message(f"Update version: {manifest.get('version', 'unknown')}")
 
         # Step 3: Verify compatibility using DRY check
-        if check_release_compatibility:
+        if check_release_compatibility is not None:
             is_compatible, error_msg = check_release_compatibility(manifest, current_version)
 
             # Update LED during compatibility check
@@ -398,8 +417,8 @@ def process_pending_update():
                     installer.turn_off_led()
 
                 # Mark incompatible with detailed reason
-                if mark_incompatible_release:
-                    mark_incompatible_release(manifest.get("version", "unknown"), error_msg)
+                if mark_incompatible_release is not None:
+                    mark_incompatible_release(manifest.get("version", "unknown"), error_msg or "Unknown error")
 
                 cleanup_pending_update()
                 log_boot_message("=" * 50)
@@ -416,7 +435,7 @@ def process_pending_update():
                 # Step 3.5: Validate extracted update contains all critical files
                 # This is a second check before destructive operations begin
                 log_boot_message("Validating update package integrity...")
-                if UpdateManager:
+                if UpdateManager is not None:
                     all_present, missing_files = UpdateManager.validate_extracted_update(PENDING_ROOT_DIR)
 
                     if not all_present:
@@ -433,7 +452,7 @@ def process_pending_update():
                             installer.turn_off_led()
 
                         # Mark as incompatible
-                        if mark_incompatible_release:
+                        if mark_incompatible_release is not None:
                             mark_incompatible_release(
                                 manifest.get("version", "unknown"),
                                 f"Incomplete package - missing {len(missing_files)} critical files",
@@ -509,7 +528,7 @@ def process_pending_update():
 
                 # Step 7: Validate critical files are present after installation
                 # Use centralized validation from UpdateManager if available
-                if UpdateManager:
+                if UpdateManager is not None:
                     all_present, missing_files = UpdateManager.validate_critical_files()
                 else:
                     # Fallback if UpdateManager couldn't be imported
@@ -536,7 +555,7 @@ def process_pending_update():
 
                 # Step 8: Create or update recovery backup
                 log_boot_message("Creating recovery backup...")
-                if UpdateManager:
+                if UpdateManager is not None:
                     try:
                         success, backup_msg = UpdateManager.create_recovery_backup()
                         if success:
@@ -588,7 +607,7 @@ def process_pending_update():
         log_boot_message(f"Traceback: {traceback.format_exc()}")
 
 
-def check_and_restore_from_recovery():
+def check_and_restore_from_recovery() -> bool:
     """
     Check for missing critical files and restore from recovery if needed.
 
@@ -598,7 +617,7 @@ def check_and_restore_from_recovery():
     Returns:
         bool: True if recovery was needed and performed, False otherwise
     """
-    if not UpdateManager:
+    if UpdateManager is None:
         log_boot_message("UpdateManager not available, skipping recovery check")
         return False
 
@@ -639,7 +658,7 @@ def check_and_restore_from_recovery():
                 failed_version = failed_manifest.get("version", "unknown")
 
                 # Mark this version as incompatible immediately (one-strike policy)
-                if mark_incompatible_release:
+                if mark_incompatible_release is not None:
                     mark_incompatible_release(
                         failed_version, "Automatic recovery triggered - update left device in unbootable state"
                     )
@@ -660,7 +679,7 @@ def check_and_restore_from_recovery():
         return False
 
 
-def main():
+def main() -> None:
     """
     Main entry point called from boot.py.
     Configures storage and processes any pending updates.

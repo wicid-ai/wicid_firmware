@@ -32,6 +32,7 @@ if "/tests" not in sys.path:
 # Import unittest framework
 from unittest import TestCase
 
+from app_typing import Any
 from hardware_mocks import MockButtonController
 from input_manager import ButtonEvent, InputManager
 from test_helpers import create_mock_button_pin
@@ -41,8 +42,11 @@ from utils import suppress
 class TestInputManagerBasic(TestCase):
     """Basic InputManager functionality tests using mock hardware."""
 
+    test_button_pin: Any
+    controller_factory: Any
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """Set up test class - shutdown any existing InputManager."""
         # Shut down any existing InputManager instance to free resources
         # This is safe because we use the public API (accessing _instance is acceptable
@@ -56,14 +60,14 @@ class TestInputManagerBasic(TestCase):
         cls.controller_factory = MockButtonController
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
             with suppress(Exception):
                 InputManager._instance.shutdown()
 
-    def test_input_manager_singleton(self):
+    def test_input_manager_singleton(self) -> None:
         """Verify InputManager is a singleton."""
         mgr1 = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -77,7 +81,7 @@ class TestInputManagerBasic(TestCase):
         mgr3 = InputManager()
         self.assertIs(mgr1, mgr3, "InputManager() returns singleton instance")
 
-    def test_event_types_exist(self):
+    def test_event_types_exist(self) -> None:
         """Verify all button event types are defined."""
         event_types = [
             ButtonEvent.PRESS,
@@ -93,7 +97,7 @@ class TestInputManagerBasic(TestCase):
         for event in event_types:
             self.assertIsNotNone(event, f"Event type {event} is defined")
 
-    def test_input_manager_initialized(self):
+    def test_input_manager_initialized(self) -> None:
         """Verify InputManager initializes correctly via public API."""
         mgr = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -101,7 +105,7 @@ class TestInputManagerBasic(TestCase):
         )
 
         # Verify we can register callbacks (proves callback system works)
-        def test_callback(event):
+        def test_callback(event: Any) -> None:
             pass
 
         # Should be able to register callbacks for all event types
@@ -127,8 +131,11 @@ class TestInputManagerBasic(TestCase):
 class TestInputManagerCallbacks(TestCase):
     """Tests for callback registration and management using mock hardware."""
 
+    test_button_pin: Any
+    controller_factory: Any
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """Set up test class - shutdown any existing InputManager."""
         # Shut down any existing InputManager instance to free resources
         # This is safe because we use the public API (accessing _instance is acceptable
@@ -142,14 +149,14 @@ class TestInputManagerCallbacks(TestCase):
         cls.controller_factory = MockButtonController
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
             with suppress(Exception):
                 InputManager._instance.shutdown()
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Setup test state."""
         self.mgr = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -158,16 +165,16 @@ class TestInputManagerCallbacks(TestCase):
         self.callback_invoked = False
         self.callback_event = None
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """Clean up any registered callbacks."""
         # Note: In real device testing, callbacks persist across tests
         # Tests should be independent
         pass
 
-    def test_register_callback(self):
+    def test_register_callback(self) -> None:
         """Verify callback registration."""
 
-        def my_callback(event):
+        def my_callback(event: Any) -> None:
             pass
 
         initial_count = len(self.mgr._callbacks[ButtonEvent.PRESS])
@@ -180,10 +187,10 @@ class TestInputManagerCallbacks(TestCase):
         # Clean up
         self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
 
-    def test_unregister_callback(self):
+    def test_unregister_callback(self) -> None:
         """Verify callback unregistration."""
 
-        def my_callback(event):
+        def my_callback(event: Any) -> None:
             pass
 
         # Register then unregister
@@ -196,19 +203,19 @@ class TestInputManagerCallbacks(TestCase):
         result = self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
         self.assertFalse(result, "Second unregister returns False")
 
-    def test_unregister_nonexistent_callback(self):
+    def test_unregister_nonexistent_callback(self) -> None:
         """Verify unregistering non-existent callback fails gracefully."""
 
-        def my_callback(event):
+        def my_callback(event: Any) -> None:
             pass
 
         result = self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
         self.assertFalse(result, "Unregister of non-existent callback returns False")
 
-    def test_register_unknown_event_type(self):
+    def test_register_unknown_event_type(self) -> None:
         """Verify registering unknown event type fails gracefully."""
 
-        def my_callback(event):
+        def my_callback(event: Any) -> None:
             pass
 
         # Try to register with invalid event type (should log warning but not crash)
@@ -227,8 +234,11 @@ class TestInputManagerCallbacks(TestCase):
 class TestInputManagerEventFiring(TestCase):
     """Tests for event firing mechanism using mock hardware."""
 
+    test_button_pin: Any
+    controller_factory: Any
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """Set up test class - shutdown any existing InputManager."""
         # Shut down any existing InputManager instance to free resources
         # This is safe because we use the public API (accessing _instance is acceptable
@@ -242,14 +252,14 @@ class TestInputManagerEventFiring(TestCase):
         cls.controller_factory = MockButtonController
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
             with suppress(Exception):
                 InputManager._instance.shutdown()
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Setup test state."""
         self.mgr = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -258,10 +268,10 @@ class TestInputManagerEventFiring(TestCase):
         self.callback_invoked = False
         self.callback_event = None
 
-    def test_fire_event_invokes_callback(self):
+    def test_fire_event_invokes_callback(self) -> None:
         """Verify _fire_event invokes registered callbacks."""
 
-        def my_callback(event):
+        def my_callback(event: Any) -> None:
             self.callback_invoked = True
             self.callback_event = event
 
@@ -278,17 +288,17 @@ class TestInputManagerEventFiring(TestCase):
         # Clean up
         self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
 
-    def test_fire_event_multiple_callbacks(self):
+    def test_fire_event_multiple_callbacks(self) -> None:
         """Verify _fire_event invokes all registered callbacks."""
         invocation_count = [0]
 
-        def callback1(event):
+        def callback1(event: Any) -> None:
             invocation_count[0] += 1
 
-        def callback2(event):
+        def callback2(event: Any) -> None:
             invocation_count[0] += 1
 
-        def callback3(event):
+        def callback3(event: Any) -> None:
             invocation_count[0] += 1
 
         # Register multiple callbacks
@@ -307,15 +317,15 @@ class TestInputManagerEventFiring(TestCase):
         self.mgr.unregister_callback(ButtonEvent.RELEASE, callback2)
         self.mgr.unregister_callback(ButtonEvent.RELEASE, callback3)
 
-    def test_fire_event_exception_handling(self):
+    def test_fire_event_exception_handling(self) -> None:
         """Verify exceptions in callbacks don't break event firing."""
         invocation_count = [0]
 
-        def bad_callback(event):
+        def bad_callback(event: Any) -> None:
             invocation_count[0] += 1
             raise RuntimeError("Callback error")
 
-        def good_callback(event):
+        def good_callback(event: Any) -> None:
             invocation_count[0] += 1
 
         # Register callbacks (bad one first)
@@ -339,8 +349,11 @@ class TestInputManagerEventFiring(TestCase):
 class TestInputManagerState(TestCase):
     """Tests for button state tracking using mock hardware."""
 
+    test_button_pin: Any
+    controller_factory: Any
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """Set up test class - shutdown any existing InputManager."""
         # Shut down any existing InputManager instance to free resources
         # This is safe because we use the public API (accessing _instance is acceptable
@@ -354,14 +367,14 @@ class TestInputManagerState(TestCase):
         cls.controller_factory = MockButtonController
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         """Clean up after tests."""
         # Shutdown InputManager to release the pin
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
             with suppress(Exception):
                 InputManager._instance.shutdown()
 
-    def test_is_pressed_returns_bool(self):
+    def test_is_pressed_returns_bool(self) -> None:
         """Verify is_pressed returns boolean."""
         mgr = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -371,7 +384,7 @@ class TestInputManagerState(TestCase):
         result = mgr.is_pressed()
         self.assertIsInstance(result, bool, "is_pressed returns bool")
 
-    def test_get_raw_value_returns_bool(self):
+    def test_get_raw_value_returns_bool(self) -> None:
         """Verify get_raw_value returns boolean."""
         mgr = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -381,7 +394,7 @@ class TestInputManagerState(TestCase):
         result = mgr.get_raw_value()
         self.assertIsInstance(result, bool, "get_raw_value returns bool")
 
-    def test_initial_state_not_pressed(self):
+    def test_initial_state_not_pressed(self) -> None:
         """Verify button starts in not-pressed state."""
         mgr = InputManager.instance(
             button_pin=self.test_button_pin,
@@ -401,8 +414,11 @@ class TestInputManagerState(TestCase):
 class TestInputManagerHoldDetection(TestCase):
     """Tests for setup/safe hold signaling."""
 
+    test_button_pin: Any
+    controller_factory: Any
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         if InputManager._instance is not None and getattr(InputManager._instance, "_initialized", False):
             with suppress(Exception):
                 InputManager._instance.shutdown()
@@ -410,27 +426,27 @@ class TestInputManagerHoldDetection(TestCase):
         cls.test_button_pin = create_mock_button_pin(pin_number=101)
         cls.controller_factory = MockButtonController
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.mgr = InputManager.instance(
             button_pin=self.test_button_pin,
             controller_factory=self.controller_factory,
         )
-        self.controller = self.mgr._controller
+        self.controller: Any = self.mgr._controller
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         with suppress(Exception):
             self.mgr.shutdown()
         InputManager._instance = None
 
-    def _run_monitor_with_time(self, timestamp):
+    def _run_monitor_with_time(self, timestamp: float) -> None:
         self.mgr._monitor_button_tick(now=timestamp)
 
-    def test_setup_hold_fires_before_release(self):
+    def test_setup_hold_fires_before_release(self) -> None:
         """Setup event fires during press and not on release."""
         events = []
         pressed_states = []
 
-        def on_setup(event):
+        def on_setup(event: Any) -> None:
             events.append(event)
             pressed_states.append(self.mgr.is_pressed())
 
@@ -449,14 +465,14 @@ class TestInputManagerHoldDetection(TestCase):
 
         self.mgr.unregister_callback(ButtonEvent.SETUP_MODE, on_setup)
 
-    def test_safe_hold_overrides_setup(self):
+    def test_safe_hold_overrides_setup(self) -> None:
         """Safe hold upgrades setup hold and does not duplicate on release."""
         events = []
 
-        def on_setup(event):
+        def on_setup(event: Any) -> None:
             events.append("setup")
 
-        def on_safe(event):
+        def on_safe(event: Any) -> None:
             events.append("safe")
 
         self.mgr.register_callback(ButtonEvent.SETUP_MODE, on_setup)

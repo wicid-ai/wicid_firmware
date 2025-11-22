@@ -1,6 +1,8 @@
 import sys
 import traceback
 
+from app_typing import Any
+
 
 class SkipTest(Exception):
     """
@@ -15,13 +17,13 @@ class TestResult:
     Class to handle test result functionality
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.errorsNum = 0
         self.failuresNum = 0
         self.skippedNum = 0
         self.testsRun = 0
 
-    def wasSuccessful(self):  # noqa
+    def wasSuccessful(self) -> bool:  # noqa
         """
         Method to handle indication of a successful test functionality
 
@@ -36,17 +38,17 @@ class AssertRaisesContext:
     Class to handle an assertion raising context
     """
 
-    def __init__(self, exc: Exception):
+    def __init__(self, exc: type[Exception]) -> None:
         """
         Params:
             exc: Exception
         """
         self.expected = exc
-        self.raised = None
-        self.traceback = None
-        self.exception_value = None
+        self.raised: type[Exception] | None = None
+        self.traceback: Any = None
+        self.exception_value: Exception | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> "AssertRaisesContext":
         """
         Magic method to handle enter implementation objects used with the with statement
 
@@ -55,7 +57,7 @@ class AssertRaisesContext:
         """
         return self
 
-    def __exit__(self, exc_type: type, exc_value: Exception, traceback):
+    def __exit__(self, exc_type: type[Exception] | None, exc_value: Exception | None, tb: Any) -> bool:
         """
         Magic method to handle exit implementation objects used with the with statement
 
@@ -67,7 +69,7 @@ class AssertRaisesContext:
         Returns:
             bool
         """
-        self.traceback = traceback
+        self.traceback = tb
         self.raised = exc_type
         self.exception_value = exc_value
         if exc_type is None:
@@ -81,7 +83,7 @@ class TestCase:
     """
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """
         Setup resources and conditions need for the whole suite (TestCase)
         The main test runner executes this one time only before creating an instance of the class
@@ -89,30 +91,30 @@ class TestCase:
         pass
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         """
         Release resources and restore conditions after the test suite has finished
         """
         pass
 
-    def setUp(self):
+    def setUp(self) -> None:
         """
         Setup resources and starting conditions needed for every test in the suite
         The main test runner executes this before calling any test method in the suite
         """
         pass
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """
         Release resources, and do any needed cleanup after every test in the suite
         The main test runner executes this after calling any test method in the suite
         """
         pass
 
-    def run(self, result: TestResult):
+    def run(self, result: "TestResult") -> None:
         for name in dir(self):
             if name.startswith("test"):
-                print(f"{name} ({self.__qualname__}) ...", end="")  # report progress
+                print(f"{name} ({self.__class__.__name__}) ...", end="")  # report progress
                 test_method = getattr(self, name)
                 self.setUp()  # Pre-test setup (every test)
                 try:
@@ -136,7 +138,7 @@ class TestCase:
                     self.tearDown()  # Post-test teardown (every test)
 
     @staticmethod
-    def assertAlmostEqual(x, y, places=None, msg="", delta=None):
+    def assertAlmostEqual(x: Any, y: Any, places: int | None = None, msg: str = "", delta: float | None = None) -> None:
         """
         Method to handle assert almost equal logic
 
@@ -165,7 +167,7 @@ class TestCase:
                 msg = f"{x!r} != {y!r} within {places!r} places"
         raise AssertionError(msg)
 
-    def fail(self, msg=""):  # noqa
+    def fail(self, msg: str = "") -> None:  # noqa
         """
         Method to handle fail logic
 
@@ -174,7 +176,7 @@ class TestCase:
         """
         raise AssertionError(msg)
 
-    def assertEqual(self, x, y, msg=""):  # noqa
+    def assertEqual(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert equal logic
 
@@ -187,7 +189,7 @@ class TestCase:
             msg = f"{x!r} vs (expected) {y!r}"
         assert x == y, msg
 
-    def assertNotEqual(self, x, y, msg=""):  # noqa
+    def assertNotEqual(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert not equal logic
 
@@ -200,7 +202,9 @@ class TestCase:
             msg = f"{x!r} not expected to be equal {y!r}"
         assert x != y, msg
 
-    def assertNotAlmostEqual(self, x, y, places=None, msg="", delta=None):  # noqa
+    def assertNotAlmostEqual(
+        self, x: Any, y: Any, places: int | None = None, msg: str = "", delta: float | None = None
+    ) -> None:  # noqa
         """
         Method to handle assert not almost equal logic
 
@@ -227,7 +231,7 @@ class TestCase:
                 msg = f"{x!r} == {y!r} within {places!r} places"
         raise AssertionError(msg)
 
-    def assertIs(self, x, y, msg=""):  # noqa
+    def assertIs(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert is logic
 
@@ -240,7 +244,7 @@ class TestCase:
             msg = f"{x!r} is not {y!r}"
         assert x is y, msg
 
-    def assertIsNot(self, x, y, msg=""):  # noqa
+    def assertIsNot(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert is not logic
 
@@ -253,7 +257,7 @@ class TestCase:
             msg = f"{x!r} is {y!r}"
         assert x is not y, msg
 
-    def assertIsNone(self, x, msg=""):  # noqa
+    def assertIsNone(self, x: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert is none logic
 
@@ -265,7 +269,7 @@ class TestCase:
             msg = f"{x!r} is not None"
         assert x is None, msg
 
-    def assertIsNotNone(self, x, msg=""):  # noqa
+    def assertIsNotNone(self, x: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert is not none logic
 
@@ -277,7 +281,7 @@ class TestCase:
             msg = f"{x!r} is None"
         assert x is not None, msg
 
-    def assertTrue(self, x, msg=""):  # noqa
+    def assertTrue(self, x: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert true logic
 
@@ -289,7 +293,7 @@ class TestCase:
             msg = f"Expected {x!r} to be True"
         assert x, msg
 
-    def assertFalse(self, x, msg=""):  # noqa
+    def assertFalse(self, x: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert false logic
 
@@ -301,7 +305,7 @@ class TestCase:
             msg = f"Expected {x!r} to be False"
         assert not x, msg
 
-    def assertIn(self, x, y, msg=""):  # noqa
+    def assertIn(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert in logic
 
@@ -314,7 +318,7 @@ class TestCase:
             msg = f"Expected {x!r} to be in {y!r}"
         assert x in y, msg
 
-    def assertNotIn(self, x, y, msg=""):  # noqa
+    def assertNotIn(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert not in logic
 
@@ -327,7 +331,7 @@ class TestCase:
             msg = f"Expected {x!r} to not be in {y!r}"
         assert x not in y, msg
 
-    def assertIsInstance(self, x, y, msg=""):  # noqa
+    def assertIsInstance(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
         """
         Method to handle assert is instance logic
 
@@ -339,7 +343,7 @@ class TestCase:
         assert isinstance(x, y), msg
 
     @staticmethod
-    def assertRaises(exc, func=None, *args, **kwargs):
+    def assertRaises(exc: type[Exception], func: Any = None, *args: Any, **kwargs: Any) -> Any:
         """
         Method to handle assert is instance logic
 
@@ -363,7 +367,7 @@ class TestCase:
             raise
 
 
-def skip(msg):  # noqa
+def skip(msg: str) -> Any:  # noqa
     """
     Function to handle skip logic
 
@@ -374,7 +378,7 @@ def skip(msg):  # noqa
         object
     """
 
-    def _decor(func):  # noqa
+    def _decor(func: Any) -> Any:  # noqa
         """
         Inner function to handle private _decor logic
 
@@ -387,7 +391,7 @@ def skip(msg):  # noqa
             object
         """
 
-        def _inner(self):  # noqa
+        def _inner(self: Any) -> None:  # noqa
             """
             Inner function to handle replacing original fun with _inner
 
@@ -406,7 +410,7 @@ def skip(msg):  # noqa
     return _decor
 
 
-def skipIf(cond, msg):  # noqa
+def skipIf(cond: bool, msg: str) -> Any:  # noqa
     """
     Function to handle skip if logic
 
@@ -422,7 +426,7 @@ def skipIf(cond, msg):  # noqa
     return skip(msg)
 
 
-def skipUnless(cond, msg):  # noqa
+def skipUnless(cond: bool, msg: str) -> Any:  # noqa
     """
     Function to handle skip unless logic
 
@@ -443,10 +447,10 @@ class TestSuite:
     Class to handle unittest test suite functionality
     """
 
-    def __init__(self):
-        self.tests = []
+    def __init__(self) -> None:
+        self.tests: list[type] = []
 
-    def addTest(self, cls):  # noqa
+    def addTest(self, cls: type) -> None:  # noqa
         """
         Method to handle adding a test functionality
 
@@ -461,7 +465,7 @@ class TestRunner:
     Class to handle test runner functionality
     """
 
-    def run(self, suite):  # noqa
+    def run(self, suite: "TestSuite") -> "TestResult":  # noqa
         """
         Method to handle test run functionality
 
@@ -472,20 +476,20 @@ class TestRunner:
             TestResult
         """
         res = TestResult()
-        for c in suite.tests:
-            run_class(c, res)
-        print("Ran %d tests\n" % res.testsRun)
+        for test_class in suite.tests:
+            run_class(test_class, res)
+        print(f"Ran {res.testsRun} tests\n")
         if res.failuresNum > 0 or res.errorsNum > 0:
-            print("FAILED (failures=%d, errors=%d)" % (res.failuresNum, res.errorsNum))
+            print(f"FAILED (failures={res.failuresNum}, errors={res.errorsNum})")
         else:
             msg = "OK"
             if res.skippedNum > 0:
-                msg += " (%d skipped)" % res.skippedNum
+                msg += f" ({res.skippedNum} skipped)"
             print(msg)
         return res
 
 
-def run_class(test_class: TestCase, test_result: TestResult):
+def run_class(test_class: type[TestCase], test_result: "TestResult") -> None:
     """
     Execute test methods within a test class, handling setup and teardown.
 
@@ -516,8 +520,8 @@ def run_class(test_class: TestCase, test_result: TestResult):
         print(f"Error in {context} for {test_class.__name__}: {exc}")
 
 
-def main(module="__main__"):
-    def test_cases(m):  # noqa
+def main(module: str = "__main__") -> None:
+    def test_cases(m: Any) -> Any:  # noqa
         """
         Function to handle test case running functionality
 

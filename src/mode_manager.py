@@ -11,6 +11,7 @@ from button_action_router import ButtonAction, ButtonActionRouter
 from input_manager import InputManager
 from logging_helper import logger
 from manager_base import ManagerBase
+from mode_interface import Mode
 from modes import SetupPortalMode
 from pixel_controller import PixelController
 from scheduler import Scheduler
@@ -31,11 +32,16 @@ class ModeManager(ManagerBase):
 
     _instance = None
 
-    def _init(self):
+    @classmethod
+    def instance(cls) -> "ModeManager":
+        """Get the ModeManager singleton instance."""
+        return super().instance()  # type: ignore[return-value]
+
+    def _init(self) -> None:
         """
         Initialize ModeManager.
         """
-        self.modes = []
+        self.modes: list[type[Mode]] = []
         self.current_mode_index = 0
         self.pixel = PixelController()
         self.logger = logger("wicid.mode_mgr")
@@ -43,7 +49,7 @@ class ModeManager(ManagerBase):
         self.button_router = ButtonActionRouter.instance()
         self._initialized = True
 
-    def register_modes(self, mode_classes):
+    def register_modes(self, mode_classes: list[type[Mode]]) -> None:
         """
         Register available modes and validate ordering.
 
@@ -80,7 +86,7 @@ class ModeManager(ManagerBase):
         mode_info = [(m.name, m.order) for m in self.modes]
         self.logger.info(f"Registered {len(self.modes)} mode(s): {mode_info}")
 
-    async def run(self):
+    async def run(self) -> None:
         """
         Main mode loop - never returns normally.
 
@@ -143,11 +149,11 @@ class ModeManager(ManagerBase):
             await self._process_pending_actions()
             await Scheduler.sleep(0.1)
 
-    def _next_mode(self):
+    def _next_mode(self) -> None:
         """Advance to next mode (wraps around to first mode)."""
         self.current_mode_index = (self.current_mode_index + 1) % len(self.modes)
 
-    def _goto_primary_mode(self):
+    def _goto_primary_mode(self) -> None:
         """Jump to primary mode (order=0)."""
         for idx, mode_class in enumerate(self.modes):
             if mode_class.order == 0:
@@ -157,7 +163,7 @@ class ModeManager(ManagerBase):
         self.logger.error("Primary mode not found - this should not happen")
         self.current_mode_index = 0
 
-    async def _process_pending_actions(self):
+    async def _process_pending_actions(self) -> None:
         while True:
             actions = self.button_router.pop_actions()
             if not actions:
@@ -180,10 +186,10 @@ class ModeManager(ManagerBase):
                 else:
                     self.logger.debug(f"Unhandled button action: {action}")
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         # ButtonActionRouter owns callback lifecycle
         pass
 
-    async def _wait_for_button_release(self):
+    async def _wait_for_button_release(self) -> None:
         while self.input_mgr.is_pressed():
             await Scheduler.sleep(0.05)

@@ -17,27 +17,27 @@ from unittest import TestCase
 class TestSmoke(TestCase):
     """Basic smoke tests to verify test infrastructure."""
 
-    def test_basic_assertion(self):
+    def test_basic_assertion(self) -> None:
         """Verify basic assertions work."""
         self.assertTrue(True)
         self.assertFalse(False)
         self.assertEqual(1, 1)
         self.assertNotEqual(1, 2)
 
-    def test_arithmetic(self):
+    def test_arithmetic(self) -> None:
         """Verify basic Python arithmetic."""
         self.assertEqual(2 + 2, 4)
         self.assertEqual(10 - 3, 7)
         self.assertEqual(3 * 4, 12)
         self.assertEqual(10 / 2, 5)
 
-    def test_strings(self):
+    def test_strings(self) -> None:
         """Verify string operations."""
         self.assertEqual("hello" + " " + "world", "hello world")
         self.assertTrue("test" in "this is a test")
         self.assertEqual(len("hello"), 5)
 
-    def test_lists(self):
+    def test_lists(self) -> None:
         """Verify list operations."""
         test_list = [1, 2, 3]
         self.assertEqual(len(test_list), 3)

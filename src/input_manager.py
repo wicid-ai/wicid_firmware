@@ -15,6 +15,7 @@ Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 
 import time
 
+from app_typing import Any, Callable
 from button_controller import ButtonController
 from logging_helper import logger
 from manager_base import ManagerBase
@@ -26,10 +27,10 @@ class ButtonEvent:
     """Button event types (CircuitPython-compatible enum)."""
 
     class _EventType:
-        def __init__(self, name):
+        def __init__(self, name: str) -> None:
             self.name = name
 
-        def __repr__(self):
+        def __repr__(self) -> str:
             return self.name
 
     PRESS = _EventType("PRESS")
@@ -59,7 +60,7 @@ class InputManager(ManagerBase):
 
     _default_controller_factory = ButtonController
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args: Any, **kwargs: Any) -> "InputManager":
         """
         Ensure direct instantiation (`InputManager()`) honors the singleton contract.
 
@@ -69,7 +70,7 @@ class InputManager(ManagerBase):
         return cls.instance(*args, **kwargs)
 
     @classmethod
-    def instance(cls, button_pin=None, controller_factory=None):
+    def instance(cls, button_pin: Any = None, controller_factory: Callable[..., Any] | None = None) -> "InputManager":
         """
         Get the InputManager singleton instance.
 
@@ -107,7 +108,7 @@ class InputManager(ManagerBase):
 
         return cls._instance
 
-    def __init__(self, button_pin=None, controller_factory=None):
+    def __init__(self, button_pin: Any = None, controller_factory: Callable[..., Any] | None = None) -> None:
         """
         Initialize input manager (called via singleton pattern or directly).
 
@@ -123,7 +124,7 @@ class InputManager(ManagerBase):
             InputManager._instance = self
         self._init(button_pin, controller_factory or self._default_controller_factory)
 
-    def _init(self, button_pin=None, controller_factory=None):
+    def _init(self, button_pin: Any = None, controller_factory: Callable[..., Any] | None = None) -> None:
         """
         Internal initialization method.
 
@@ -143,7 +144,8 @@ class InputManager(ManagerBase):
         )
 
         # Initialize hardware controller
-        self._controller = self._controller_factory(self.logger, button_pin)
+        factory = controller_factory or self._default_controller_factory
+        self._controller = factory(self.logger, button_pin)
 
         # Backwards-compatible attributes for tests/introspection
         self._button_pin = self._controller.button_pin
@@ -151,7 +153,7 @@ class InputManager(ManagerBase):
         self.logger.info("Initializing InputManager")
 
         # Callback registry: event_type -> list of callbacks
-        self._callbacks = {
+        self._callbacks: dict[Any, list[Callable[[Any], None]]] = {
             ButtonEvent.PRESS: [],
             ButtonEvent.RELEASE: [],
             ButtonEvent.SINGLE_CLICK: [],
@@ -163,11 +165,11 @@ class InputManager(ManagerBase):
         }
 
         # State tracking
-        self._press_start_time = None
+        self._press_start_time: float | None = None
         self._is_pressed = False
-        self._last_click_time = None
+        self._last_click_time: float | None = None
         self._click_count = 0
-        self._queued_hold_event = None
+        self._queued_hold_event: Any = None
 
         scheduler = Scheduler.instance()
         self._task_handle = self._track_task_handle(
@@ -182,7 +184,7 @@ class InputManager(ManagerBase):
         self._initialized = True
         self.logger.info("InputManager initialized with scheduled monitoring task")
 
-    def _is_compatible_with(self, button_pin=None):
+    def _is_compatible_with(self, button_pin: Any = None) -> bool:
         """
         Check if this instance is compatible with the given button_pin.
 
@@ -204,7 +206,7 @@ class InputManager(ManagerBase):
         # Same object reference means compatible
         return self._init_button_pin is button_pin
 
-    def register_callback(self, event_type, callback):
+    def register_callback(self, event_type: Any, callback: Callable[[Any], None]) -> None:
         """
         Register a callback for button events.
 
@@ -226,7 +228,7 @@ class InputManager(ManagerBase):
         self._callbacks[event_type].append(callback)
         self.logger.debug(f"Registered callback for {event_type}")
 
-    def unregister_callback(self, event_type, callback):
+    def unregister_callback(self, event_type: Any, callback: Callable[[Any], None]) -> bool:
         """
         Unregister a callback for button events.
 
@@ -247,7 +249,7 @@ class InputManager(ManagerBase):
         except ValueError:
             return False
 
-    def _fire_event(self, event_type):
+    def _fire_event(self, event_type: Any) -> None:
         """
         Fire callbacks for an event type.
 
@@ -265,11 +267,11 @@ class InputManager(ManagerBase):
             except Exception as e:
                 self.logger.error(f"Error in button callback: {e}", exc_info=True)
 
-    async def _monitor_button(self):
+    async def _monitor_button(self) -> None:
         """Async wrapper that delegates to synchronous polling helper."""
         self._monitor_button_tick()
 
-    def _monitor_button_tick(self, now=None):
+    def _monitor_button_tick(self, now: float | None = None) -> None:
         """
         Poll button state and fire events.
 
@@ -332,7 +334,7 @@ class InputManager(ManagerBase):
         # Handle click timeout grouping (if no new clicks, emit single)
         self._finalize_click_group(now)
 
-    def _register_click(self, timestamp):
+    def _register_click(self, timestamp: float) -> None:
         """Track click counts for multi-click detection."""
         self._click_count += 1
         self._last_click_time = timestamp
@@ -348,7 +350,7 @@ class InputManager(ManagerBase):
             self.logger.debug("Triple click detected")
             self._reset_click_tracking()
 
-    def _finalize_click_group(self, now):
+    def _finalize_click_group(self, now: float) -> None:
         """Reset click tracking if no clicks occur within grouping window."""
         if self._last_click_time is None:
             return
@@ -356,12 +358,12 @@ class InputManager(ManagerBase):
         if now - self._last_click_time > 0.5:
             self._reset_click_tracking()
 
-    def _reset_click_tracking(self):
+    def _reset_click_tracking(self) -> None:
         self._last_click_time = None
         self._click_count = 0
         self._queued_hold_event = None
 
-    def _check_hold_thresholds(self, now):
+    def _check_hold_thresholds(self, now: float) -> None:
         """Detect setup/safe hold events while button remains pressed."""
         if self._press_start_time is None:
             return
@@ -373,7 +375,7 @@ class InputManager(ManagerBase):
         elif duration >= self.SETUP_MODE_DURATION:
             self._emit_hold_event(ButtonEvent.SETUP_MODE, duration)
 
-    def _emit_hold_event(self, event_type, duration):
+    def _emit_hold_event(self, event_type: Any, duration: float) -> None:
         """Fire hold event once when threshold crossed."""
         if self._queued_hold_event is event_type:
             return
@@ -386,7 +388,7 @@ class InputManager(ManagerBase):
         self._queued_hold_event = event_type
         self._fire_event(event_type)
 
-    def is_pressed(self):
+    def is_pressed(self) -> bool:
         """
         Check if button is currently pressed (synchronous).
 
@@ -395,7 +397,7 @@ class InputManager(ManagerBase):
         """
         return self._is_pressed
 
-    def get_raw_value(self):
+    def get_raw_value(self) -> bool:
         """
         Get current button pressed state (synchronous).
 
@@ -404,7 +406,7 @@ class InputManager(ManagerBase):
         """
         return self._is_pressed
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """
         Release all resources owned by InputManager.
 
@@ -434,7 +436,6 @@ class InputManager(ManagerBase):
         if hasattr(self, "_callbacks") and isinstance(self._callbacks, dict):
             for callbacks in self._callbacks.values():
                 callbacks.clear()
-            self._callbacks = None
 
         super().shutdown()
         self.logger.debug("InputManager shut down")

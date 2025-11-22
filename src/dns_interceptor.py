@@ -15,6 +15,7 @@ all DNS traffic and redirecting it to the setup portal.
 import struct
 import time
 
+from app_typing import Any, Optional
 from logging_helper import logger
 from utils import suppress
 
@@ -45,7 +46,7 @@ class DNSInterceptor:
     DNS_RCODE_NO_ERROR = 0  # No error
     DNS_RCODE_NAME_ERROR = 3  # Name does not exist
 
-    def __init__(self, local_ip="192.168.4.1", socket_pool=None):
+    def __init__(self, local_ip: str = "192.168.4.1", socket_pool: Any = None) -> None:
         """
         Initialize the DNS interceptor.
 
@@ -62,7 +63,7 @@ class DNSInterceptor:
         self.running = False
         self.error_count = 0
         self.max_errors = 10  # Maximum consecutive errors before disabling
-        self.last_error_time = 0
+        self.last_error_time: float = 0.0
         self.error_backoff = 1.0  # Seconds to wait after errors
         self.logger = logger("wicid.dns")
 
@@ -73,7 +74,7 @@ class DNSInterceptor:
             self.logger.error(f"DNS Interceptor initialization failed: {e}")
             raise
 
-    def _ip_to_bytes(self, ip_str):
+    def _ip_to_bytes(self, ip_str: str) -> bytes:
         """
         Convert IP address string to 4-byte representation.
 
@@ -92,7 +93,7 @@ class DNSInterceptor:
         except ValueError as e:
             raise ValueError(f"Invalid IP address '{ip_str}': {e}") from e
 
-    def start(self):
+    def start(self) -> bool:
         """
         Start the DNS interceptor using CircuitPython's socketpool.
 
@@ -105,7 +106,7 @@ class DNSInterceptor:
         try:
             # Reset error counters on restart
             self.error_count = 0
-            self.last_error_time = 0
+            self.last_error_time = 0.0
 
             # Socket pool must be provided
             if not self.socket_pool:
@@ -117,14 +118,16 @@ class DNSInterceptor:
 
             # Set socket to non-blocking mode for polling
             # This ensures recvfrom_into() returns immediately if no data available
-            self.socket.setblocking(False)
+            if self.socket:
+                self.socket.setblocking(False)
 
             # Note: settimeout() is not needed for non-blocking sockets
             # Non-blocking mode makes recvfrom_into() return immediately with EAGAIN
             # if no data is available, which is what we want for smooth LED animation
 
             # Bind to DNS port on all interfaces
-            self.socket.bind(("0.0.0.0", self.DNS_PORT))
+            if self.socket:
+                self.socket.bind(("0.0.0.0", self.DNS_PORT))
 
             self.running = True
 
@@ -161,7 +164,7 @@ class DNSInterceptor:
             self._cleanup_socket()
             return False
 
-    def stop(self):
+    def stop(self) -> None:
         """
         Stop the DNS interceptor and clean up resources with error handling.
         """
@@ -181,7 +184,7 @@ class DNSInterceptor:
             with suppress(Exception):
                 self._cleanup_socket()
 
-    def _cleanup_socket(self):
+    def _cleanup_socket(self) -> None:
         """
         Clean up socket resources safely.
         """
@@ -193,7 +196,7 @@ class DNSInterceptor:
         # Clear socket pool reference
         self.socket_pool = None
 
-    def poll(self):
+    def poll(self) -> int:
         """
         Poll for incoming DNS queries with comprehensive error handling.
 
@@ -252,7 +255,7 @@ class DNSInterceptor:
 
         return queries_processed
 
-    def _handle_dns_error(self, error_msg):
+    def _handle_dns_error(self, error_msg: str) -> None:
         """
         Handle DNS operation errors with backoff and logging.
 
@@ -268,7 +271,7 @@ class DNSInterceptor:
             # Don't stop completely, just enter backoff mode
             self.error_backoff = min(self.error_backoff * 2, 30.0)  # Exponential backoff, max 30s
 
-    def _handle_dns_query_with_timeout(self, query_data, client_addr):
+    def _handle_dns_query_with_timeout(self, query_data: bytes, client_addr: tuple[str, int]) -> None:
         """
         Handle a DNS query with timeout protection.
 
@@ -291,7 +294,7 @@ class DNSInterceptor:
         except Exception as e:
             raise Exception(f"DNS query processing failed: {e}") from e
 
-    def _handle_dns_query(self, query_data, client_addr):
+    def _handle_dns_query(self, query_data: bytes, client_addr: tuple[str, int]) -> None:
         """
         Handle a DNS query and send appropriate response with error handling.
 
@@ -330,7 +333,10 @@ class DNSInterceptor:
             # Send response with error handling
             if response:
                 with suppress(OSError):
-                    self.socket.sendto(response, client_addr)
+                    if self.socket:
+                        self.socket.sendto(response, client_addr)
+                    else:
+                        self.logger.warning("Socket not available to send response")
 
         except Exception:
             # Try to send a generic error response if we have the transaction ID
@@ -339,10 +345,10 @@ class DNSInterceptor:
                     if len(query_data) >= 2:
                         transaction_id = (query_data[0] << 8) | query_data[1]
                         error_response = self._create_error_response(transaction_id, "", self.DNS_RCODE_NAME_ERROR)
-                        if error_response:
+                        if error_response and self.socket:
                             self.socket.sendto(error_response, client_addr)
 
-    def _parse_dns_query(self, data):
+    def _parse_dns_query(self, data: bytes) -> Optional[tuple[int, str, int, int]]:
         """
         Parse a DNS query packet to extract key information.
 
@@ -385,7 +391,7 @@ class DNSInterceptor:
         except Exception:
             return None
 
-    def _parse_domain_name(self, data, offset):
+    def _parse_domain_name(self, data: bytes, offset: int) -> tuple[str, int]:
         """
         Parse a domain name from DNS packet data.
 
@@ -422,7 +428,7 @@ class DNSInterceptor:
         domain = ".".join(domain_parts) if domain_parts else ""
         return domain, offset
 
-    def _create_a_record_response(self, transaction_id, domain, ip_bytes):
+    def _create_a_record_response(self, transaction_id: int, domain: str, ip_bytes: bytes) -> Optional[bytes]:
         """
         Create a DNS A record response.
 
@@ -468,7 +474,7 @@ class DNSInterceptor:
         except Exception:
             return None
 
-    def _create_error_response(self, transaction_id, domain, rcode):
+    def _create_error_response(self, transaction_id: int, domain: str, rcode: int) -> Optional[bytes]:
         """
         Create a DNS error response.
 
@@ -505,7 +511,7 @@ class DNSInterceptor:
         except Exception:
             return None
 
-    def _encode_domain_name(self, domain):
+    def _encode_domain_name(self, domain: str) -> bytes:
         """
         Encode a domain name for DNS packet format.
 
@@ -532,7 +538,7 @@ class DNSInterceptor:
         encoded += b"\x00"
         return encoded
 
-    def is_healthy(self):
+    def is_healthy(self) -> bool:
         """
         Check if the DNS interceptor is healthy and operational.
 
@@ -550,7 +556,7 @@ class DNSInterceptor:
 
         return True
 
-    def get_status(self):
+    def get_status(self) -> dict[str, Any]:
         """
         Get basic status information about the DNS interceptor.
 

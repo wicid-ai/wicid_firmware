@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, "/src")
 
 
-def run_all():
+def run_all() -> None:
     """Run all tests in the test suite.
 
     Usage from REPL:
@@ -34,7 +34,7 @@ def run_all():
     main(module="tests", exit=False, verbosity=2)
 
 
-def run_unit():
+def run_unit() -> None:
     """Run only unit tests.
 
     Usage from REPL:
@@ -49,7 +49,7 @@ def run_unit():
     main(module="tests.unit", exit=False, verbosity=2)
 
 
-def run_integration():
+def run_integration() -> None:
     """Run only integration tests.
 
     Usage from REPL:
@@ -64,7 +64,7 @@ def run_integration():
     main(module="tests.integration", exit=False, verbosity=2)
 
 
-def run_functional():
+def run_functional() -> None:
     """Run only functional tests.
 
     Usage from REPL:

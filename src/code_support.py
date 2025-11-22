@@ -4,8 +4,12 @@ Orchestrates system initialization and mode execution using manager classes.
 """
 
 import os
+import sys
 
-import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
+import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
+
+# Ensure root directory is in path for module imports
+sys.path.insert(0, "/")
 
 import test_mode
 from configuration_manager import ConfigurationManager
@@ -39,7 +43,7 @@ except OSError:
 print("=" * 60 + "\n")
 
 
-async def _startup_sequence():
+async def _startup_sequence() -> None:
     """Run main startup logic inside scheduler context."""
     try:
         # Check for test mode before normal initialization
@@ -61,7 +65,7 @@ async def _startup_sequence():
 
         APP_LOG.info("Initializing configuration...")
         config_mgr = ConfigurationManager.instance()
-        await config_mgr.initialize(portal_runner=SetupPortalMode.execute)
+        await config_mgr.initialize(portal_runner=lambda error=None: SetupPortalMode.execute(error=error))
 
         APP_LOG.info("Configuration complete - starting mode loop")
         mode_mgr = ModeManager.instance()
@@ -84,7 +88,7 @@ async def _startup_sequence():
         microcontroller.reset()
 
 
-def main():
+def main() -> None:
     """Entrypoint that schedules startup sequence and runs scheduler."""
     scheduler = Scheduler.instance()
     scheduler.schedule_now(

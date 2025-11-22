@@ -41,10 +41,11 @@ Usage Examples:
 """
 
 # Import comprehensive mocks from hardware_mocks module
+from app_typing import Any
 from hardware_mocks import MockAsyncButton, MockPin, MockPixel
 
 
-def create_mock_button_pin(pin_number=42, initial_value=True):
+def create_mock_button_pin(pin_number: int = 42, initial_value: bool = True) -> MockPin:
     """
     Factory function to create a mock button pin for testing.
 
@@ -63,7 +64,7 @@ def create_mock_button_pin(pin_number=42, initial_value=True):
     return MockPin(pin_number=pin_number, initial_value=initial_value)
 
 
-def create_mock_async_button(pin=None, value_when_pressed=False):
+def create_mock_async_button(pin: Any = None, value_when_pressed: bool = False) -> MockAsyncButton:
     """
     Factory function to create a mock async button for testing.
 
@@ -83,7 +84,7 @@ def create_mock_async_button(pin=None, value_when_pressed=False):
     return MockAsyncButton(pin=pin, value_when_pressed=value_when_pressed)
 
 
-def create_mock_pixel():
+def create_mock_pixel() -> MockPixel:
     """
     Factory function to create a mock pixel for testing.
 

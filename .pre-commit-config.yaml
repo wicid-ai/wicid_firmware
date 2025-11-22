@@ -20,7 +20,5 @@ repos:
     rev: v1.11.0
     hooks:
       - id: mypy
-        # Mypy is slow, so we run it manually or in CI.
-        # To run it on every commit, remove the `stages` line.
-        stages: [manual]
+        files: ^(src|tests)/
         additional_dependencies: ["types-requests"]

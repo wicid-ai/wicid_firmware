@@ -5,8 +5,10 @@ Provides a simple polling interface that is scheduler-friendly
 and does not spin up its own asyncio tasks.
 """
 
-import board  # type: ignore[import-untyped]  # CircuitPython-only module
-import digitalio  # type: ignore[import-untyped]  # CircuitPython-only module
+import board  # type: ignore[import-not-found]  # CircuitPython-only module
+import digitalio  # type: ignore[import-not-found]  # CircuitPython-only module
+
+from app_typing import Any
 
 
 class ButtonController:
@@ -17,7 +19,7 @@ class ButtonController:
     without any background asyncio helpers that might interfere with the scheduler.
     """
 
-    def __init__(self, logger, button_pin=None, input_factory=None):
+    def __init__(self, logger: Any, button_pin: Any = None, input_factory: Any = None) -> None:
         """
         Initialize ButtonController.
 
@@ -43,15 +45,18 @@ class ButtonController:
             self._digital_in.pull = digitalio.Pull.UP
 
     @property
-    def button_pin(self):
+    def button_pin(self) -> Any:
         """Return the raw Pin object."""
         return self._button_pin
 
-    def is_pressed(self):
+    def is_pressed(self) -> bool:
         """
         Return True if the button is currently pressed.
 
         The physical button is wired as active-low.
+
+        Returns:
+            bool: True if button is pressed, False otherwise
         """
         try:
             return not bool(self._digital_in.value)
@@ -59,7 +64,7 @@ class ButtonController:
             self._logger.warning(f"Button read failed: {exc}")
             return False
 
-    def deinit(self):
+    def deinit(self) -> None:
         """Deinitialize hardware resources."""
         try:
             if hasattr(self, "_digital_in") and self._digital_in is not None:

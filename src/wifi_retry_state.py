@@ -13,7 +13,7 @@ from logging_helper import logger
 STATE_FILE = "/wifi_retry_state.json"
 
 
-def load_retry_count():
+def load_retry_count() -> int:
     """
     Load the retry count from persistent storage.
 
@@ -29,7 +29,7 @@ def load_retry_count():
         return 0
 
 
-def increment_retry_count():
+def increment_retry_count() -> int:
     """
     Increment the retry count and save to persistent storage.
 
@@ -42,14 +42,14 @@ def increment_retry_count():
     return new_count
 
 
-def clear_retry_count():
+def clear_retry_count() -> None:
     """
     Clear the retry count (set to 0) and save to persistent storage.
     """
     _save_retry_count(0)
 
 
-def _save_retry_count(count):
+def _save_retry_count(count: int) -> None:
     """
     Save retry count to persistent storage.
 

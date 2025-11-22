@@ -12,14 +12,14 @@ Code reviews ensure the long-term health, reliability, and maintainability of th
 
 Before inspecting logic, ensure the code passes all automated static analysis.
 
-**Step 1:** Run the pre-commit hooks on all files.
+Run the pre-commit hooks on all files.
 ```bash
 pipenv run pre-commit run --all-files
 ```
 
 **Action:**
-- If this command fails, the review **fails immediately**.
-- Report the specific linting or formatting errors found.
+- If these commands fail, the review **fails immediately**.
+- Report the specific linting, formatting, or typing errors found.
 - Do not proceed to logic review until these are resolved.
 
 ---
@@ -62,6 +62,7 @@ Evaluate the code against the following criteria. Use the referenced documentati
 *Reference: `docs/STYLE_GUIDE.md`*
 
 - **[ ] Type Hinting**: Do all new functions have full type hints (`def foo(x: int) -> bool:`)?
+- **[ ] App Typing**: Are types imported from `app_typing` (e.g. `from app_typing import List`) instead of `typing`?
 - **[ ] Docstrings**: Do public methods have Google-style docstrings?
 - **[ ] Comments**: Do comments explain "Why", not "What"? (Avoid "Increment i" style comments).
 - **[ ] Naming**: Do variables use `snake_case` and constants use `UPPER_CASE`?
@@ -101,6 +102,7 @@ Rank every issue found using these levels:
 
 ## ✅ Verification
 - [ ] Pre-commit checks passed?
+- [ ] Type checks (mypy) passed?
 - [ ] Architecture patterns followed?
 - [ ] Scheduler rules respected?
 ```

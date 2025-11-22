@@ -2,9 +2,14 @@ import json
 import os
 import time
 
-import supervisor  # type: ignore[import-untyped]  # CircuitPython-only module
-from adafruit_httpserver import JSONResponse, Request, Response  # type: ignore[import-untyped]
+import supervisor  # type: ignore[import-not-found]  # CircuitPython-only module
+from adafruit_httpserver import (  # type: ignore[import-not-found, attr-defined]  # CircuitPython-only module
+    JSONResponse,
+    Request,
+    Response,
+)
 
+from app_typing import Any, Callable, Optional
 from connection_manager import ConnectionManager
 from dns_interceptor import DNSInterceptor
 from logging_helper import logger
@@ -32,6 +37,14 @@ class ConfigurationManager(ManagerBase):
     PROGRESS_STEP_PERCENT = 2  # Minimum % delta required to emit progress updates
     UPDATE_SERVICE_INTERVAL_MS = 200  # Interval between servicing HTTP during updates
 
+    # Type annotations for instance attributes
+    connection_manager: Optional[ConnectionManager] = None
+    pixel: Any = None  # PixelController | None, but Any to avoid circular import
+    _update_manager: Any = None  # UpdateManager | None, but Any to avoid circular import
+    _http_server: Any = None  # HTTPServer | None, but Any to avoid circular import
+    dns_interceptor: Optional["DNSInterceptor"] = None
+    _active_button_session: Any = None  # ButtonController | None, but Any to avoid circular import
+
     # --- Centralized error strings ---
     ERR_INVALID_REQUEST = "Invalid request data."
     ERR_EMPTY_SSID = "SSID cannot be empty."
@@ -40,7 +53,7 @@ class ConfigurationManager(ManagerBase):
     ERR_INVALID_ZIP = "ZIP code must be 5 digits."
 
     @classmethod
-    def instance(cls):
+    def instance(cls) -> "ConfigurationManager":
         """
         Get the singleton instance of ConfigurationManager.
 
@@ -58,39 +71,39 @@ class ConfigurationManager(ManagerBase):
             obj._init()
         return cls._instance
 
-    def _init(self):
+    def _init(self) -> None:
         """Internal initialization method."""
         self.ap_ssid = "WICID-Setup"
-        self.ap_password = None  # Open network
+        self.ap_password: Optional[str] = None  # Open network
         self.setup_complete = False
         self.pixel = PixelController()  # Get singleton instance
         self.connection_manager = ConnectionManager.instance()  # Get ConnectionManager singleton
-        self.last_connection_error = None
-        self.pending_ready_at = None  # monotonic timestamp for scheduled activation
+        self.last_connection_error: Optional[str | dict[str, Any]] = None
+        self.pending_ready_at: Optional[float] = None  # monotonic timestamp for scheduled activation
         self.dns_interceptor = None  # DNS interceptor for captive portal
-        self.last_request_time = None  # timestamp of last HTTP request for idle timeout tracking
+        self.last_request_time: Optional[float] = None  # timestamp of last HTTP request for idle timeout tracking
         self.user_connected = False  # flag indicating user has connected to portal
-        self.pending_ssid = None  # SSID to test before activation
-        self.pending_password = None  # Password to test before activation
+        self.pending_ssid: Optional[str] = None  # SSID to test before activation
+        self.pending_password: Optional[str] = None  # Password to test before activation
 
         # Async validation state tracking
         self.validation_state = "idle"  # idle | validating_wifi | checking_updates | success | error
-        self.validation_result = None  # dict with validation results
-        self.validation_started_at = None  # timestamp when validation started
+        self.validation_result: Optional[dict[str, Any]] = None  # dict with validation results
+        self.validation_started_at: Optional[float] = None  # timestamp when validation started
         self.validation_trigger = False  # flag to trigger validation in main loop
-        self.activation_mode = None  # "continue" (no update) | "update" (download update)
+        self.activation_mode: Optional[str] = None  # "continue" (no update) | "update" (download update)
 
         # Update progress tracking
         self.update_state = "idle"  # idle | downloading | verifying | unpacking | restarting | error
         self.update_trigger = False  # flag to trigger update in main loop
-        self.update_progress_message = None  # detailed progress message for UI
-        self.update_progress_pct = None  # progress percentage (0-100)
+        self.update_progress_message: Optional[str] = None  # detailed progress message for UI
+        self.update_progress_pct: Optional[float] = None  # progress percentage (0-100)
         self._update_manager = None  # Lazy-initialized UpdateManager
         self._http_server = None  # Store server reference for update polling
-        self._last_progress_notify_state = None
-        self._last_progress_notify_message = None
-        self._last_progress_notify_pct = None
-        self._last_progress_pct_value = None
+        self._last_progress_notify_state: Optional[str] = None
+        self._last_progress_notify_message: Optional[str] = None
+        self._last_progress_notify_pct: Optional[float] = None
+        self._last_progress_pct_value: Optional[float] = None
         self._last_update_service_time = 0.0
         self._active_button_session = None  # Tracks session controller while portal active
 
@@ -100,7 +113,7 @@ class ConfigurationManager(ManagerBase):
         # ManagerBase initialization flag
         self._manager_initialized = True
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Private constructor. Use instance() instead."""
         # Guard against re-initialization
         if getattr(self, "_manager_initialized", False):
@@ -110,7 +123,7 @@ class ConfigurationManager(ManagerBase):
             ConfigurationManager._instance = self
         self._init()
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """
         Release all resources owned by ConfigurationManager.
 
@@ -140,7 +153,7 @@ class ConfigurationManager(ManagerBase):
             super().shutdown()
             self._manager_initialized = False
 
-    async def initialize(self, portal_runner=None):
+    async def initialize(self, portal_runner: Callable[..., Any] | None = None) -> bool:
         """
         Initialize system configuration on boot.
 
@@ -183,13 +196,15 @@ class ConfigurationManager(ManagerBase):
             self.logger.debug(f"Configuration found for '{ssid}'")
 
             # Try to connect with existing credentials
-            if self.connection_manager.is_connected():
+            if self.connection_manager and self.connection_manager.is_connected():
                 self.logger.info("Already connected")
                 self._initialized = True
                 return True
 
             # Attempt connection with saved credentials
             self.logger.info("Connecting with saved credentials")
+            if not self.connection_manager:
+                raise RuntimeError("ConnectionManager not initialized")
             success, error_msg = await self.connection_manager.ensure_connected(timeout=60)
 
             if success:
@@ -212,7 +227,7 @@ class ConfigurationManager(ManagerBase):
                 raise ValueError("portal_runner is required to enter setup mode") from e
             return await portal_runner(error=None)
 
-    async def run_portal(self, error=None, button_session=None):
+    async def run_portal(self, error: dict[str, str] | None = None, button_session: Any = None) -> bool:
         """
         Force entry into setup/configuration mode.
 
@@ -249,7 +264,7 @@ class ConfigurationManager(ManagerBase):
             self.last_connection_error = error
 
         # Reset button state tracking for this portal session
-        if hasattr(self._active_button_session, "reset"):
+        if self._active_button_session and hasattr(self._active_button_session, "reset"):
             self._active_button_session.reset()
 
         # Start setup mode indicator (pulsing white LED)
@@ -274,7 +289,7 @@ class ConfigurationManager(ManagerBase):
             self._active_button_session = None
             return False
 
-    def _build_connection_error(self, ssid: str, raw_error: str):
+    def _build_connection_error(self, ssid: str, raw_error: str | None) -> tuple[str, str]:
         """
         Create a concise, user-friendly connection error message and map it to the correct field.
 
@@ -307,11 +322,11 @@ class ConfigurationManager(ManagerBase):
 
         return f"{base} Please check your Wi-Fi settings and try again.", field
 
-    def start_setup_indicator(self):
+    def start_setup_indicator(self) -> None:
         """Begin pulsing white to indicate setup mode is active."""
         self.pixel.indicate_setup_mode()
 
-    def _start_dns_interceptor(self, ap_ip):
+    def _start_dns_interceptor(self, ap_ip: str) -> bool:
         """
         Start the DNS interceptor for captive portal functionality.
 
@@ -322,6 +337,8 @@ class ConfigurationManager(ManagerBase):
             bool: True if DNS interceptor started successfully
         """
         try:
+            if not self.connection_manager:
+                return False
             socket_pool = self.connection_manager.get_socket_pool()
             self.dns_interceptor = DNSInterceptor(local_ip=ap_ip, socket_pool=socket_pool)
 
@@ -343,7 +360,7 @@ class ConfigurationManager(ManagerBase):
             self.dns_interceptor = None
             return False
 
-    def _stop_dns_interceptor(self):
+    def _stop_dns_interceptor(self) -> None:
         """Stop the DNS interceptor and clean up resources"""
         if self.dns_interceptor:
             try:
@@ -353,7 +370,7 @@ class ConfigurationManager(ManagerBase):
             finally:
                 self.dns_interceptor = None
 
-    def _check_dns_interceptor_health(self):
+    def _check_dns_interceptor_health(self) -> bool:
         """Check DNS interceptor health"""
         if not self.dns_interceptor:
             return False
@@ -364,9 +381,17 @@ class ConfigurationManager(ManagerBase):
         except Exception:
             return False
 
-    def start_access_point(self):
+    def get_socket_pool(self) -> Any:
+        """Get the socket pool from the connection manager."""
+        if not self.connection_manager:
+            raise RuntimeError("ConnectionManager not initialized")
+        return self.connection_manager.get_socket_pool()
+
+    def start_access_point(self) -> str:
         """Start the access point for setup mode using the connection manager."""
         # Start AP through ConnectionManager (handles all radio state transitions)
+        if not self.connection_manager:
+            raise RuntimeError("ConnectionManager not initialized")
         ap_ip = self.connection_manager.start_access_point(self.ap_ssid, self.ap_password)
 
         # Start DNS interceptor for captive portal functionality
@@ -380,6 +405,7 @@ class ConfigurationManager(ManagerBase):
         # Ensure setup mode indicator is active whenever portal is running
         self.pixel.indicate_setup_mode()
         # Scheduler automatically handles LED animation updates at 25Hz
+        return ap_ip
 
     def _get_os_from_user_agent(self, request: Request) -> str:
         """
@@ -452,7 +478,7 @@ class ConfigurationManager(ManagerBase):
         return f"Network '{ssid}' not found. Check for typos."
 
     # --- Validation helpers ---
-    def _validate_config_input(self, request: Request, ssid: str, password: str, zip_code: str):
+    def _validate_config_input(self, request: Request, ssid: str, password: str, zip_code: str) -> Optional[Response]:
         """Validate SSID, password, and ZIP code format. Return a Response on error, else None."""
         if not ssid:
             return self._json_error(request, self.ERR_EMPTY_SSID, field="ssid")
@@ -470,13 +496,20 @@ class ConfigurationManager(ManagerBase):
 
         return None
 
-    def _scan_ssids(self):
+    def scan_networks(self) -> list[Any]:
+        """Scan for available networks."""
+        if not self.connection_manager:
+            return []
+        return list(self.connection_manager.scan_networks())
+
+    def _scan_ssids(self) -> list[str]:
         """Scan for WiFi networks and return a list of available SSIDs.
         Uses the connection manager for scanning (ensures scanning is stopped).
         """
         self.logger.debug("Starting network scan for SSID validation")
         try:
-            ssids = [net.ssid for net in self.connection_manager.scan_networks() if getattr(net, "ssid", None)]
+            networks = self.scan_networks()
+            ssids = [net.ssid for net in networks if getattr(net, "ssid", None)]
             self.logger.debug(f"Found SSIDs: {ssids}")
             return ssids
         except Exception as e:
@@ -484,11 +517,13 @@ class ConfigurationManager(ManagerBase):
             raise
 
     # --- Response helpers to keep code DRY and API-compatible ---
-    def _json_ok(self, request: Request, data: dict):
+    def _json_ok(self, request: Request, data: dict[str, Any]) -> Response:
         """Return a JSONResponse with 200 OK."""
         return JSONResponse(request, data)
 
-    def _json_error(self, request: Request, message: str, field=None, code: int = 400, text: str = "Bad Request"):
+    def _json_error(
+        self, request: Request, message: str, field: str | None = None, code: int = 400, text: str = "Bad Request"
+    ) -> Response:
         """Return an error JSON response with explicit status tuple.
 
         Using the base Response with a (code, text) tuple is compatible across library versions.
@@ -496,7 +531,7 @@ class ConfigurationManager(ManagerBase):
         body = {"status": "error", "error": {"message": message, "field": field}}
         return Response(request, json.dumps(body), content_type="application/json", status=(code, text))
 
-    def save_credentials(self, ssid, password, zip_code):
+    def save_credentials(self, ssid: str, password: str, zip_code: str) -> tuple[bool, Optional[str]]:
         """Save WiFi credentials and weather ZIP to secrets.json."""
         try:
             # Save all user settings to secrets.json (no config.json anymore)
@@ -517,17 +552,24 @@ class ConfigurationManager(ManagerBase):
             self.logger.error(f"Error saving credentials: {e}")
             return False, str(e)
 
-    async def blink_success(self):
+    async def blink_success(self) -> None:
         """Blink green to indicate success"""
         try:
             await self.pixel.blink_success()
         except Exception as e:
             self.logger.warning(f"Error in blink_success: {e}")
 
-    async def run_web_server(self):
+    async def run_web_server(self) -> bool:
         """Run a simple web server to handle the setup interface"""
-        from adafruit_httpserver import FileResponse, Request, Response, Server  # type: ignore[import-untyped]
+        from adafruit_httpserver import (  # type: ignore[import-not-found, attr-defined]  # CircuitPython-only module
+            FileResponse,
+            Request,
+            Response,
+            Server,
+        )
 
+        if not self.connection_manager:
+            raise RuntimeError("ConnectionManager not initialized")
         pool = self.connection_manager.get_socket_pool()
         server = Server(pool, "/www", debug=False)
 
@@ -539,16 +581,17 @@ class ConfigurationManager(ManagerBase):
         setup_idle_timeout = int(os.getenv("SETUP_IDLE_TIMEOUT", "300"))
 
         # Helper to mark user as connected and clear retry state
-        def _mark_user_connected():
+        def _mark_user_connected() -> None:
             if not self.user_connected:
                 self.user_connected = True
-                self.connection_manager.clear_retry_count()
+                if self.connection_manager:
+                    self.connection_manager.clear_retry_count()
                 self.logger.debug("User connected to portal")
             self.last_request_time = time.monotonic()
 
         # Serve the main page, pre-populating with settings and showing previous errors
         @server.route("/")
-        def base(request: Request):
+        def base(request: Request) -> Response:
             _mark_user_connected()
             try:
                 # Load current settings
@@ -584,7 +627,7 @@ class ConfigurationManager(ManagerBase):
 
         # System information endpoint
         @server.route("/system-info", "GET")
-        def system_info(request: Request):
+        def system_info(request: Request) -> Response:
             _mark_user_connected()
             try:
                 from utils import get_machine_type, get_os_version_string_pretty_print
@@ -615,11 +658,14 @@ class ConfigurationManager(ManagerBase):
 
         # WiFi network scanning endpoint
         @server.route("/scan", "GET")
-        def scan_networks(request: Request):
+        def scan_networks(request: Request) -> Response:
             _mark_user_connected()
             try:
                 self.logger.debug("Scanning for WiFi networks")
-                networks = []
+                networks: list[dict[str, Any]] = []
+
+                if not self.connection_manager:
+                    return self._json_error(request, "ConnectionManager not initialized")
 
                 # Scan for available networks using the connection manager
                 for network in self.connection_manager.scan_networks():
@@ -649,51 +695,51 @@ class ConfigurationManager(ManagerBase):
 
         # Android connectivity check endpoints
         @server.route("/generate_204", "GET")
-        def android_generate_204(request: Request):
+        def android_generate_204(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         @server.route("/gen_204", "GET")
-        def android_gen_204(request: Request):
+        def android_gen_204(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         @server.route("/connectivitycheck/gstatic/generate_204", "GET")
-        def android_gstatic_204(request: Request):
+        def android_gstatic_204(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # iOS connectivity check endpoints
         @server.route("/hotspot-detect.html", "GET")
-        def ios_hotspot_detect(request: Request):
+        def ios_hotspot_detect(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         @server.route("/library/test/success.html", "GET")
-        def ios_library_success(request: Request):
+        def ios_library_success(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # Windows/Linux connectivity check endpoints
         @server.route("/ncsi.txt", "GET")
-        def windows_ncsi(request: Request):
+        def windows_ncsi(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         @server.route("/connecttest.txt", "GET")
-        def windows_connecttest(request: Request):
+        def windows_connecttest(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # Generic captive portal detection route
         @server.route("/redirect", "GET")
-        def generic_captive_redirect(request: Request):
+        def generic_captive_redirect(request: Request) -> Response:
             _mark_user_connected()
             return self._create_captive_redirect_response(request)
 
         # Handle form submission with two-stage validation
         @server.route("/configure", "POST")
-        def configure(request: Request):
+        def configure(request: Request) -> Response:
             _mark_user_connected()
             try:
                 self.logger.debug("Starting configure function")
@@ -774,7 +820,7 @@ class ConfigurationManager(ManagerBase):
 
         # Get validation status (polled by client during async validation)
         @server.route("/validation-status", "GET")
-        def validation_status(request: Request):
+        def validation_status(request: Request) -> Response:
             _mark_user_connected()
             try:
                 # Check for validation timeout (2 minutes)
@@ -788,7 +834,7 @@ class ConfigurationManager(ManagerBase):
                         self.validation_trigger = False
 
                 # Build response based on current state
-                response_data = {"state": self.validation_state}
+                response_data: dict[str, Any] = {"state": self.validation_state}
 
                 if self.validation_state == "validating_wifi":
                     response_data["message"] = "Testing WiFi credentials..."
@@ -816,7 +862,7 @@ class ConfigurationManager(ManagerBase):
 
         # Handle activation request (no update case)
         @server.route("/activate", "POST")
-        def activate(request: Request):
+        def activate(request: Request) -> Response:
             _mark_user_connected()
             try:
                 self.logger.info("Activation requested (no update)")
@@ -837,7 +883,7 @@ class ConfigurationManager(ManagerBase):
 
         # Handle update installation request
         @server.route("/update-now", "POST")
-        def update_now(request: Request):
+        def update_now(request: Request) -> Response:
             _mark_user_connected()
             try:
                 self.logger.info("Update installation requested by user")
@@ -864,10 +910,10 @@ class ConfigurationManager(ManagerBase):
 
         # Get update progress status (polled by client during update)
         @server.route("/update-status", "GET")
-        def update_status(request: Request):
+        def update_status(request: Request) -> Response:
             _mark_user_connected()
             try:
-                response_data = {"state": self.update_state}
+                response_data: dict[str, Any] = {"state": self.update_state}
 
                 # Use detailed progress message from UpdateManager if available
                 if self.update_progress_message:
@@ -894,9 +940,13 @@ class ConfigurationManager(ManagerBase):
 
             except Exception as e:
                 self.logger.error(f"Error in /update-status: {e}")
-                return self._json_error(request, "Could not get update status", code=500, text="Internal Server Error")
+                return self._json_error(
+                    request, "Could not connect to network.", field="password", code=500, text="Internal Server Error"
+                )
 
         # Start the server
+        if not self.connection_manager:
+            raise RuntimeError("ConnectionManager not initialized")
         server_ip = self.connection_manager.get_ap_ip_address()
         server.start(host=server_ip, port=80)
         self.logger.info(f"Server started at http://{server_ip}")
@@ -959,13 +1009,14 @@ class ConfigurationManager(ManagerBase):
 
                         # Stop access point (already connected to WiFi in station mode from validation)
                         try:
-                            self.connection_manager.stop_access_point()
-                            self.logger.info("Access point stopped")
+                            if self.connection_manager:
+                                self.connection_manager.stop_access_point()
+                                self.logger.info("Access point stopped")
                         except Exception as e:
                             self.logger.warning(f"Error stopping access point: {e}")
 
                         # Verify WiFi connection preserved, reconnect if needed
-                        if not self.connection_manager.is_connected():
+                        if self.connection_manager and not self.connection_manager.is_connected():
                             self.logger.warning("WiFi connection lost after stopping AP - reconnecting")
                             credentials = self.connection_manager.get_credentials()
                             if credentials:
@@ -996,7 +1047,7 @@ class ConfigurationManager(ManagerBase):
                     return False
 
                 exit_reason = (
-                    self._active_button_session.consume_exit_request() if self._active_button_session else None
+                    None if self._active_button_session is None else self._active_button_session.consume_exit_request()
                 )
                 if exit_reason:
                     self.logger.debug(f"Setup exit requested via {exit_reason}")
@@ -1023,7 +1074,7 @@ class ConfigurationManager(ManagerBase):
         self._active_button_session = None
         return self.setup_complete
 
-    def tick(self):
+    def tick(self) -> None:
         """
         Service HTTP server, DNS interceptor, and pixel controller once.
 
@@ -1043,7 +1094,7 @@ class ConfigurationManager(ManagerBase):
 
         # Pixel controller animation now handled by scheduler at 25Hz
 
-    def _update_progress_callback(self, state, message, progress_pct):
+    def _update_progress_callback(self, state: str, message: str, progress_pct: float) -> None:
         """
         Progress callback for UpdateManager (Observer pattern).
 
@@ -1068,11 +1119,7 @@ class ConfigurationManager(ManagerBase):
         self.update_progress_message = message
         self.update_progress_pct = progress_pct
 
-        force_progress = (
-            state == "downloading" or state == "verifying" or state == "unpacking"
-        ) and progress_pct is not None
-
-        if not (state_changed or message_changed or progress_changed or force_progress):
+        if not (state_changed or message_changed or progress_changed):
             return
 
         self._last_progress_notify_state = state
@@ -1082,7 +1129,7 @@ class ConfigurationManager(ManagerBase):
 
         self.logger.debug(f"Update progress: {state} - {message} ({progress_pct}%)")
 
-    def _normalize_progress(self, progress_pct):
+    def _normalize_progress(self, progress_pct: float) -> Optional[float]:
         """Convert progress value to int 0-100 when possible; return None otherwise."""
         if progress_pct is None:
             return None
@@ -1092,7 +1139,7 @@ class ConfigurationManager(ManagerBase):
         except (ValueError, TypeError):
             return None
 
-    def _progress_delta_trigger(self, progress_pct):
+    def _progress_delta_trigger(self, progress_pct: float) -> bool:
         """
         Determine if progress change alone warrants emitting an update.
 
@@ -1113,7 +1160,7 @@ class ConfigurationManager(ManagerBase):
         # Indeterminate progress - defer to raw value comparison
         return progress_pct != self._last_progress_notify_pct
 
-    def _service_update_timeslice(self):
+    def _service_update_timeslice(self) -> None:
         """Allow update loop to service HTTP/DNS without re-entering frequently."""
         now = time.monotonic()
         if (now - self._last_update_service_time) * 1000.0 < self.UPDATE_SERVICE_INTERVAL_MS:
@@ -1124,7 +1171,7 @@ class ConfigurationManager(ManagerBase):
         except Exception as e:
             self.logger.debug(f"Error servicing update requests: {e}")
 
-    async def _sleep_with_portal_service(self, seconds):
+    async def _sleep_with_portal_service(self, seconds: float) -> None:
         """Sleep while continuing to service portal networking."""
         target = time.monotonic() + max(0.0, seconds)
         while True:
@@ -1134,24 +1181,22 @@ class ConfigurationManager(ManagerBase):
             self._service_update_timeslice()
             await Scheduler.sleep(min(0.1, remaining))
 
-    def _get_update_manager(self):
+    def _get_update_manager(self) -> Any:
         """
-        Get or create UpdateManager instance with progress callback.
+        Get or create UpdateManager instance.
 
-        Lazy initialization ensures UpdateManager has WiFi access and callback configured.
+        Lazy initialization ensures UpdateManager has WiFi access.
 
         Returns:
-            UpdateManager: Instance with progress callback configured
+            UpdateManager: Instance
         """
         if self._update_manager is None:
             from update_manager import UpdateManager
 
-            self._update_manager = UpdateManager.instance(
-                progress_callback=self._update_progress_callback, service_callback=self._service_update_timeslice
-            )
+            self._update_manager = UpdateManager.instance()
         return self._update_manager
 
-    async def _execute_async_update(self, server, server_ip):
+    async def _execute_async_update(self, server: Any, server_ip: str) -> None:
         """
         Execute async update workflow using UpdateManager.
 
@@ -1167,7 +1212,10 @@ class ConfigurationManager(ManagerBase):
 
                 # UpdateManager cached update_info from check_for_updates()
                 try:
-                    download_success = await update_manager.download_update()
+                    download_success = await update_manager.download_update(
+                        progress_callback=self._update_progress_callback,
+                        service_callback=self._service_update_timeslice,
+                    )
                 except ValueError as e:
                     self.logger.error(f"Update download failed: {e}")
                     await self._handle_setup_update_failure(server, f"Invalid update request: {e}")
@@ -1203,13 +1251,14 @@ class ConfigurationManager(ManagerBase):
                 self._stop_dns_interceptor()
 
                 try:
-                    self.connection_manager.stop_access_point()
+                    if self.connection_manager:
+                        self.connection_manager.stop_access_point()
                 except Exception as e:
                     self.logger.warning(f"Error stopping AP: {e}")
 
                 # Hard reset to trigger update installation in boot.py
                 self.logger.info("Rebooting to install update")
-                import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
+                import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
 
                 microcontroller.reset()
 
@@ -1217,7 +1266,7 @@ class ConfigurationManager(ManagerBase):
             self.logger.error(f"Error during async update: {e}")
             await self._handle_setup_update_failure(server, f"Async update error: {e}")
 
-    async def _handle_setup_update_failure(self, server, reason):
+    async def _handle_setup_update_failure(self, server: Any, reason: str) -> None:
         """
         Gracefully exit setup mode after an update failure and resume normal mode.
         """
@@ -1245,7 +1294,7 @@ class ConfigurationManager(ManagerBase):
         await self._sleep_with_portal_service(1)
         supervisor.reload()
 
-    async def _execute_async_validation(self):
+    async def _execute_async_validation(self) -> None:
         """
         Execute async validation workflow: test WiFi credentials and check for updates.
         Updates validation_state and validation_result as it progresses.
@@ -1264,9 +1313,13 @@ class ConfigurationManager(ManagerBase):
                     return
 
                 self.logger.info(f"Validating WiFi credentials for '{self.pending_ssid}'")
-                success, error_msg = await self.connection_manager.test_credentials_from_ap(
-                    self.pending_ssid, self.pending_password
-                )
+                if not self.connection_manager:
+                    success = False
+                    error_msg: str | dict[str, Any] | None = "ConnectionManager not initialized"
+                else:
+                    success, error_msg = await self.connection_manager.test_credentials_from_ap(
+                        self.pending_ssid, self.pending_password
+                    )
 
                 if not success:
                     # Credentials failed
@@ -1276,7 +1329,8 @@ class ConfigurationManager(ManagerBase):
                     # Extract error message from dict if present
                     if isinstance(error_msg, dict):
                         error_message = error_msg.get("message", "WiFi connection test failed")
-                        error_field = error_msg.get("field", "password")
+                        val = error_msg.get("field", "password")
+                        error_field = str(val) if val is not None else "password"
                     else:
                         error_message = str(error_msg) if error_msg else "WiFi connection test failed"
                         error_field = "password"
@@ -1328,7 +1382,7 @@ class ConfigurationManager(ManagerBase):
             self.validation_result = {"error": {"message": f"Validation error: {e}", "field": None}}
             self.validation_trigger = False
 
-    def _restart_portal_services(self, server, server_ip):
+    def _restart_portal_services(self, server: Any, server_ip: str) -> None:
         """
         Restart HTTP server and DNS interceptor after failed credential test.
         Called when credentials fail so client can see error and retry.
@@ -1352,7 +1406,7 @@ class ConfigurationManager(ManagerBase):
             self.logger.error(f"Error restarting HTTP server: {e}")
             raise
 
-    def _cleanup_setup_portal(self):
+    def _cleanup_setup_portal(self) -> bool:
         """
         Cleanup of setup portal resources and state.
 
@@ -1377,7 +1431,8 @@ class ConfigurationManager(ManagerBase):
             # Stop access point with automatic connection restoration
             # ConnectionManager will reconnect if we were connected before entering AP mode
             try:
-                self.connection_manager.stop_access_point(restore_connection=True)
+                if self.connection_manager:
+                    self.connection_manager.stop_access_point(restore_connection=True)
             except Exception as ap_e:
                 self.logger.warning(f"Error stopping access point: {ap_e}")
                 cleanup_successful = False

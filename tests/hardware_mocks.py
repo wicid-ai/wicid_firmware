@@ -20,6 +20,8 @@ Usage:
 
 import time
 
+from app_typing import Any, Callable, Optional
+
 
 class MockPin:
     """
@@ -52,7 +54,7 @@ class MockPin:
         UP = 1
         DOWN = 2
 
-    def __init__(self, pin_number=None, initial_value=True):
+    def __init__(self, pin_number: int | None = None, initial_value: bool = True) -> None:
         """
         Initialize mock pin.
 
@@ -62,10 +64,10 @@ class MockPin:
         """
         self.pin_number = pin_number
         self._value = initial_value
-        self._listeners = []  # For async event simulation
+        self._listeners: list[Callable[[bool], None]] = []  # For async event simulation
 
     @property
-    def value(self):
+    def value(self) -> bool:
         """
         Get pin value.
 
@@ -76,7 +78,7 @@ class MockPin:
         return self._value
 
     @value.setter
-    def value(self, val):
+    def value(self, val: bool) -> None:
         """
         Set pin value and notify listeners.
 
@@ -94,7 +96,7 @@ class MockPin:
             for listener in self._listeners:
                 listener(val)
 
-    def simulate_press(self):
+    def simulate_press(self) -> None:
         """
         Simulate button press (set value to False for active-low button).
 
@@ -102,7 +104,7 @@ class MockPin:
         """
         self.value = False
 
-    def simulate_release(self):
+    def simulate_release(self) -> None:
         """
         Simulate button release (set value to True for active-low button).
 
@@ -110,7 +112,7 @@ class MockPin:
         """
         self.value = True
 
-    def add_listener(self, callback):
+    def add_listener(self, callback: Callable[[bool], None]) -> None:
         """
         Add a listener for value changes.
 
@@ -121,7 +123,7 @@ class MockPin:
         """
         self._listeners.append(callback)
 
-    def remove_listener(self, callback):
+    def remove_listener(self, callback: Callable[[bool], None]) -> None:
         """
         Remove a value change listener.
 
@@ -131,7 +133,7 @@ class MockPin:
         if callback in self._listeners:
             self._listeners.remove(callback)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation for debugging."""
         state = "LOW" if self._value is False else "HIGH"
         if self.pin_number is not None:
@@ -149,21 +151,21 @@ class MockDigitalInOut:
     - deinit method
     """
 
-    def __init__(self, pin):
+    def __init__(self, pin: Any) -> None:
         self.pin = pin
         self.value = True  # Default to not pressed (active-low button)
-        self.direction = None
-        self.pull = None
+        self.direction: Optional[str] = None
+        self.pull: Any = None
 
-    def switch_to_input(self, pull=None):
+    def switch_to_input(self, pull: Any = None) -> None:
         self.direction = "input"
         self.pull = pull
 
-    def deinit(self):
+    def deinit(self) -> None:
         """Release mock resources (no-op)."""
         pass
 
-    def simulate_value(self, value):
+    def simulate_value(self, value: bool) -> None:
         """Helper for tests to change the observed value."""
         self.value = value
 
@@ -198,7 +200,7 @@ class MockAsyncButton:
         >>> await button.wait_for_press()  # Would trigger immediately
     """
 
-    def __init__(self, pin=None, value_when_pressed=False):
+    def __init__(self, pin: MockPin | None = None, value_when_pressed: bool = False) -> None:
         """
         Initialize mock async button.
 
@@ -209,15 +211,17 @@ class MockAsyncButton:
         self._pin = pin or MockPin()
         self._value_when_pressed = value_when_pressed
         self._pressed = False
-        self._event_history = []  # Track events for test assertions
-        self._press_start_time = None  # Track press duration
+        self._event_history: list[
+            tuple[str, float] | tuple[str, float, float | None]
+        ] = []  # Track events for test assertions
+        self._press_start_time: float | None = None  # Track press duration
 
         # Event queues for async waiting (simplified for testing)
-        self._press_events = []
-        self._release_events = []
-        self._click_events = []
+        self._press_events: list[float] = []
+        self._release_events: list[float] = []
+        self._click_events: list[tuple[str, float]] = []
 
-    def is_pressed(self):
+    def is_pressed(self) -> bool:
         """
         Check if button is currently pressed.
 
@@ -228,7 +232,7 @@ class MockAsyncButton:
         """
         return self._pressed
 
-    def simulate_press(self):
+    def simulate_press(self) -> None:
         """
         Simulate a button press event.
 
@@ -242,7 +246,7 @@ class MockAsyncButton:
             self._event_history.append(("press", time.monotonic()))
             self._press_events.append(time.monotonic())
 
-    def simulate_release(self):
+    def simulate_release(self) -> None:
         """
         Simulate a button release event.
 
@@ -268,7 +272,7 @@ class MockAsyncButton:
                     click_type = "single"
                 self._click_events.append((click_type, time.monotonic()))
 
-    def simulate_click(self, duration=0.1):
+    def simulate_click(self, duration: float = 0.1) -> None:
         """
         Simulate a complete click (press + release).
 
@@ -279,7 +283,7 @@ class MockAsyncButton:
         time.sleep(duration)
         self.simulate_release()
 
-    async def wait_for_press(self):
+    async def wait_for_press(self) -> float | None:
         """
         Async wait for button press event.
 
@@ -292,7 +296,7 @@ class MockAsyncButton:
         # In real async context, would await event
         return None
 
-    async def wait_for_release(self):
+    async def wait_for_release(self) -> float | None:
         """
         Async wait for button release event.
 
@@ -302,7 +306,7 @@ class MockAsyncButton:
             return self._release_events.pop(0)
         return None
 
-    async def wait_for_click(self, click_type=None):
+    async def wait_for_click(self, click_type: str | None = None) -> float | None:
         """
         Async wait for button click event.
 
@@ -317,7 +321,7 @@ class MockAsyncButton:
                 return timestamp
         return None
 
-    def get_event_history(self):
+    def get_event_history(self) -> list[tuple[str, float] | tuple[str, float, float | None]]:
         """
         Get history of button events for test assertions.
 
@@ -333,14 +337,14 @@ class MockAsyncButton:
         """
         return self._event_history.copy()
 
-    def clear_event_history(self):
+    def clear_event_history(self) -> None:
         """Clear event history and queues."""
         self._event_history.clear()
         self._press_events.clear()
         self._release_events.clear()
         self._click_events.clear()
 
-    def deinit(self):
+    def deinit(self) -> None:
         """
         Deinitialize button (no-op for mock).
 
@@ -349,11 +353,11 @@ class MockAsyncButton:
         self._event_history.append(("deinit", time.monotonic()))
 
     @property
-    def pin(self):
+    def pin(self) -> MockPin:
         """Get the underlying pin object."""
         return self._pin
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation for debugging."""
         state = "PRESSED" if self._pressed else "RELEASED"
         return f"MockAsyncButton(state={state}, events={len(self._event_history)})"
@@ -385,40 +389,40 @@ class MockPixel:
         >>> assert ('fill', (255, 0, 0)) in history
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize mock pixel."""
-        self._color = (0, 0, 0)  # RGB tuple, default to off
+        self._color: Any = (0, 0, 0)  # RGB tuple, default to off - using Any to allow variable-length tuples
         self._brightness = 1.0  # 0.0 to 1.0
         self._auto_write = True
-        self._pixel_history = []  # Track color changes for test assertions
+        self._pixel_history: list[tuple[str, Any]] = []  # Track color changes for test assertions
 
     @property
-    def brightness(self):
+    def brightness(self) -> float:
         """Get brightness (0.0 to 1.0)."""
         return self._brightness
 
     @brightness.setter
-    def brightness(self, value):
+    def brightness(self, value: float) -> None:
         """Set brightness (0.0 to 1.0)."""
         self._brightness = max(0.0, min(1.0, float(value)))
         self._pixel_history.append(("brightness", self._brightness))
 
     @property
-    def auto_write(self):
+    def auto_write(self) -> bool:
         """Get auto_write state."""
         return self._auto_write
 
     @auto_write.setter
-    def auto_write(self, value):
+    def auto_write(self, value: bool) -> None:
         """Set auto_write state."""
         self._auto_write = bool(value)
 
     @property
-    def color(self):
+    def color(self) -> tuple[int, int, int]:
         """Get current color as RGB tuple."""
         return self._color
 
-    def __setitem__(self, index, color):
+    def __setitem__(self, index: int, color: tuple[int, int, int]) -> None:
         """
         Set pixel color by index (for NeoPixel-like API).
 
@@ -431,7 +435,7 @@ class MockPixel:
         self._color = tuple(color)
         self._pixel_history.append(("set", self._color))
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> tuple[int, int, int]:
         """
         Get pixel color by index.
 
@@ -445,7 +449,7 @@ class MockPixel:
             raise IndexError(f"Mock pixel only has index 0, got {index}")
         return self._color
 
-    def fill(self, color):
+    def fill(self, color: tuple[int, int, int]) -> None:
         """
         Fill all pixels with color (for NeoPixel-like API).
 
@@ -455,7 +459,7 @@ class MockPixel:
         self._color = tuple(color)
         self._pixel_history.append(("fill", self._color))
 
-    def show(self):
+    def show(self) -> None:
         """
         Update pixel display (no-op for mock, but tracks call).
 
@@ -463,7 +467,7 @@ class MockPixel:
         """
         self._pixel_history.append(("show", self._color))
 
-    def deinit(self):
+    def deinit(self) -> None:
         """
         Deinitialize pixel (no-op for mock).
 
@@ -471,7 +475,7 @@ class MockPixel:
         """
         self._pixel_history.append(("deinit", None))
 
-    def get_history(self):
+    def get_history(self) -> list[tuple[str, Any]]:
         """
         Get history of pixel operations for test assertions.
 
@@ -488,11 +492,11 @@ class MockPixel:
         """
         return self._pixel_history.copy()
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         """Clear operation history."""
         self._pixel_history.clear()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation for debugging."""
         r, g, b = self._color
         return f"MockPixel(color=({r}, {g}, {b}), brightness={self._brightness:.2f})"
@@ -506,7 +510,7 @@ class MockButtonController:
     ButtonController without requiring CircuitPython Pin objects.
     """
 
-    def __init__(self, logger, button_pin=None):
+    def __init__(self, logger: Any, button_pin: Any = None) -> None:
         """
         Initialize mock button controller.
 
@@ -519,28 +523,28 @@ class MockButtonController:
         self._pressed = False
 
     @property
-    def button_pin(self):
+    def button_pin(self) -> Any:
         """Return the pin object."""
         return self._button_pin
 
-    def is_pressed(self):
+    def is_pressed(self) -> bool:
         """Return simulated press state."""
         return self._pressed
 
-    def simulate_press(self):
+    def simulate_press(self) -> None:
         """Simulate button press (convenience for tests)."""
         self._pressed = True
 
-    def simulate_release(self):
+    def simulate_release(self) -> None:
         """Simulate button release (convenience for tests)."""
         self._pressed = False
 
-    def simulate_click(self, duration=0.1):
+    def simulate_click(self, duration: float = 0.1) -> None:
         """Simulate complete click (press->hold->release)."""
         self._pressed = True
         time.sleep(duration)
         self._pressed = False
 
-    def deinit(self):
+    def deinit(self) -> None:
         """Deinitialize (no-op for mock)."""
         self._pressed = False

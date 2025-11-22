@@ -9,9 +9,10 @@ import json
 import os
 import sys
 
-import board  # type: ignore[import-untyped]  # CircuitPython-only module
-import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
+import board  # type: ignore[import-not-found]  # CircuitPython-only module
+import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
 
+from app_typing import Any, Optional
 from logging_helper import logger
 
 
@@ -35,18 +36,20 @@ class suppress:
     implementation is provided as part of the utils module.
     """
 
-    def __init__(self, *exceptions):
+    def __init__(self, *exceptions: type[BaseException]) -> None:
         self._exceptions = exceptions
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         pass
 
-    def __exit__(self, exctype, excinst, exctb):
+    def __exit__(
+        self, exctype: Optional[type[BaseException]], excinst: Optional[BaseException], exctb: Optional[Any]
+    ) -> bool:
         # Return True if exception matches to suppress it
         return exctype is not None and issubclass(exctype, self._exceptions)
 
 
-def get_os_name():
+def get_os_name() -> str:
     """
     Get the OS name.
 
@@ -56,7 +59,7 @@ def get_os_name():
     return sys.implementation.name
 
 
-def get_os_version():
+def get_os_version() -> tuple:
     """
     Get the OS version.
 
@@ -66,7 +69,7 @@ def get_os_version():
     return sys.implementation.version
 
 
-def get_board_id():
+def get_board_id() -> str:
     """
     Get the board identifier.
 
@@ -76,7 +79,7 @@ def get_board_id():
     return board.board_id
 
 
-def get_os_port_name():
+def get_os_port_name() -> str:
     """
     Get the OS/Port name.
 
@@ -86,7 +89,7 @@ def get_os_port_name():
     return os.uname().sysname
 
 
-def get_machine_type():
+def get_machine_type() -> str:
     """
     Get the machine type.
 
@@ -96,7 +99,7 @@ def get_machine_type():
     return os.uname().machine
 
 
-def get_cpu_uid():
+def get_cpu_uid() -> str:
     """
     Get the CPU's unique identifier.
 
@@ -107,7 +110,7 @@ def get_cpu_uid():
     return "".join(f"{b:02x}" for b in chip_uid_binary)
 
 
-def get_mac_address():
+def get_mac_address() -> str | None:
     """
     Get the MAC address via the connection manager.
 
@@ -124,7 +127,7 @@ def get_mac_address():
         return None
 
 
-def get_os_version_string():
+def get_os_version_string() -> str:
     """
     Get the OS version in a standardized format for compatibility checks.
 
@@ -136,7 +139,7 @@ def get_os_version_string():
     return f"{name}_{version[0]}_{version[1]}_{version[2]}"
 
 
-def get_os_version_string_pretty_print():
+def get_os_version_string_pretty_print() -> str:
     """
     Get the OS version in a pretty print format for display.
 
@@ -149,7 +152,7 @@ def get_os_version_string_pretty_print():
     return f"{name_camel} {version[0]}.{version[1]}.{version[2]}"
 
 
-def os_matches_target(device_os_string, target_os_array):
+def os_matches_target(device_os_string: str, target_os_array: list[str]) -> bool:
     """
     Check if device OS matches any target OS in array using semantic versioning.
 
@@ -184,7 +187,7 @@ def os_matches_target(device_os_string, target_os_array):
     return False
 
 
-def compare_versions(version1, version2):
+def compare_versions(version1: str, version2: str) -> int:
     """
     Compare two semantic version strings.
 
@@ -196,7 +199,7 @@ def compare_versions(version1, version2):
         int: 1 if version1 > version2, -1 if version1 < version2, 0 if equal
     """
 
-    def parse_version(version_str):
+    def parse_version(version_str: str) -> tuple:
         # Split on '-' to separate prerelease
         if "-" in version_str:
             main_ver, prerelease = version_str.split("-", 1)
@@ -238,7 +241,7 @@ def compare_versions(version1, version2):
     return 0
 
 
-def mark_incompatible_release(version, reason="Unknown"):
+def mark_incompatible_release(version: str, reason: str = "Unknown") -> None:
     """
     Mark a release version as incompatible to prevent retry loops.
 
@@ -287,7 +290,7 @@ def mark_incompatible_release(version, reason="Unknown"):
         log.warning(f"Could not mark incompatible release: {e}")
 
 
-def is_release_incompatible(version, max_attempts=1):
+def is_release_incompatible(version: str, max_attempts: int = 1) -> tuple[bool, str | None, int]:
     """
     Check if a release version is marked as incompatible.
 
@@ -320,7 +323,7 @@ def is_release_incompatible(version, max_attempts=1):
         return (False, None, 0)
 
 
-def check_release_compatibility(release_data, current_version):
+def check_release_compatibility(release_data: dict, current_version: str) -> tuple[bool, str | None]:
     """
     DRY compatibility check used by both update_manager and boot.
 
@@ -367,7 +370,7 @@ def check_release_compatibility(release_data, current_version):
     return (True, None)
 
 
-def get_system_info():
+def get_system_info() -> dict:
     """
     Get comprehensive system information.
 
@@ -385,7 +388,7 @@ def get_system_info():
     }
 
 
-def validate_config_values(config_dict, required_keys):
+def validate_config_values(config_dict: dict, required_keys: list[str]) -> tuple[bool, list[str]]:
     """
     Validate that all required configuration keys exist and have non-empty values.
 
@@ -405,7 +408,7 @@ def validate_config_values(config_dict, required_keys):
     return len(missing_keys) == 0, missing_keys
 
 
-def trigger_safe_mode():
+def trigger_safe_mode() -> None:
     """
     Trigger Safe Mode on next reboot.
     This enables USB mass storage for development.
@@ -418,10 +421,10 @@ def trigger_safe_mode():
 
 
 # Cache for geocoding results to avoid redundant API calls
-_location_cache = {}
+_location_cache: dict[str, tuple[float | None, float | None, str | None]] = {}
 
 
-def get_location_data_from_zip(session, zip_code):
+def get_location_data_from_zip(session: Any, zip_code: str) -> tuple[float | None, float | None, str | None]:
     """
     Retrieve latitude, longitude, and timezone from ZIP code using Open-Meteo's geocoding API.
 

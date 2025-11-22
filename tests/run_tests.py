@@ -24,13 +24,25 @@ import unittest
 # Add root to path (source files are in root on CircuitPython device)
 sys.path.insert(0, "/")
 
+# Add tests to path for custom unittest
+if "/tests" not in sys.path:
+    sys.path.insert(0, "/tests")
+
+# Import custom TestResult from our unittest implementation
+from unittest import TestResult as CustomTestResult
+
 # Import logging after path is set up
+from app_typing import TYPE_CHECKING, Callable, cast
 from logging_helper import logger
+
+if TYPE_CHECKING:
+    from tests.unittest import TestResult as CPTestResult
+    from tests.unittest import TestSuite as CPTestSuite
 
 TEST_LOG = logger("wicid.tests")
 
 
-def _restore_hardware_input_manager():
+def _restore_hardware_input_manager() -> None:
     """
     Reinitialize InputManager with real hardware after tests complete.
 
@@ -55,12 +67,14 @@ class GroupedTestResult(unittest.TestResult):
     interface, so we need to manually track tests as they run.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.test_results = {}  # module_name -> class_name -> list of (test_name, status, error_msg)
-        self.current_test_info = None  # (module_name, class_name, test_name)
+        self.test_results: dict[
+            str, dict[str, list[tuple[str, str, str | None]]]
+        ] = {}  # module_name -> class_name -> list of (test_name, status, error_msg)
+        self.current_test_info: tuple[str, str, str] | None = None  # (module_name, class_name, test_name)
 
-    def start_test(self, module_name, class_name, test_name):
+    def start_test(self, module_name: str, class_name: str, test_name: str) -> None:
         """Called when a test starts."""
         if module_name not in self.test_results:
             self.test_results[module_name] = {}
@@ -68,28 +82,28 @@ class GroupedTestResult(unittest.TestResult):
             self.test_results[module_name][class_name] = []
         self.current_test_info = (module_name, class_name, test_name)
 
-    def record_success(self):
+    def record_success(self) -> None:
         """Record a successful test."""
         if self.current_test_info:
             module_name, class_name, test_name = self.current_test_info
             self.test_results[module_name][class_name].append((test_name, "PASS", None))
             self.current_test_info = None
 
-    def record_failure(self, error_msg):
+    def record_failure(self, error_msg: str) -> None:
         """Record a failed test."""
         if self.current_test_info:
             module_name, class_name, test_name = self.current_test_info
             self.test_results[module_name][class_name].append((test_name, "FAIL", error_msg))
             self.current_test_info = None
 
-    def record_error(self, error_msg):
+    def record_error(self, error_msg: str) -> None:
         """Record an errored test."""
         if self.current_test_info:
             module_name, class_name, test_name = self.current_test_info
             self.test_results[module_name][class_name].append((test_name, "ERROR", error_msg))
             self.current_test_info = None
 
-    def record_skip(self, reason):
+    def record_skip(self, reason: str) -> None:
         """Record a skipped test."""
         if self.current_test_info:
             module_name, class_name, test_name = self.current_test_info
@@ -97,7 +111,7 @@ class GroupedTestResult(unittest.TestResult):
             self.current_test_info = None
 
 
-def run_all_tests(verbosity=2, tick_callback=None):
+def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None = None) -> "CPTestResult":
     """Run all tests in the test suite.
 
     Args:
@@ -114,13 +128,13 @@ def run_all_tests(verbosity=2, tick_callback=None):
 
     # CircuitPython unittest doesn't have TestLoader.discover()
     # Manually import and add test modules
-    suite = unittest.TestSuite()
+    suite: CPTestSuite = unittest.TestSuite()  # type: ignore[assignment]
 
     # Track test modules by name for organization
     test_modules = {}  # module_name -> (dir_path, package_prefix, filename)
 
     # Helper to add all TestCase classes from a module
-    def add_tests_from_module(module_name, dir_path, filename):
+    def add_tests_from_module(module_name: str, dir_path: str, filename: str) -> None:
         module = __import__(module_name, None, None, ["*"])
         test_modules[module_name] = (dir_path, filename)
         for attr_name in dir(module):
@@ -129,7 +143,7 @@ def run_all_tests(verbosity=2, tick_callback=None):
                 suite.addTest(attr)
 
     # Automatically discover all test_*.py files in test directories
-    def discover_tests_in_directory(dir_path, package_prefix):
+    def discover_tests_in_directory(dir_path: str, package_prefix: str) -> None:
         """Scan directory for test_*.py files and add them to the suite."""
         try:
             files = os.listdir(dir_path)
@@ -162,10 +176,10 @@ def run_all_tests(verbosity=2, tick_callback=None):
 
     # Create custom result collector and output capture
     grouped_result = GroupedTestResult()
-    result = unittest.TestResult()  # Standard result for compatibility
+    result: CPTestResult = CustomTestResult()  # type: ignore[assignment]
 
     # Run tests, grouping by module and class, suppressing default output
-    def format_error(e):
+    def format_error(e: Exception) -> str:
         """Format exception with full traceback."""
         return "".join(traceback.format_exception(e))
 
@@ -185,14 +199,13 @@ def run_all_tests(verbosity=2, tick_callback=None):
         # Get the module object to access its __file__ if available
         module_obj = sys.modules.get(class_module)
         if module_obj and hasattr(module_obj, "__file__"):
-            # Extract filename from module path
-            # CircuitPython doesn't have os.path, so extract basename manually
             module_path = module_obj.__file__
-            # Split by '/' and take the last part (basename)
-            path_parts = module_path.split("/")
-            filename = path_parts[-1] if path_parts else module_path
-            if filename.endswith(".py"):
-                module_display_name = filename[:-3]
+            if module_path:
+                # Split by '/' and take the last part (basename)
+                path_parts = module_path.split("/")
+                filename = path_parts[-1] if path_parts else module_path
+                if filename.endswith(".py"):
+                    module_display_name = filename[:-3]
 
         # Run the test class, capturing output and tracking results
         test_instance = None
@@ -394,7 +407,7 @@ def run_all_tests(verbosity=2, tick_callback=None):
     return result
 
 
-def run_unit_tests(verbosity=2):
+def run_unit_tests(verbosity: int = 2) -> "CPTestResult":
     """Run only unit tests.
 
     Args:
@@ -413,7 +426,7 @@ def run_unit_tests(verbosity=2):
     return run_all_tests(verbosity)
 
 
-def run_integration_tests(verbosity=2):
+def run_integration_tests(verbosity: int = 2) -> "CPTestResult":
     """Run only integration tests.
 
     Args:
@@ -428,10 +441,10 @@ def run_integration_tests(verbosity=2):
     TEST_LOG.testing("")
     TEST_LOG.testing("No integration tests yet.")
     TEST_LOG.testing("=" * 70)
-    return unittest.TestResult()
+    return cast("CPTestResult", unittest.TestResult())
 
 
-def run_functional_tests(verbosity=2):
+def run_functional_tests(verbosity: int = 2) -> "CPTestResult":
     """Run only functional tests.
 
     Args:
@@ -446,10 +459,10 @@ def run_functional_tests(verbosity=2):
     TEST_LOG.testing("")
     TEST_LOG.testing("No functional tests yet.")
     TEST_LOG.testing("=" * 70)
-    return unittest.TestResult()
+    return cast("CPTestResult", unittest.TestResult())
 
 
-def main():
+def main() -> None:
     """Main entry point for test runner."""
     result = run_all_tests(verbosity=2)
 

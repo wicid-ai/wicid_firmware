@@ -6,7 +6,9 @@ components (e.g., connection managers) can interact with WiFi hardware
 via a testable, injectable dependency.
 """
 
-import wifi  # type: ignore[import-untyped]  # CircuitPython-only module
+import wifi  # type: ignore[import-not-found]  # CircuitPython-only module
+
+from app_typing import Any
 
 
 class WiFiRadioController:
@@ -18,7 +20,7 @@ class WiFiRadioController:
     compatible API can be injected.
     """
 
-    def __init__(self, radio=None):
+    def __init__(self, radio: Any = None) -> None:
         """
         Args:
             radio: Optional radio-like object for dependency injection.
@@ -27,6 +29,6 @@ class WiFiRadioController:
         self._radio = radio or wifi.radio
 
     @property
-    def radio(self):
+    def radio(self) -> Any:
         """Underlying radio object (typically `wifi.radio`)."""
         return self._radio

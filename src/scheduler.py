@@ -11,6 +11,7 @@ Version: 0.1
 import asyncio
 import time
 
+from app_typing import Any, Callable
 from logging_helper import logger
 
 
@@ -18,15 +19,15 @@ from logging_helper import logger
 class _MinHeap:
     """Minimal binary heap for priority queue operations."""
 
-    def __init__(self):
-        self.heap = []
+    def __init__(self) -> None:
+        self.heap: list[Any] = []
 
-    def push(self, item):
+    def push(self, item: Any) -> None:
         """Add item and maintain heap property."""
         self.heap.append(item)
         self._sift_up(len(self.heap) - 1)
 
-    def pop(self):
+    def pop(self) -> Any:
         """Remove and return smallest item."""
         if not self.heap:
             raise IndexError("pop from empty heap")
@@ -36,17 +37,17 @@ class _MinHeap:
             self._sift_down(0)
         return item
 
-    def heapify(self):
+    def heapify(self) -> None:
         """Rebuild heap after modifications."""
         n = len(self.heap)
         for i in range(n // 2 - 1, -1, -1):
             self._sift_down(i)
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return number of items in heap."""
         return len(self.heap)
 
-    def _sift_up(self, idx):
+    def _sift_up(self, idx: int) -> None:
         while idx > 0:
             parent = (idx - 1) // 2
             if self.heap[idx] < self.heap[parent]:
@@ -55,7 +56,7 @@ class _MinHeap:
             else:
                 break
 
-    def _sift_down(self, idx):
+    def _sift_down(self, idx: int) -> None:
         n = len(self.heap)
         while True:
             smallest = idx
@@ -76,17 +77,17 @@ class _MinHeap:
 class _EnumMember:
     """Simple enum member for CircuitPython compatibility."""
 
-    def __init__(self, name, value):
+    def __init__(self, name: str, value: Any) -> None:
         self.name = name
         self.value = value
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, _EnumMember) and self.value == other.value
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.value)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.name}"
 
 
@@ -145,14 +146,14 @@ class TaskHandle:
 
     _next_id = 0
 
-    def __init__(self, task_id):
+    def __init__(self, task_id: int) -> None:
         self.task_id = task_id
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"TaskHandle({self.task_id})"
 
     @classmethod
-    def _generate_id(cls):
+    def _generate_id(cls) -> int:
         """Generate unique task ID."""
         task_id = cls._next_id
         cls._next_id += 1
@@ -162,43 +163,54 @@ class TaskHandle:
 class Task:
     """Task abstraction encapsulating scheduling metadata and execution state."""
 
-    def __init__(self, name, priority, coroutine_factory, task_type, timing_param):
+    def __init__(
+        self,
+        name: str,
+        priority: int,
+        coroutine_factory: Callable[[], Any],
+        task_type: Any,
+        timing_param: float,
+    ) -> None:
         """Create a new task.
 
         Args:
             name: Human-readable identifier
             priority: Original priority (0-90, lower = higher priority)
             coroutine_factory: Callable that returns a coroutine when invoked
-            task_type: TaskType enum value
+            task_type: TaskType enum value (string or _EnumMember)
             timing_param: Period/delay/interval in seconds
         """
         self.task_id = TaskHandle._generate_id()
         self.name = name
         self.priority = priority
         self.coroutine_factory = coroutine_factory
-        self.task_type = task_type
+        self.task_type = task_type.name if hasattr(task_type, "name") else str(task_type)
         self.timing_param = timing_param
 
         # Runtime state
-        self.next_run_time = None  # Monotonic timestamp
-        self.ready_since = None  # For starvation prevention
+        self.next_run_time: float | None = None  # Monotonic timestamp
+        self.ready_since: float | None = None  # For starvation prevention
         self.effective_priority = priority
-        self.last_run_time = None
-        self.last_scheduled_time = None  # For fixed-rate periodic tasks
+        self.last_run_time: float | None = None
+        self.last_scheduled_time: float | None = None  # For fixed-rate periodic tasks
         self.execution_count = 0
         self.total_runtime = 0.0
         self.cancelled = False
 
-    def __lt__(self, other):
+    def __lt__(self, other: "Task") -> bool:
         """Comparison for heap ordering: (next_run_time, effective_priority, task_id)."""
         if self.next_run_time != other.next_run_time:
+            if self.next_run_time is None:
+                return True  # None sorts before any value
+            if other.next_run_time is None:
+                return False  # Any value sorts after None
             return self.next_run_time < other.next_run_time
         if self.effective_priority != other.effective_priority:
             return self.effective_priority < other.effective_priority
         return self.task_id < other.task_id
 
-    def __repr__(self):
-        return f"Task(id={self.task_id}, name='{self.name}', " f"pri={self.priority}, type={self.task_type.name})"
+    def __repr__(self) -> str:
+        return f"Task(id={self.task_id}, name='{self.name}', pri={self.priority}, type={self.task_type})"
 
 
 class Scheduler:
@@ -218,22 +230,24 @@ class Scheduler:
     FALL_BEHIND_INFO_THRESHOLD = 120.0  # seconds
     FALL_BEHIND_WARNING_THRESHOLD = 180.0  # seconds
 
-    def __new__(cls):
+    def __new__(cls) -> "Scheduler":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
     @classmethod
-    def instance(cls):
+    def instance(cls) -> "Scheduler":
         """Get the scheduler singleton.
 
         Returns:
             The global Scheduler instance
         """
-        return cls()
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize scheduler (called once via singleton pattern)."""
         if self._initialized:
             return
@@ -243,7 +257,7 @@ class Scheduler:
 
         # Task management
         self.ready_queue = _MinHeap()  # Min-heap of tasks sorted by (next_run_time, priority, id)
-        self.task_registry = {}  # task_id -> Task
+        self.task_registry: dict[int, Task] = {}  # task_id -> Task
 
         # Statistics
         self.total_tasks_scheduled = 0
@@ -251,11 +265,10 @@ class Scheduler:
         self.total_tasks_failed = 0
 
         # Event loop (set after run_forever starts)
-        self.loop = None
-        self._active_asyncio_tasks = set()
-        self._fatal_error = None
-
-        self._initialized = True
+        self.loop: Any = None
+        self._active_asyncio_tasks: set[Any] = set()
+        self._fatal_error: Any = None
+        self._initialized: bool = True
         self.logger.info("Scheduler initialized")
 
     # -------------------------------------------------------------------------
@@ -263,23 +276,27 @@ class Scheduler:
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _is_awaitable(obj):
+    def _is_awaitable(obj: Any) -> bool:
+        """Check if an object is awaitable (coroutine or has __await__)."""
         return hasattr(obj, "__await__")
 
-    def _make_coroutine_factory(self, coroutine):
+    def _make_coroutine_factory(self, coroutine: Any) -> Callable[[], Any]:
+        """Convert various coroutine-like objects to a standardized factory function."""
         """Normalize callable into a factory that returns awaitables."""
         if not callable(coroutine):
             raise TypeError("Scheduler requires coroutine functions (pass the async function without calling it)")
 
-        def factory():
+        def factory() -> Any:
             result = coroutine()
-            if not self._is_awaitable(result):
+            if not Scheduler._is_awaitable(result):
                 raise TypeError(f"Scheduled callable '{coroutine}' must return an awaitable coroutine")
             return result
 
         return factory
 
-    def schedule_periodic(self, coroutine, period: float, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
+    def schedule_periodic(
+        self, coroutine: Any, period: float, priority: int = 50, name: str = "Unnamed Task"
+    ) -> TaskHandle:
         """Schedule a task to run every N seconds at fixed rate.
 
         Uses fixed-rate scheduling: next run = last_scheduled_time + period.
@@ -311,7 +328,7 @@ class Scheduler:
         self._register_task(task)
         return TaskHandle(task.task_id)
 
-    def schedule_once(self, coroutine, delay: float, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
+    def schedule_once(self, coroutine: Any, delay: float, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
         """Schedule a task to run once after N seconds delay.
 
         Args:
@@ -340,7 +357,7 @@ class Scheduler:
         return TaskHandle(task.task_id)
 
     def schedule_recurring(
-        self, coroutine, interval: float, priority: int = 50, name: str = "Unnamed Task"
+        self, coroutine: Any, interval: float, priority: int = 50, name: str = "Unnamed Task", count: int | None = None
     ) -> TaskHandle:
         """Schedule a task to run repeatedly with N seconds between completions.
 
@@ -372,7 +389,7 @@ class Scheduler:
         self._register_task(task)
         return TaskHandle(task.task_id)
 
-    def schedule_now(self, coroutine, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
+    def schedule_now(self, coroutine: Any, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
         """Schedule a task to run as soon as possible (one-shot).
 
         Args:
@@ -419,24 +436,24 @@ class Scheduler:
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def yield_control():
+    def yield_control() -> Any:
         """Return awaitable that yields control to other tasks.
 
         Use this in tight loops or CPU-bound operations to prevent
         monopolizing the scheduler. Equivalent to asyncio.sleep(0).
-        
+
         Returns:
             Awaitable that completes immediately after yielding
         """
         return asyncio.sleep(0)
 
     @staticmethod
-    def sleep(seconds: float):
+    def sleep(seconds: float) -> Any:
         """Return awaitable that sleeps for specified duration.
 
         Args:
             seconds: Duration to sleep (can be fractional)
-            
+
         Returns:
             Awaitable that completes after specified duration
         """
@@ -446,7 +463,7 @@ class Scheduler:
     # Internal: Task Management
     # -------------------------------------------------------------------------
 
-    def _register_task(self, task: Task):
+    def _register_task(self, task: Task) -> None:
         """Register a task and add to ready queue."""
         self.task_registry[task.task_id] = task
         self.ready_queue.push(task)
@@ -455,15 +472,17 @@ class Scheduler:
         self.logger.info(
             f"Registered task '{task.name}' "
             f"(id={task.task_id}, priority={task.priority}, "
-            f"type={task.task_type.name}, param={task.timing_param}s)"
+            f"type={task.task_type}, param={task.timing_param}s)"
         )
 
-    def _reschedule_task(self, task: Task):
+    def _reschedule_task(self, task: Task) -> None:
         """Reschedule a task based on its type."""
         now = time.monotonic()
 
-        if task.task_type == TaskType.PERIODIC:
+        if task.task_type == TaskType.PERIODIC.name:
             # Fixed-rate: next run = last_scheduled + period
+            if task.last_scheduled_time is None:
+                task.last_scheduled_time = time.monotonic()
             task.last_scheduled_time += task.timing_param
             task.next_run_time = task.last_scheduled_time
 
@@ -471,19 +490,19 @@ class Scheduler:
             if task.next_run_time < now:
                 delay = now - task.next_run_time
                 if delay >= self.FALL_BEHIND_WARNING_THRESHOLD:
-                    self.logger.warning(f"Task '{task.name}' fell behind schedule " f"(behind by {delay:.3f}s)")
+                    self.logger.warning(f"Task '{task.name}' fell behind schedule (behind by {delay:.3f}s)")
                 elif delay >= self.FALL_BEHIND_INFO_THRESHOLD:
-                    self.logger.info(f"Task '{task.name}' fell behind schedule " f"(behind by {delay:.3f}s)")
+                    self.logger.info(f"Task '{task.name}' fell behind schedule (behind by {delay:.3f}s)")
                 elif delay >= self.FALL_BEHIND_DEBUG_THRESHOLD:
-                    self.logger.debug(f"Task '{task.name}' fell behind schedule " f"(behind by {delay:.3f}s)")
+                    self.logger.debug(f"Task '{task.name}' fell behind schedule (behind by {delay:.3f}s)")
                 task.next_run_time = now
                 task.last_scheduled_time = now
 
-        elif task.task_type == TaskType.RECURRING:
+        elif task.task_type == TaskType.RECURRING.name:
             # Interval starts after completion
             task.next_run_time = now + task.timing_param
 
-        elif task.task_type == TaskType.ONE_SHOT:
+        elif task.task_type == TaskType.ONE_SHOT.name:
             # Don't reschedule one-shot tasks
             return
 
@@ -494,7 +513,7 @@ class Scheduler:
         # Re-add to queue
         self.ready_queue.push(task)
 
-    def _apply_starvation_prevention(self):
+    def _apply_starvation_prevention(self) -> None:
         """Check for starved tasks and boost their priority."""
         now = time.monotonic()
 
@@ -528,7 +547,7 @@ class Scheduler:
     # Internal: Task Execution
     # -------------------------------------------------------------------------
 
-    async def _run_task(self, task: Task):
+    async def _run_task(self, task: Task) -> None:
         """Execute a single task with error handling."""
         start_time = time.monotonic()
 
@@ -555,11 +574,11 @@ class Scheduler:
                 )
 
             self.logger.debug(
-                f"Task '{task.name}' completed in {runtime_ms:.1f}ms " f"(total executions: {task.execution_count})"
+                f"Task '{task.name}' completed in {runtime_ms:.1f}ms (total executions: {task.execution_count})"
             )
 
             # Reschedule if periodic/recurring
-            if task.task_type in (TaskType.PERIODIC, TaskType.RECURRING):
+            if task.task_type in (TaskType.PERIODIC.name, TaskType.RECURRING.name):
                 self._reschedule_task(task)
 
         except TaskNonFatalError as e:
@@ -568,7 +587,7 @@ class Scheduler:
             self.total_tasks_failed += 1
 
             # Reschedule periodic/recurring tasks
-            if task.task_type in (TaskType.PERIODIC, TaskType.RECURRING):
+            if task.task_type in (TaskType.PERIODIC.name, TaskType.RECURRING.name):
                 self._reschedule_task(task)
 
         except TaskFatalError as e:
@@ -583,10 +602,10 @@ class Scheduler:
             self.total_tasks_failed += 1
 
             # Reschedule periodic/recurring tasks
-            if task.task_type in (TaskType.PERIODIC, TaskType.RECURRING):
+            if task.task_type in (TaskType.PERIODIC.name, TaskType.RECURRING.name):
                 self._reschedule_task(task)
 
-    async def _task_wrapper(self, task: Task):
+    async def _task_wrapper(self, task: Task) -> None:
         """Wrapper around _run_task that tracks asyncio task lifecycle."""
         try:
             await self._run_task(task)
@@ -599,7 +618,7 @@ class Scheduler:
             if current in self._active_asyncio_tasks:
                 self._active_asyncio_tasks.remove(current)
 
-    async def _event_loop(self):
+    async def _event_loop(self) -> None:
         """Main scheduler event loop."""
         self.logger.info("Scheduler event loop started")
         self.loop = asyncio.get_running_loop()
@@ -679,9 +698,9 @@ class Scheduler:
     # Diagnostics
     # -------------------------------------------------------------------------
 
-    def dump_state(self) -> dict:
+    def dump_state(self) -> dict[str, Any]:
         """Return lightweight snapshot of scheduler state for debugging.
-        
+
         Returns:
             dict: Scheduler statistics and queued task information
         """
@@ -709,7 +728,7 @@ class Scheduler:
 
     def describe(self) -> str:
         """Return human-readable snapshot useful for REPL debugging.
-        
+
         Returns:
             str: Human-readable scheduler state and task queue
         """
@@ -724,8 +743,7 @@ class Scheduler:
             lines.append("  Queued Tasks:")
             for task in state["queued_tasks"]:
                 lines.append(
-                    "    - {name} (id={task_id}, pri={priority}, "
-                    "effective={effective}, next_in={next_in:.3f}s)".format(
+                    "    - {name} (id={task_id}, pri={priority}, effective={effective}, next_in={next_in:.3f}s)".format(
                         name=task["name"],
                         task_id=task["id"],
                         priority=task["priority"],

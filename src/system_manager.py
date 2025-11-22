@@ -9,8 +9,9 @@ import os
 import time
 import traceback
 
-import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
+import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
 
+from app_typing import Any
 from logging_helper import logger
 from manager_base import ManagerBase
 from scheduler import Scheduler
@@ -30,7 +31,7 @@ class SystemManager(ManagerBase):
     SYSTEM_UPDATE_INITIAL_DELAY_SECONDS = 60
 
     @classmethod
-    def instance(cls, update_manager=None):
+    def instance(cls, update_manager: Any = None) -> "SystemManager":
         """
         Get singleton SystemManager instance.
 
@@ -47,7 +48,7 @@ class SystemManager(ManagerBase):
             obj._init(update_manager)
         return cls._instance
 
-    def _init(self, update_manager=None):
+    def _init(self, update_manager: Any = None) -> None:
         """Internal initialization method.
 
         Args:
@@ -79,7 +80,7 @@ class SystemManager(ManagerBase):
 
         self._initialized = True
 
-    def __init__(self, update_manager=None):
+    def __init__(self, update_manager: Any = None) -> None:
         """Private constructor. Use instance() instead.
 
         Args:
@@ -93,7 +94,7 @@ class SystemManager(ManagerBase):
             SystemManager._instance = self
         self._init(update_manager)
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """
         Release all resources owned by SystemManager.
 
@@ -102,7 +103,7 @@ class SystemManager(ManagerBase):
         """
         super().shutdown()
 
-    async def tick(self):
+    async def tick(self) -> None:
         """
         Check if any system maintenance is needed.
 
@@ -125,7 +126,7 @@ class SystemManager(ManagerBase):
             self.logger.error(f"Error in SystemManager.tick(): {e}")
             traceback.print_exception(e)
 
-    async def _check_for_reboot(self):
+    async def _check_for_reboot(self) -> None:
         """
         Check if periodic reboot interval has been reached.
 
@@ -154,7 +155,7 @@ class SystemManager(ManagerBase):
             # Hard reset to ensure boot.py runs
             microcontroller.reset()
 
-    async def _check_for_updates(self):
+    async def _check_for_updates(self) -> None:
         """
         Check if scheduled update check time has been reached.
 

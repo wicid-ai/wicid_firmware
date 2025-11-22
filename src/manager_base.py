@@ -13,6 +13,7 @@ Subclasses are expected to:
 - Optionally override ``instance()`` or ``_is_compatible_with()`` for smart reinitialization when dependencies change.
 """
 
+from app_typing import Any
 from scheduler import Scheduler
 from utils import suppress
 
@@ -30,7 +31,7 @@ class ManagerBase:
     _instance = None
 
     @classmethod
-    def instance(cls, *args, **kwargs):
+    def instance(cls, *args: Any, **kwargs: Any) -> "ManagerBase":
         """
         Return the singleton instance for this manager.
 
@@ -57,7 +58,7 @@ class ManagerBase:
                 obj._init(*args, **kwargs)
         return cls._instance
 
-    def _is_compatible_with(self, *args, **kwargs):
+    def _is_compatible_with(self, *args: Any, **kwargs: Any) -> bool:
         """
         Check if this instance is compatible with the given dependencies.
 
@@ -75,7 +76,7 @@ class ManagerBase:
 
     # Instance lifecycle hooks -------------------------------------------------
 
-    def _init(self, *args, **kwargs):
+    def _init(self, *args: Any, **kwargs: Any) -> None:
         """
         Initialize this manager instance with resources and dependencies.
 
@@ -87,14 +88,14 @@ class ManagerBase:
         """
         raise NotImplementedError("_init() must be implemented by Manager subclasses")
 
-    def _track_task_handle(self, handle):
+    def _track_task_handle(self, handle: Any) -> Any:
         """Record scheduler task handles for automatic cancellation."""
         if not hasattr(self, "_scheduled_handles"):
             self._scheduled_handles = []
         self._scheduled_handles.append(handle)
         return handle
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """
         Release all resources owned by this manager.
 
@@ -117,15 +118,14 @@ class ManagerBase:
 
     # Context manager support --------------------------------------------------
 
-    def __enter__(self):
+    def __enter__(self) -> "ManagerBase":
         """Return the manager instance for use in a ``with`` block."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type, exc_val: Exception, exc_tb: Any) -> None:
         """
         Ensure ``shutdown()`` is called when leaving a ``with`` block.
 
         Exceptions from the block are not suppressed (returns False).
         """
         self.shutdown()
-        return False

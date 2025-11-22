@@ -7,13 +7,14 @@ extracting them to /pending_update/root/, and managing the update process.
 CRITICAL: This module is the SINGLE SOURCE OF TRUTH for all OTA update operations.
 
 Usage:
-    update_manager = UpdateManager.instance(progress_callback=my_callback)
-    await update_manager.check_download_and_reboot()  # Handles everything, reboots if update found
+    update_manager = UpdateManager.instance()
+    # Pass callbacks explicitly when calling download methods
+    await update_manager.check_download_and_reboot(progress_callback=my_callback)
 
     # Or for manual control:
     update_info = update_manager.check_for_updates()
     if update_info:
-        await update_manager.download_update()  # Uses cached info from check_for_updates()
+        await update_manager.download_update(progress_callback=my_callback)
 
 LED Feedback:
     - UpdateManager accesses PixelController singleton internally
@@ -35,9 +36,10 @@ import os
 import time
 import traceback
 
-import adafruit_hashlib as hashlib  # type: ignore[import-untyped]
-import microcontroller  # type: ignore[import-untyped]  # CircuitPython-only module
+import adafruit_hashlib as hashlib  # type: ignore[import-not-found]  # CircuitPython-only module
+import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
 
+from app_typing import Any, Callable, List
 from logging_helper import logger
 from manager_base import ManagerBase
 from scheduler import Scheduler
@@ -55,6 +57,7 @@ class UpdateManager(ManagerBase):
     """Manages over-the-air firmware updates."""
 
     _instance = None
+    pixel_controller: Any = None  # PixelController | None, but Any to avoid circular import
 
     PENDING_UPDATE_DIR = "/pending_update"
     PENDING_ROOT_DIR = "/pending_update/root"
@@ -89,15 +92,14 @@ class UpdateManager(ManagerBase):
         "/lib/adafruit_hashlib/__init__.mpy",  # Required by update_manager.mpy for checksum verification
     }
 
-    def _init(self, progress_callback=None, connection_manager=None, service_callback=None):
+    def _init(
+        self,
+        connection_manager: Any = None,
+    ) -> None:
         """
         Initialize the update manager.
 
         Args:
-            progress_callback: Optional callback function(state, message, progress_pct) for progress updates
-                              state: str - 'downloading', 'verifying', 'unpacking', 'complete', 'error'
-                              message: str - Human-readable progress message
-            progress_pct: float - Completion percentage (0-100), may be None
             connection_manager: Optional ConnectionManager instance for testing/DI (gets singleton if None)
         """
         # Get ConnectionManager singleton if not provided (for testing/DI)
@@ -108,12 +110,10 @@ class UpdateManager(ManagerBase):
         else:
             self.connection_manager = connection_manager
 
-        self._session = None  # Lazy-created HTTP session
-        self._cached_update_info = None  # Store check_for_updates() results
-        self.next_update_check = None
-        self._download_flash_start = None
-        self.progress_callback = progress_callback
-        self.service_callback = service_callback
+        self._session: Any = None  # Lazy-created HTTP session
+        self._cached_update_info: dict[str, Any] | None = None  # Store check_for_updates() results
+        self.next_update_check: float | None = None
+        self._download_flash_start: float | None = None
         self.logger = logger("wicid.update_manager")
 
         # Access singleton for LED feedback (optional, gracefully handles if unavailable)
@@ -127,7 +127,7 @@ class UpdateManager(ManagerBase):
         self._initialized = True
 
     @staticmethod
-    def validate_critical_files():
+    def validate_critical_files() -> tuple[bool, List[str]]:
         """
         Validate that all critical system files are present after installation.
 
@@ -151,7 +151,7 @@ class UpdateManager(ManagerBase):
         return (len(missing_files) == 0, missing_files)
 
     @staticmethod
-    def recovery_exists():
+    def recovery_exists() -> bool:
         """
         Check if recovery backup directory exists and contains files.
 
@@ -165,7 +165,7 @@ class UpdateManager(ManagerBase):
             return False
 
     @staticmethod
-    def validate_recovery_backup():
+    def validate_recovery_backup() -> tuple[bool, str]:
         """
         Validate that recovery backup contains all critical files.
 
@@ -175,7 +175,11 @@ class UpdateManager(ManagerBase):
                 - missing_files: List of missing file paths (empty if all present)
         """
         if not UpdateManager.recovery_exists():
-            return (False, list(UpdateManager.CRITICAL_FILES))
+            missing_list = list(UpdateManager.CRITICAL_FILES)
+            return (
+                False,
+                f"Recovery backup missing. Required files: {', '.join(missing_list[:5])}{'...' if len(missing_list) > 5 else ''}",
+            )
 
         missing_files = []
 
@@ -187,10 +191,15 @@ class UpdateManager(ManagerBase):
             except OSError:
                 missing_files.append(file_path)
 
-        return (len(missing_files) == 0, missing_files)
+        if missing_files:
+            missing_str = ", ".join(missing_files[:5])
+            if len(missing_files) > 5:
+                missing_str += f" and {len(missing_files) - 5} more"
+            return (False, f"Missing files in recovery: {missing_str}")
+        return (True, "All critical files present in recovery backup")
 
     @staticmethod
-    def create_recovery_backup():
+    def create_recovery_backup() -> tuple[bool, str]:
         """
         Create or update recovery backup of critical system files.
 
@@ -275,7 +284,7 @@ class UpdateManager(ManagerBase):
             return (False, message)
 
     @staticmethod
-    def restore_from_recovery():
+    def restore_from_recovery() -> tuple[bool, str]:
         """
         Restore critical files from recovery backup to root.
 
@@ -368,7 +377,7 @@ class UpdateManager(ManagerBase):
             return (False, message)
 
     @staticmethod
-    def check_disk_space(required_bytes):
+    def check_disk_space(required_bytes: int) -> tuple[bool, str]:
         """
         Check if sufficient disk space is available.
 
@@ -394,7 +403,7 @@ class UpdateManager(ManagerBase):
             return (False, f"Could not check disk space: {e}")
 
     @staticmethod
-    def validate_extracted_update(extracted_dir):
+    def validate_extracted_update(extracted_dir: str) -> tuple[bool, List[str]]:
         """
         Validate that extracted update contains all critical files.
 
@@ -407,7 +416,7 @@ class UpdateManager(ManagerBase):
         Returns:
             tuple: (bool, list) - (all_present, missing_files)
         """
-        missing_files = []
+        missing_files: List[str] = []
 
         for file_path in UpdateManager.CRITICAL_FILES:
             # Convert root path to extracted directory path
@@ -420,7 +429,7 @@ class UpdateManager(ManagerBase):
 
         return (len(missing_files) == 0, missing_files)
 
-    def _cleanup_pending_root(self):
+    def _cleanup_pending_root(self) -> None:
         """
         Remove pending_update/root directory or file and all its contents.
 
@@ -469,7 +478,7 @@ class UpdateManager(ManagerBase):
         except Exception as e:
             self.logger.warning(f"Error cleaning up pending_update/root: {e}")
 
-    def _record_failed_update(self, reason, version=None):
+    def _record_failed_update(self, reason: str, version: str | None = None) -> None:
         """
         Delegate to utils.mark_incompatible_release so failed versions are skipped next time.
         """
@@ -483,7 +492,13 @@ class UpdateManager(ManagerBase):
         except Exception as e:
             self.logger.warning(f"Could not record failed update {version_to_block}: {e}")
 
-    async def calculate_sha256(self, file_path, chunk_size=256):
+    async def calculate_sha256(
+        self,
+        file_path: str,
+        chunk_size: int = 256,
+        progress_callback: Callable[[str, str, float | None], None] | None = None,
+        service_callback: Callable[[], None] | None = None,
+    ) -> str | None:
         """
         Calculate SHA-256 checksum of a file using adafruit_hashlib.
 
@@ -494,9 +509,11 @@ class UpdateManager(ManagerBase):
         Args:
             file_path: Path to file to checksum
             chunk_size: Bytes to read per iteration (default: 256B for frequent updates)
+            progress_callback: Optional callback for progress reporting
+            service_callback: Optional callback to service background tasks
 
         Returns:
-            str: Hexadecimal SHA-256 checksum, or None on error
+            str | None: Hexadecimal SHA-256 checksum, or None on error
         """
         try:
             # Get file size for progress indication
@@ -504,7 +521,7 @@ class UpdateManager(ManagerBase):
             self.logger.debug(f"File size: {file_size / 1024:.1f} KB")
 
             start_time = time.monotonic()
-            sha256 = hashlib.sha256()
+            sha256 = hashlib.sha256()  # type: ignore[attr-defined]
             bytes_processed = 0
             tick_count = 0
             with open(file_path, "rb") as f:
@@ -518,12 +535,20 @@ class UpdateManager(ManagerBase):
 
                     # Update LED and yield so scheduler tasks can run
                     self._update_download_led()
-                    self._service_timeslice()
+                    if service_callback:
+                        try:
+                            service_callback()
+                        except Exception as e:
+                            self.logger.debug(f"Service callback error: {e}")
                     await Scheduler.yield_control()
 
-                    progress_pct = int((bytes_processed / file_size) * 100)
-                    progress_pct = max(0, min(progress_pct, 100))
-                    self._notify_progress("verifying", "Verifying download integrity...", progress_pct)
+                    if progress_callback:
+                        progress_pct = int((bytes_processed / file_size) * 100)
+                        progress_pct = max(0, min(progress_pct, 100))
+                        try:
+                            progress_callback("verifying", "Verifying download integrity...", progress_pct)
+                        except Exception as e:
+                            self.logger.warning(f"Progress callback error: {e}")
 
             elapsed = time.monotonic() - start_time
             self.logger.debug(f"Checksum calculated in {elapsed:.1f} seconds")
@@ -537,13 +562,21 @@ class UpdateManager(ManagerBase):
             traceback.print_exception(e)
             return None
 
-    async def verify_checksum(self, file_path, expected_checksum):
+    async def verify_checksum(
+        self,
+        file_path: str,
+        expected_checksum: str,
+        progress_callback: Callable[[str, str, float | None], None] | None = None,
+        service_callback: Callable[[], None] | None = None,
+    ) -> tuple[bool, str]:
         """
         Verify file matches expected SHA-256 checksum using adafruit_hashlib.
 
         Args:
             file_path: Path to file to verify
             expected_checksum: Expected SHA-256 hex string
+            progress_callback: Optional callback for progress reporting
+            service_callback: Optional callback to service background tasks
 
         Returns:
             tuple: (bool, str) - (matches, message)
@@ -551,7 +584,9 @@ class UpdateManager(ManagerBase):
         if not expected_checksum:
             return (False, "No checksum provided - update manifest may be from older version")
 
-        actual_checksum = await self.calculate_sha256(file_path)
+        actual_checksum = await self.calculate_sha256(
+            file_path, progress_callback=progress_callback, service_callback=service_callback
+        )
 
         if actual_checksum is None:
             return (False, "Failed to calculate checksum")
@@ -561,7 +596,7 @@ class UpdateManager(ManagerBase):
         else:
             return (False, f"Checksum mismatch: expected {expected_checksum[:16]}..., got {actual_checksum[:16]}...")
 
-    def _determine_release_channel(self):
+    def _determine_release_channel(self) -> str:
         """
         Determine which release channel to use.
 
@@ -574,7 +609,7 @@ class UpdateManager(ManagerBase):
         except OSError:
             return "production"
 
-    def check_for_updates(self):
+    def check_for_updates(self) -> dict[str, Any] | None:
         """
         Check if a newer compatible version is available for this device.
 
@@ -774,7 +809,7 @@ class UpdateManager(ManagerBase):
             traceback.print_exception(e)
             return None
 
-    def _get_session(self):
+    def _get_session(self) -> Any:
         """
         Get or create HTTP session lazily.
 
@@ -785,31 +820,7 @@ class UpdateManager(ManagerBase):
             self._session = self.connection_manager.create_session()
         return self._session
 
-    def _notify_progress(self, state, message, progress_pct=None):
-        """
-        Notify progress callback if registered (Observer pattern).
-
-        Args:
-            state: Current operation state ('downloading', 'verifying', 'unpacking', 'complete', 'error')
-            message: Human-readable progress message
-            progress_pct: Optional completion percentage (0-100)
-        """
-        if self.progress_callback:
-            try:
-                self.progress_callback(state, message, progress_pct)
-            except Exception as e:
-                self.logger.warning(f"Progress callback error: {e}")
-        self._service_timeslice()
-
-    def _service_timeslice(self):
-        """Allow caller to service HTTP/UI while long operations run."""
-        if self.service_callback:
-            try:
-                self.service_callback()
-            except Exception as e:
-                self.logger.debug(f"Service callback error: {e}")
-
-    def _update_download_led(self, force=False):
+    def _update_download_led(self, force: bool = False) -> None:
         """
         Update LED during download operations (flashes blue/green).
 
@@ -826,7 +837,13 @@ class UpdateManager(ManagerBase):
         # This method is kept for backward compatibility but does nothing
         pass
 
-    async def download_update(self, zip_url=None, expected_checksum=None):
+    async def download_update(
+        self,
+        zip_url: str | None = None,
+        expected_checksum: str | None = None,
+        progress_callback: Callable[[str, str, float | None], None] | None = None,
+        service_callback: Callable[[], None] | None = None,
+    ) -> tuple[bool, str]:
         """
         Download update package and extract to /pending_update/root/.
 
@@ -836,6 +853,8 @@ class UpdateManager(ManagerBase):
         Args:
             zip_url: Optional explicit URL (uses cached if None)
             expected_checksum: Optional explicit SHA-256 checksum (uses cached if None)
+            progress_callback: Optional callback for progress reporting
+            service_callback: Optional callback to service background tasks
 
         Returns:
             bool: True if download and extraction successful, False otherwise
@@ -852,7 +871,19 @@ class UpdateManager(ManagerBase):
         session = self._get_session()
         self._download_flash_start = time.monotonic()
 
-        async def _execute_download():
+        def notify(state: str, msg: str, pct: float | None = None) -> None:
+            if progress_callback:
+                try:
+                    progress_callback(state, msg, pct)
+                except Exception as e:
+                    self.logger.warning(f"Progress callback error: {e}")
+            if service_callback:
+                try:
+                    service_callback()
+                except Exception as e:
+                    self.logger.debug(f"Service callback error: {e}")
+
+        async def _execute_download() -> tuple[bool, str]:
             try:
                 space_ok, space_msg = self.check_disk_space(self.MIN_FREE_SPACE_BYTES)
                 self.logger.debug(f"Disk space check: {space_msg}")
@@ -861,7 +892,7 @@ class UpdateManager(ManagerBase):
                     self.logger.error("Please free up space and try again")
                     self._cleanup_pending_root()
                     self._record_failed_update("Insufficient disk space")
-                    return False
+                    return False, "Insufficient disk space for update"
 
                 self._update_download_led()
 
@@ -877,10 +908,9 @@ class UpdateManager(ManagerBase):
                 self.logger.debug(f"Saving to: {zip_path}")
 
                 self._update_download_led()
-                self._notify_progress("downloading", "Starting download...", 0)
-                self._service_timeslice()
+                notify("downloading", "Starting download...", 0)
 
-                def _get_content_length(headers):
+                def _get_content_length(headers: Any) -> int | None:
                     if not headers:
                         return None
                     try:
@@ -934,12 +964,11 @@ class UpdateManager(ManagerBase):
                         self._update_download_led()
                         bytes_downloaded += len(chunk)
 
-                        progress_pct = None
+                        progress_pct: float | None = None
                         if content_length and content_length > 0:
-                            progress_pct = int((bytes_downloaded / content_length) * 100)
-                            progress_pct = max(0, min(progress_pct, 99))
-                        self._notify_progress("downloading", "Download...", progress_pct)
-                        self._service_timeslice()
+                            progress_pct = float((bytes_downloaded / content_length) * 100)
+                            progress_pct = max(0.0, min(progress_pct, 99.0))
+                        notify("downloading", "Download...", progress_pct)
                         await Scheduler.yield_control()
 
                 response.close()
@@ -948,16 +977,20 @@ class UpdateManager(ManagerBase):
 
                 self.logger.info("Download complete")
                 self._update_download_led()
-                self._notify_progress("downloading", "Download complete", 100)
-                self._service_timeslice()
+                notify("downloading", "Download complete", 100)
 
                 if expected_checksum:
                     self.logger.info("Verifying download integrity")
                     self._update_download_led()
-                    self._notify_progress("verifying", "Verifying download integrity...", None)
+                    notify("verifying", "Verifying download integrity...", None)
 
-                    async def _run_verification():
-                        return await self.verify_checksum(zip_path, expected_checksum)
+                    async def _run_verification() -> tuple[bool, str]:
+                        return await self.verify_checksum(
+                            zip_path,
+                            expected_checksum,
+                            progress_callback=progress_callback,
+                            service_callback=service_callback,
+                        )
 
                     if self.pixel_controller:
                         async with self.pixel_controller.indicate_operation("verifying"):
@@ -967,19 +1000,18 @@ class UpdateManager(ManagerBase):
 
                     if not checksum_valid:
                         self.logger.error(f"Checksum verification failed: {checksum_msg}")
-                        self._notify_progress("error", f"Verification failed: {checksum_msg}", None)
+                        notify("error", f"Verification failed: {checksum_msg}", None)
                         if "mismatch" in checksum_msg.lower():
                             self.logger.critical("SECURITY WARNING: Downloaded file may be corrupted or tampered with")
                         with suppress(OSError):
                             os.remove(zip_path)
                         self._cleanup_pending_root()
                         self._record_failed_update(checksum_msg)
-                        return False
+                        return False, checksum_msg
 
                     self.logger.info(checksum_msg)
                     self._update_download_led()
-                    self._notify_progress("verifying", "Verification complete", 100)
-                    self._service_timeslice()
+                    notify("verifying", "Verification complete", 100)
                 else:
                     self.logger.warning("No checksum in manifest - update may be from older release")
 
@@ -988,8 +1020,7 @@ class UpdateManager(ManagerBase):
 
                     self.logger.info("Extracting update files")
                     self._update_download_led()
-                    self._notify_progress("unpacking", "Extracting update files...", 0)
-                    self._service_timeslice()
+                    notify("unpacking", "Extracting update files...", 0)
                     await Scheduler.yield_control()
 
                     with ZipFile(zip_path) as zf:
@@ -1010,10 +1041,7 @@ class UpdateManager(ManagerBase):
                             if file_count % 3 == 0 or file_count == total_files:
                                 self._update_download_led()
                                 progress_pct = (file_count / total_files) * 100 if total_files else None
-                                self._notify_progress(
-                                    "unpacking", f"Extracting files... ({file_count}/{total_files})", progress_pct
-                                )
-                            self._service_timeslice()
+                                notify("unpacking", f"Extracting files... ({file_count}/{total_files})", progress_pct)
                             await Scheduler.yield_control()
 
                     os.sync()
@@ -1021,12 +1049,11 @@ class UpdateManager(ManagerBase):
 
                     self.logger.info("Extraction complete")
                     self._update_download_led()
-                    self._notify_progress("unpacking", "Extraction complete", 100)
-                    self._service_timeslice()
+                    notify("unpacking", "Extraction complete", 100)
 
                     manifest_path = f"{self.PENDING_ROOT_DIR}/manifest.json"
                     try:
-                        with open(manifest_path) as f:
+                        with open(manifest_path) as f:  # type: ignore[assignment]
                             manifest = json.load(f)
                         self.logger.info(f"Manifest validated (version: {manifest.get('version', 'unknown')})")
                         self._update_download_led()
@@ -1035,12 +1062,13 @@ class UpdateManager(ManagerBase):
                         with suppress(OSError):
                             os.remove(zip_path)
                         self._cleanup_pending_root()
-                        self._record_failed_update(f"Invalid manifest: {e}")
-                        return False
+                        error_msg = f"Invalid manifest: {e}"
+                        self._record_failed_update(error_msg)
+                        return False, error_msg
 
                     self.logger.debug("Validating extracted update contains all critical files")
                     self._update_download_led()
-                    self._notify_progress("unpacking", "Validating update package...", None)
+                    notify("unpacking", "Validating update package...", None)
                     all_present, missing_files = self.validate_extracted_update(self.PENDING_ROOT_DIR)
 
                     if not all_present:
@@ -1051,12 +1079,13 @@ class UpdateManager(ManagerBase):
                         if len(missing_files) > 10:
                             self.logger.error(f"  ... and {len(missing_files) - 10} more")
                         self.logger.error("Installation would brick the device - aborting")
-                        self._notify_progress("error", "Update package incomplete", None)
+                        notify("error", "Update package incomplete", None)
                         with suppress(OSError):
                             os.remove(zip_path)
                         self._cleanup_pending_root()
-                        self._record_failed_update("Update package incomplete", version=manifest.get("version"))
-                        return False
+                        error_msg = "Update package incomplete"
+                        self._record_failed_update(error_msg, version=manifest.get("version"))
+                        return False, error_msg
 
                     self.logger.info("All critical files present in update")
                     os.remove(zip_path)
@@ -1064,34 +1093,36 @@ class UpdateManager(ManagerBase):
                     await Scheduler.yield_control()
 
                     self.logger.info("Update ready for installation")
-                    self._notify_progress("complete", "Update ready for installation", 100)
-                    return True
+                    notify("complete", "Update ready for installation", 100)
+                    return True, "Update ready for installation"
 
                 except Exception as e:
                     self.logger.error(f"Error extracting update: {e}")
                     traceback.print_exception(e)
-                    self._notify_progress("error", f"Extraction failed: {e}", None)
+                    notify("error", f"Extraction failed: {e}", None)
                     with suppress(OSError):
                         os.remove(zip_path)
                     self._cleanup_pending_root()
-                    self._record_failed_update(f"Extraction error: {e}")
-                    return False
+                    error_msg = f"Extraction error: {e}"
+                    self._record_failed_update(error_msg)
+                    return False, error_msg
 
             except (AttributeError, TypeError, NameError) as e:
                 self.logger.critical(f"Programming error in download_update: {e}")
                 traceback.print_exception(e)
-                self._notify_progress("error", f"Download failed: {e}", None)
+                notify("error", f"Download failed: {e}", None)
                 self._record_failed_update(f"Programming error: {e}")
                 raise RuntimeError(f"Unrecoverable error in update download: {e}") from e
             except Exception as e:
                 self.logger.error(f"Error downloading update: {e}")
                 traceback.print_exception(e)
-                self._notify_progress("error", f"Download failed: {e}", None)
+                notify("error", f"Download failed: {e}", None)
                 with suppress(OSError):
                     os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
                 self._cleanup_pending_root()
-                self._record_failed_update(str(e))
-                return False
+                error_msg = str(e)
+                self._record_failed_update(error_msg)
+                return False, error_msg
 
         if self.pixel_controller:
             self.logger.debug("LED indicator: flashing blue/green during download and verification")
@@ -1100,7 +1131,9 @@ class UpdateManager(ManagerBase):
 
         return await _execute_download()
 
-    def schedule_next_update_check(self, interval_hours=None, delay_seconds=None):
+    def schedule_next_update_check(
+        self, interval_hours: float | None = None, delay_seconds: float | None = None
+    ) -> float:
         """
         Calculate when the next scheduled update check should occur.
 
@@ -1144,7 +1177,7 @@ class UpdateManager(ManagerBase):
             # Fallback: check again in 24 hours
             return time.monotonic() + (24 * 3600)
 
-    def should_check_now(self):
+    def should_check_now(self) -> bool:
         """
         Check if it's time for a scheduled update check.
 
@@ -1156,7 +1189,12 @@ class UpdateManager(ManagerBase):
 
         return time.monotonic() >= self.next_update_check
 
-    async def check_download_and_reboot(self, delay_seconds=2):
+    async def check_download_and_reboot(
+        self,
+        delay_seconds: float = 2,
+        progress_callback: Callable[[str, str, float | None], None] | None = None,
+        service_callback: Callable[[], None] | None = None,
+    ) -> None:
         """
         Centralized OTA update workflow: check, download, and hard reboot to install.
 
@@ -1168,6 +1206,8 @@ class UpdateManager(ManagerBase):
 
         Args:
             delay_seconds: Seconds to wait before rebooting (default: 2)
+            progress_callback: Optional callback for progress reporting
+            service_callback: Optional callback to service background tasks
 
         Returns:
             bool: True if update is available and download succeeded (device will reboot),
@@ -1179,7 +1219,7 @@ class UpdateManager(ManagerBase):
 
             if not update_info:
                 self.logger.debug("No updates available")
-                return False
+                return
 
             # Update available
             self.logger.info(f"Update available: {update_info['version']}")
@@ -1188,7 +1228,7 @@ class UpdateManager(ManagerBase):
 
             # Download and extract with checksum verification
             # download_update() uses cached info from check_for_updates()
-            if await self.download_update():
+            if await self.download_update(progress_callback=progress_callback, service_callback=service_callback):
                 self.logger.info("Update downloaded successfully")
                 self.logger.info(f"Rebooting in {delay_seconds} seconds to install update")
                 await Scheduler.sleep(delay_seconds)
@@ -1200,9 +1240,7 @@ class UpdateManager(ManagerBase):
 
             else:
                 self.logger.error("Update download failed, continuing with current version")
-                return False
 
         except Exception as e:
             self.logger.error(f"Error during update check: {e}")
             traceback.print_exception(e)
-            return False

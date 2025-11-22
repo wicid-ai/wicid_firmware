@@ -33,11 +33,17 @@ We use naming to communicate the role of a component, consistent with `docs/ARCH
 
 Static typing is critical for maintaining a large embedded project. `Mypy` is used to enforce this.
 
+- **Centralized Types**: All typing imports (like `List`, `Dict`, `Optional`, `Any`) **MUST** come from `app_typing` (e.g., `from app_typing import List`).
+  - **Do NOT** import from the standard `typing` module, as this will crash on the device.
+  - `app_typing` provides a shim that works for both static analysis (CPython) and runtime (CircuitPython).
+
 - **Strict Typing**: All new functions and methods **MUST** include full type hints for all arguments and return values.
 
   ```python
   # Good
-  def get_weather(zip_code: str) -> dict[str, any] | None:
+  from app_typing import Dict, Any, Optional
+
+  def get_weather(zip_code: str) -> Optional[Dict[str, Any]]:
       ...
   ```
 

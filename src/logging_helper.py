@@ -33,7 +33,7 @@ class WicidLogger:
         logger.info("Connected")  # Output: [INFO: Wifi] Connected
     """
 
-    def __init__(self, name):
+    def __init__(self, name: str) -> None:
         """
         Initialize logger with a hierarchical name.
 
@@ -58,7 +58,7 @@ class WicidLogger:
             mod = parts[0]
             self.module = mod[0].upper() + mod[1:] if mod else "Unknown"
 
-    def _log(self, level, msg, exc_info=False):
+    def _log(self, level: int, msg: str, exc_info: bool = False) -> None:
         """Internal logging method."""
         global _log_level
         if level >= _log_level:
@@ -80,27 +80,28 @@ class WicidLogger:
             except Exception:
                 pass
 
-    def debug(self, msg, exc_info=False):
+    def debug(self, msg: str, exc_info: bool = False) -> None:
+        """Log a debug message."""
         """Log debug message."""
         self._log(DEBUG, msg, exc_info=exc_info)
 
-    def info(self, msg, exc_info=False):
+    def info(self, msg: str, exc_info: bool = False) -> None:
         """Log info message."""
         self._log(INFO, msg, exc_info=exc_info)
 
-    def warning(self, msg, exc_info=False):
+    def warning(self, msg: str, exc_info: bool = False) -> None:
         """Log warning message."""
         self._log(WARNING, msg, exc_info=exc_info)
 
-    def error(self, msg, exc_info=False):
+    def error(self, msg: str, exc_info: bool = False) -> None:
         """Log error message."""
         self._log(ERROR, msg, exc_info=exc_info)
 
-    def critical(self, msg, exc_info=False):
+    def critical(self, msg: str, exc_info: bool = False) -> None:
         """Log critical message."""
         self._log(CRITICAL, msg, exc_info=exc_info)
 
-    def testing(self, msg):
+    def testing(self, msg: str) -> None:
         """
         Log test message at TESTING level.
 
@@ -110,7 +111,7 @@ class WicidLogger:
         self._log(TESTING, msg)
 
 
-def logger(name="wicid"):
+def logger(name: str = "wicid") -> WicidLogger:
     """
     Get a logger instance for the given name.
 
@@ -126,7 +127,7 @@ def logger(name="wicid"):
     return WicidLogger(name)
 
 
-def configure_logging(log_level_str="INFO"):
+def configure_logging(log_level_str: str = "INFO") -> WicidLogger:
     """
     Configure global logging level.
 

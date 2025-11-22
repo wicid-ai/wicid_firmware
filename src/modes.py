@@ -1,16 +1,25 @@
 import os
 import time
 
+from app_typing import Any
 from button_action_router import ButtonActionRouter
 from configuration_manager import ConfigurationManager
 from mode_interface import Mode
 from scheduler import Scheduler
+from system_manager import SystemManager
+from weather_service import WeatherService
 
 
-def temperature_color(temp_f):
+def temperature_color(temp_f: float | None) -> tuple[int, int, int]:
     """
     Returns an (R, G, B) color biased toward warmer hues,
     clamped between 0°F and 100°F (white->purple->blue->green->yellow->orange->red).
+
+    Args:
+        temp_f: Temperature in Fahrenheit, or None for unknown
+
+    Returns:
+        tuple: RGB color tuple (0-255 per channel)
     """
     color_steps = [
         (0, (55, 55, 55)),  # really cold: white
@@ -46,17 +55,28 @@ def temperature_color(temp_f):
     return color_steps[-1][1]
 
 
-async def blink_for_precip(pixel_controller, color, precip_percent, is_pressed_fn=None):
+async def blink_for_precip(
+    pixel_controller: Any, color: tuple[int, int, int], precip_percent: int | None, is_pressed_fn: Any = None
+) -> bool:
     """
     Blinks the NeoPixel according to the 'rounded to nearest 10%' precipitation probability.
       - Example: 27% => 30% => 3 blinks, then hold color for a few seconds.
       - If ``is_pressed_fn`` returns True, exit mid-cycle for immediate response.
+
+    Args:
+        pixel_controller: PixelController instance
+        color: RGB tuple for the blink color
+        precip_percent: Precipitation percentage (0-100), or None
+        is_pressed_fn: Optional callable that returns True if button pressed
+
+    Returns:
+        bool: True if completed normally, False if interrupted
     """
     fast_blink_on = 0.3
     fast_blink_off = 0.2
     post_blink_pause = 3.0
 
-    def should_interrupt():
+    def should_interrupt() -> bool:
         if not is_pressed_fn:
             return False
         try:
@@ -121,14 +141,15 @@ class WeatherMode(Mode):
     requires_wifi = True
     order = 0  # Primary mode
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.weather = None
+        self.weather: Any = None  # WeatherService instance
+        self.system_manager: Any = None  # Set in initialize()
         self.update_interval = int(os.getenv("WEATHER_UPDATE_INTERVAL", "600"))
-        self.last_update = None
+        self.last_update: float | None = None
         self.current_temp = None
         self.precip_chance = None
-        self._weather_refresh_handle = None
+        self._weather_refresh_handle: Any = None  # TaskHandle from scheduler
 
     def initialize(self) -> bool:
         """Initialize weather service."""
@@ -145,13 +166,9 @@ class WeatherMode(Mode):
             zip_code = credentials["weather_zip"]
 
             # Create weather service
-            from weather_service import WeatherService
-
             self.weather = WeatherService(zip_code)
 
             # Get system manager singleton (periodic system checks)
-            from system_manager import SystemManager
-
             self.system_manager = SystemManager.instance()
 
             self.logger.info(f"Initialized for ZIP {zip_code}")
@@ -203,7 +220,7 @@ class WeatherMode(Mode):
         self.system_manager = None
         self._stop_weather_refresh_task()
 
-    def _start_weather_refresh_task(self):
+    def _start_weather_refresh_task(self) -> None:
         """Schedule recurring weather refresh task via scheduler."""
         if self._weather_refresh_handle is not None:
             return
@@ -216,7 +233,7 @@ class WeatherMode(Mode):
             name="Weather Data Refresh",
         )
 
-    def _stop_weather_refresh_task(self):
+    def _stop_weather_refresh_task(self) -> None:
         """Cancel scheduled weather refresh task if running."""
         if self._weather_refresh_handle is None:
             return
@@ -229,7 +246,7 @@ class WeatherMode(Mode):
         finally:
             self._weather_refresh_handle = None
 
-    async def _weather_refresh_job(self):
+    async def _weather_refresh_job(self) -> None:
         """Fetch latest weather data without blocking the display loop."""
         if not self._running or self.weather is None:
             return
@@ -237,10 +254,10 @@ class WeatherMode(Mode):
         try:
             # Yield after each blocking network call to keep LED/button responsive
             temp = self.weather.get_current_temperature()
-            await Scheduler.yield_control()
+            await Scheduler.instance().yield_control()
 
             precip = self.weather.get_precip_chance_in_window(0, 4)
-            await Scheduler.yield_control()
+            await Scheduler.instance().yield_control()
 
             if temp is not None:
                 self.current_temp = temp
@@ -343,10 +360,10 @@ class SetupPortalMode(Mode):
     requires_wifi = False
     order = 1000  # Not part of normal cycle
 
-    def __init__(self, error=None):
+    def __init__(self, error: Any = None) -> None:
         super().__init__()
         self._error = error
-        self._session = None
+        self._session: Any = None  # Will be set in initialize()
         self._config_mgr = ConfigurationManager.instance()
         self._button_router = ButtonActionRouter.instance()
 
@@ -373,12 +390,20 @@ class SetupPortalMode(Mode):
         super().cleanup()
 
     @classmethod
-    async def execute(cls, *, error=None):
-        """Convenience helper to run setup portal outside standard mode loop."""
+    async def execute(cls, *, error: dict | None = None) -> bool:
+        """Convenience helper to run setup portal outside standard mode loop.
+
+        Args:
+            error: Optional error dict to display
+
+        Returns:
+            bool: True if setup completed successfully, False if cancelled
+        """
         mode = cls(error=error)
         if not mode.initialize():
             return False
         try:
-            return await mode.run()
+            result = await mode.run()
+            return result is True
         finally:
             mode.cleanup()

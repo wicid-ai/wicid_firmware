@@ -1,10 +1,11 @@
+from app_typing import Any
 from connection_manager import ConnectionManager
 from logging_helper import logger
 from utils import get_location_data_from_zip
 
 
 class WeatherService:
-    def __init__(self, weather_zip, session=None):
+    def __init__(self, weather_zip: str, session: Any = None) -> None:
         """
         Initialize the WeatherService with an active HTTP session.
         Retrieves latitude/longitude for the target ZIP code using Open-Meteo's geocoding API.
@@ -30,9 +31,12 @@ class WeatherService:
             self.logger.warning("Could not get location data, using default timezone")
             self.timezone = "America%2FNew_York"
 
-    def get_current_temperature(self):
+    def get_current_temperature(self) -> float | None:
         """
         Returns the current temperature in degrees Fahrenheit.
+
+        Returns:
+            float: Current temperature in °F, or None if location data unavailable
         """
         if self.lat is None or self.lon is None:
             return None
@@ -43,9 +47,12 @@ class WeatherService:
 
         return data["current_weather"]["temperature"]
 
-    def get_daily_high(self):
+    def get_daily_high(self) -> float | None:
         """
         Returns the forecasted high temperature (in °F) for the current day.
+
+        Returns:
+            float: Daily high temperature in °F, or None if location data unavailable
         """
         if self.lat is None or self.lon is None:
             return None
@@ -56,9 +63,12 @@ class WeatherService:
 
         return data["daily"]["temperature_2m_max"][0]
 
-    def get_daily_precip_chance(self):
+    def get_daily_precip_chance(self) -> int | None:
         """
         Returns the daily probability of precipitation (in %) for the current day.
+
+        Returns:
+            int: Precipitation probability 0-100%, or None if location data unavailable
         """
         if self.lat is None or self.lon is None:
             return None
@@ -68,16 +78,19 @@ class WeatherService:
         response.close()
         return data["daily"]["precipitation_probability_max"][0]
 
-    def get_precip_chance_in_window(self, start_time_offset, forecast_window_duration):
+    def get_precip_chance_in_window(self, start_time_offset: float, forecast_window_duration: float) -> int | None:
         """
         Returns the maximum precipitation probability (%) from the hourly data array,
         by matching the hour in 'current_weather.time' to the hour entries in 'hourly.time'.
         For example, if current_weather.time is '2025-02-06T14:15', it will look for
         '2025-02-06T14:00' in hourly.time.
 
-        :param start_time_offset: (int or float) hours from 'current hour' to start
-        :param forecast_window_duration: (int or float) hours to include
-        :return: the maximum precipitation probability in that window (0-100), or 0 if no data
+        Args:
+            start_time_offset: Hours from 'current hour' to start
+            forecast_window_duration: Hours to include
+
+        Returns:
+            int: Maximum precipitation probability in that window (0-100), or 0 if no data
         """
         if self.lat is None or self.lon is None:
             return None

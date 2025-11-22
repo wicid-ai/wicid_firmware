@@ -40,7 +40,7 @@ class Mode:
     requires_wifi = False
     order = 999  # Default high value for base class
 
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initialize mode with access to shared resources.
         """
@@ -72,7 +72,7 @@ class Mode:
             self.logger.debug("WiFi connection verified")
         return True
 
-    async def run(self) -> None:
+    async def run(self) -> bool | None:
         """
         Run the mode's main loop.
 
@@ -83,6 +83,9 @@ class Mode:
         - Handle mode-specific logic
 
         The loop should be interruptible by button press to allow mode switching.
+
+        Returns:
+            bool | None: Optionally return status (used by SetupPortalMode), otherwise None
         """
         # Default implementation - subclasses must override
         raise NotImplementedError(f"{self.name}.run() must be implemented by subclass")
@@ -100,14 +103,14 @@ class Mode:
         pass
 
     # Convenience helpers -------------------------------------------------
-    def is_button_pressed(self):
+    def is_button_pressed(self) -> bool:
         """Return True if the physical button is currently pressed."""
         try:
             return self.input_mgr.is_pressed()
         except Exception:
             return False
 
-    async def wait_for_button_release(self, poll_delay=0.05):
+    async def wait_for_button_release(self, poll_delay: float = 0.05) -> None:
         """Block until the button is released (coarse polling)."""
         while self.is_button_pressed():
             await Scheduler.sleep(poll_delay)

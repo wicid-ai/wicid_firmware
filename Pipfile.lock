@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "4e7f484a041e0d29659cad9078631595ad11aee10fd8078db68d715f6b1996e5"
+            "sha256": "a2456616c133ed8ab3a761cade15e1248ad1f03e8f427f635d6ac0559ee460ee"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -402,6 +402,66 @@
         }
     },
     "develop": {
+        "adafruit-blinka": {
+            "hashes": [
+                "sha256:6a1f60fa03312da0bcac9f282930d3a69e07486ef968d30a5f518ebe13a04e7a",
+                "sha256:7411be4c88ac56412b0fa2f1154bfbe5f93ad3010591a5dc8d7f3bc13ea7bbd8"
+            ],
+            "markers": "python_full_version >= '3.7.0'",
+            "version": "==8.68.0"
+        },
+        "adafruit-circuitpython-busdevice": {
+            "hashes": [
+                "sha256:377f4d9c6b7ac256a0c686fe3d88bb2d10873cec992ff7805c8719a474e92127",
+                "sha256:e7d049a2dc6a3fc9245e154d66725efeb190a61e7d192fbc8f96f3b76fe1fc77"
+            ],
+            "version": "==5.2.14"
+        },
+        "adafruit-circuitpython-connectionmanager": {
+            "hashes": [
+                "sha256:83c7eafa294fc6e889076d1ba8a7ff902e29d062977d3602078b1594868b7042",
+                "sha256:daa41f7675533fbb451c0f522c894911dd003f67b26f0e7be832f2e240ba28b4"
+            ],
+            "version": "==3.1.6"
+        },
+        "adafruit-circuitpython-requests": {
+            "hashes": [
+                "sha256:409cb1c9304a0ce0a4b2f64d572400007849f6972f92a4b08ebfe35a532761e7",
+                "sha256:62c6e44d23e8dfdc24f1f33464953019a9d88853b29fa471ac00200d4fa3e8ff"
+            ],
+            "version": "==4.1.15"
+        },
+        "adafruit-circuitpython-typing": {
+            "hashes": [
+                "sha256:63f196f834e47842bcd4cf8c37aaa0c61e1aeb5d07f056c875fc3016cda91a12",
+                "sha256:f6d0a02150e1e4efb5a2c2945b88d948809fdb465875f39947108b8467c986d9"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.8'",
+            "version": "==1.12.3"
+        },
+        "adafruit-platformdetect": {
+            "hashes": [
+                "sha256:58350aa93dd166c4b67ba3c947b07a2d7320d14e65b92e5873fdf64d03e3f93d",
+                "sha256:eebf86b15a7f7a5dfdb811ee0f124a0e3bb0af900f0a900728ed7dedffe1af5d"
+            ],
+            "version": "==3.85.0"
+        },
+        "adafruit-pureio": {
+            "hashes": [
+                "sha256:281ab2099372cc0decc26326918996cbf21b8eed694ec4764d51eefa029d324e",
+                "sha256:c4cfbb365731942d1f1092a116f47dfdae0aef18c5b27f1072b5824ad5ea8c7c"
+            ],
+            "markers": "python_full_version >= '3.5.0'",
+            "version": "==1.1.11"
+        },
+        "binho-host-adapter": {
+            "hashes": [
+                "sha256:1e6da7a84e208c13b5f489066f05774bff1d593d0f5bf1ca149c2b8e83eae856",
+                "sha256:f71ca176c1e2fc1a5dce128beb286da217555c6c7c805f2ed282a6f3507ec277"
+            ],
+            "version": "==0.1.6"
+        },
         "cfgv": {
             "hashes": [
                 "sha256:a8dc6b26ad22ff227d2634a65cb388215ce6cc96bbcc5cfde7641ae87e8dacc0",
@@ -518,6 +578,28 @@
             "index": "pypi",
             "markers": "python_version >= '3.10'",
             "version": "==4.4.0"
+        },
+        "pyftdi": {
+            "hashes": [
+                "sha256:efd3f5a7d43202dc883ff261a7b1cb4dcbbe65b19628f8603a8b1183a7bc2841"
+            ],
+            "markers": "python_version >= '3.9'",
+            "version": "==0.57.1"
+        },
+        "pyserial": {
+            "hashes": [
+                "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb",
+                "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0"
+            ],
+            "version": "==3.5"
+        },
+        "pyusb": {
+            "hashes": [
+                "sha256:3af070b607467c1c164f49d5b0caabe8ac78dbed9298d703a8dbf9df4052d17e",
+                "sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430"
+            ],
+            "markers": "python_full_version >= '3.9.0'",
+            "version": "==1.3.1"
         },
         "pyyaml": {
             "hashes": [

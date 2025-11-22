@@ -36,7 +36,7 @@ from utils import suppress
 class TestButtonControllerBasic(TestCase):
     """Basic ButtonController functionality tests using mock Pin."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Set up each test."""
         self.logger = logger("test.button_controller")
         self.mock_pin = create_mock_button_pin(pin_number=42)
@@ -45,14 +45,14 @@ class TestButtonControllerBasic(TestCase):
             "input_factory": lambda pin: MockDigitalInOut(pin),
         }
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """Clean up after each test."""
         # Clean up any controller instances
         if hasattr(self, "controller") and self.controller is not None:
             with suppress(Exception):
                 self.controller.deinit()
 
-    def test_button_controller_init(self):
+    def test_button_controller_init(self) -> None:
         """Verify ButtonController initializes with mock pin."""
         controller = ButtonController(self.logger, **self._controller_kwargs)
 
@@ -62,7 +62,7 @@ class TestButtonControllerBasic(TestCase):
 
         controller.deinit()
 
-    def test_button_controller_deinit(self):
+    def test_button_controller_deinit(self) -> None:
         """Verify ButtonController cleanup works."""
         controller = ButtonController(self.logger, **self._controller_kwargs)
 
@@ -72,7 +72,7 @@ class TestButtonControllerBasic(TestCase):
         # Should be safe to call multiple times
         controller.deinit()
 
-    def test_button_controller_properties(self):
+    def test_button_controller_properties(self) -> None:
         """Verify ButtonController properties are accessible."""
         controller = ButtonController(self.logger, **self._controller_kwargs)
 
@@ -82,7 +82,7 @@ class TestButtonControllerBasic(TestCase):
 
         controller.deinit()
 
-    def test_mock_pin_simulation(self):
+    def test_mock_pin_simulation(self) -> None:
         """Verify mock pin can simulate button press/release."""
         # Test initial state (not pressed)
         self.assertTrue(self.mock_pin.value, "Initial state is high (not pressed)")
@@ -99,7 +99,7 @@ class TestButtonControllerBasic(TestCase):
         self.mock_pin.value = False
         self.assertFalse(self.mock_pin.value, "Direct value assignment works")
 
-    def test_button_controller_with_simulated_input(self):
+    def test_button_controller_with_simulated_input(self) -> None:
         """Verify ButtonController can be created with mock pin."""
         controller = ButtonController(self.logger, **self._controller_kwargs)
 
