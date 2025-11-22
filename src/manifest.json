@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.6.0-a1",
+  "version": "0.6.0-a2",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -9,5 +9,5 @@
   ],
   "release_type": "development",
   "release_notes": "Introduces new scheduling framework for more reliable task management.",
-  "release_date": "2025-11-20T20:01:06.207429+00:00"
+  "release_date": "2025-11-22T05:51:01.305825+00:00"
 }
