@@ -370,6 +370,10 @@ class ConnectionManager(ManagerBase):
                 password_b = bytes(password, "utf-8")
 
                 # Attempt connection via radio controller
+                # NOTE: This is a blocking call!
+                # CircuitPython's wifi.radio.connect() is synchronous and will block the
+                # scheduler for the duration of the connection attempt (typically 5-10s).
+                # This is a known limitation of the platform/firmware.
                 self._radio.connect(ssid_b, password_b, timeout=self.CONNECTION_TIMEOUT)
 
                 # Verify connection

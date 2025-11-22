@@ -1,7 +1,7 @@
 from app_typing import Any
 from connection_manager import ConnectionManager
 from logging_helper import logger
-from utils import get_location_data_from_zip
+from scheduler import Scheduler
 
 
 class WeatherService:
@@ -13,6 +13,11 @@ class WeatherService:
         Args:
             weather_zip: ZIP code string for weather location
             session: Optional adafruit_requests.Session instance (for tests)
+
+        Note:
+            Uses adafruit_requests.Session (blocking) because CircuitPython does not
+            support true non-blocking socket I/O. See docs/STYLE_GUIDE.md section on
+            CircuitPython Compatibility for details on the blocking I/O limitation.
         """
         self.logger = logger("wicid.weather")
         self.zip_code = weather_zip
@@ -20,65 +25,101 @@ class WeatherService:
         connection_manager = ConnectionManager.instance()
         self.session = session or connection_manager.create_session()
 
-        # Get coordinates first, then detect timezone from them
-        self.lat, self.lon, raw_tz = get_location_data_from_zip(self.session, self.zip_code)
+        # Coordinates will be fetched on first use or passed in
+        self.lat: float | None = None
+        self.lon: float | None = None
+        self.timezone: str = "America%2FNew_York"
 
-        if raw_tz:
-            # URL-encode slash for Open-Meteo
-            self.timezone = raw_tz.replace("/", "%2F")
-        else:
-            # Fallback to default timezone if coordinates not available
-            self.logger.warning("Could not get location data, using default timezone")
-            self.timezone = "America%2FNew_York"
+    async def _ensure_location(self) -> bool:
+        """Ensure we have coordinates for the ZIP code."""
+        if self.lat is not None and self.lon is not None:
+            return True
 
-    def get_current_temperature(self) -> float | None:
+        try:
+            # NOTE: session.get() is blocking (CircuitPython limitation)
+            # We yield control immediately after to allow scheduler to run other tasks
+            # See docs/STYLE_GUIDE.md (CircuitPython Compatibility) for details
+            url = f"https://geocoding-api.open-meteo.com/v1/search?name={self.zip_code}&count=1&language=en&format=json"
+            response = self.session.get(url)
+            await Scheduler.yield_control()
+
+            data = response.json()
+            response.close()
+
+            if "results" in data and data["results"]:
+                result = data["results"][0]
+                self.lat = result["latitude"]
+                self.lon = result["longitude"]
+                if "timezone" in result:
+                    self.timezone = result["timezone"].replace("/", "%2F")
+                return True
+            else:
+                self.logger.warning(f"No location found for ZIP {self.zip_code}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Geocoding failed: {e}")
+            return False
+
+    async def get_current_temperature(self) -> float | None:
         """
         Returns the current temperature in degrees Fahrenheit.
 
         Returns:
             float: Current temperature in °F, or None if location data unavailable
         """
-        if self.lat is None or self.lon is None:
+        if not await self._ensure_location():
             return None
+
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&current_weather=true&temperature_unit=fahrenheit&timezone={self.timezone}&models=dmi_seamless"
         response = self.session.get(url)
+        await Scheduler.yield_control()
+
         data = response.json()
         response.close()
 
         return data["current_weather"]["temperature"]
 
-    def get_daily_high(self) -> float | None:
+    async def get_daily_high(self) -> float | None:
         """
         Returns the forecasted high temperature (in °F) for the current day.
 
         Returns:
             float: Daily high temperature in °F, or None if location data unavailable
         """
-        if self.lat is None or self.lon is None:
+        if not await self._ensure_location():
             return None
+
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&daily=temperature_2m_max&forecast_days=1&temperature_unit=fahrenheit&timezone={self.timezone}&models=dmi_seamless"
         response = self.session.get(url)
+        await Scheduler.yield_control()
+
         data = response.json()
         response.close()
 
         return data["daily"]["temperature_2m_max"][0]
 
-    def get_daily_precip_chance(self) -> int | None:
+    async def get_daily_precip_chance(self) -> int | None:
         """
         Returns the daily probability of precipitation (in %) for the current day.
 
         Returns:
             int: Precipitation probability 0-100%, or None if location data unavailable
         """
-        if self.lat is None or self.lon is None:
+        if not await self._ensure_location():
             return None
+
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&daily=precipitation_probability_max&forecast_days=1&timezone={self.timezone}&models=dmi_seamless"
         response = self.session.get(url)
+        await Scheduler.yield_control()
+
         data = response.json()
         response.close()
         return data["daily"]["precipitation_probability_max"][0]
 
-    def get_precip_chance_in_window(self, start_time_offset: float, forecast_window_duration: float) -> int | None:
+    async def get_precip_chance_in_window(
+        self, start_time_offset: float, forecast_window_duration: float
+    ) -> int | None:
         """
         Returns the maximum precipitation probability (%) from the hourly data array,
         by matching the hour in 'current_weather.time' to the hour entries in 'hourly.time'.
@@ -92,11 +133,13 @@ class WeatherService:
         Returns:
             int: Maximum precipitation probability in that window (0-100), or 0 if no data
         """
-        if self.lat is None or self.lon is None:
+        if not await self._ensure_location():
             return None
 
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&current_weather=true&hourly=precipitation_probability&forecast_days=3&timezone={self.timezone}&models=dmi_seamless"
         response = self.session.get(url)
+        await Scheduler.yield_control()
+
         data = response.json()
         response.close()
 

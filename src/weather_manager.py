@@ -168,17 +168,11 @@ class WeatherManager(ManagerBase):
         try:
             self.logger.debug("Fetching weather data...")
 
-            # Network calls are blocking - yield after each to keep LED/button responsive
-            # adafruit_requests uses synchronous sockets which don't auto-yield to asyncio
+            # Network calls are now async and non-blocking
             try:
-                temp = self._weather.get_current_temperature()
-                await Scheduler.yield_control()  # Yield after blocking network call
-
-                high = self._weather.get_daily_high()
-                await Scheduler.yield_control()  # Yield after blocking network call
-
-                precip = self._weather.get_daily_precip_chance()
-                await Scheduler.yield_control()  # Yield after blocking network call
+                temp = await self._weather.get_current_temperature()
+                high = await self._weather.get_daily_high()
+                precip = await self._weather.get_daily_precip_chance()
             except Exception as fetch_error:
                 raise TaskNonFatalError(f"Weather API error: {fetch_error}") from fetch_error
 
@@ -238,12 +232,11 @@ class WeatherManager(ManagerBase):
         """
         return self._daily_precip_chance
 
-    def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
+    async def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
         """
         Get precipitation chance for a future time window.
 
-        Note: This makes a synchronous API call and should be used sparingly.
-        Consider caching or scheduling if used frequently.
+        Note: This makes a blocking API call but yields control to the scheduler.
 
         Args:
             start_offset: Hours from now to start window
@@ -257,7 +250,7 @@ class WeatherManager(ManagerBase):
             return None
 
         try:
-            return self._weather.get_precip_chance_in_window(start_offset, duration)
+            return await self._weather.get_precip_chance_in_window(start_offset, duration)
         except Exception as e:
             self.logger.error(f"Error fetching precip window: {e}")
             return None

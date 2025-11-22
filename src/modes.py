@@ -252,12 +252,11 @@ class WeatherMode(Mode):
             return
 
         try:
-            # Yield after each blocking network call to keep LED/button responsive
-            temp = self.weather.get_current_temperature()
-            await Scheduler.instance().yield_control()
+            # Network calls are blocking but yield control internally after each request
+            # See docs/STYLE_GUIDE.md (CircuitPython Compatibility) for details
+            temp = await self.weather.get_current_temperature()
 
-            precip = self.weather.get_precip_chance_in_window(0, 4)
-            await Scheduler.instance().yield_control()
+            precip = await self.weather.get_precip_chance_in_window(0, 4)
 
             if temp is not None:
                 self.current_temp = temp
