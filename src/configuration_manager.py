@@ -137,7 +137,13 @@ class ConfigurationManager(ManagerBase):
             # Use existing cleanup method if portal is active
             if hasattr(self, "_cleanup_setup_portal"):
                 with suppress(Exception):
-                    self._cleanup_setup_portal()
+                    # Schedule cleanup as async task since shutdown() is synchronous
+                    scheduler = Scheduler.instance()
+                    scheduler.schedule_now(
+                        coroutine=self._cleanup_setup_portal,
+                        priority=10,
+                        name="Cleanup Setup Portal",
+                    )
 
             # Clear references
             self.connection_manager = None
@@ -271,7 +277,7 @@ class ConfigurationManager(ManagerBase):
         self.start_setup_indicator()
 
         # Start access point and web server
-        self.start_access_point()
+        await self.start_access_point()
 
         # Run the web server (blocks until setup complete or cancelled)
         result = await self.run_web_server()
@@ -285,7 +291,7 @@ class ConfigurationManager(ManagerBase):
             self.logger.info("Configuration cancelled - returning to caller")
             # Clean up and return False - caller decides next action
             # ConnectionManager will automatically restore connection if needed
-            self._cleanup_setup_portal()
+            await self._cleanup_setup_portal()
             self._active_button_session = None
             return False
 
@@ -387,12 +393,12 @@ class ConfigurationManager(ManagerBase):
             raise RuntimeError("ConnectionManager not initialized")
         return self.connection_manager.get_socket_pool()
 
-    def start_access_point(self) -> str:
+    async def start_access_point(self) -> str:
         """Start the access point for setup mode using the connection manager."""
         # Start AP through ConnectionManager (handles all radio state transitions)
         if not self.connection_manager:
             raise RuntimeError("ConnectionManager not initialized")
-        ap_ip = self.connection_manager.start_access_point(self.ap_ssid, self.ap_password)
+        ap_ip = await self.connection_manager.start_access_point(self.ap_ssid, self.ap_password)
 
         # Start DNS interceptor for captive portal functionality
         dns_success = self._start_dns_interceptor(ap_ip)
@@ -811,7 +817,12 @@ class ConfigurationManager(ManagerBase):
                 except Exception as led_e:
                     self.logger.warning(f"Error scheduling blink_error: {led_e}")
                 try:
-                    self.start_access_point()
+                    scheduler = Scheduler.instance()
+                    scheduler.schedule_now(
+                        coroutine=self.start_access_point,
+                        priority=5,
+                        name="Restart AP After Error",
+                    )
                 except Exception as ap_e:
                     self.logger.error(f"Could not restart AP after fatal error: {ap_e}")
                 # Do not send a response here, as the connection is likely dead.
@@ -972,7 +983,7 @@ class ConfigurationManager(ManagerBase):
                     if idle_time >= setup_idle_timeout:
                         self.logger.info(f"Setup idle timeout exceeded ({idle_time:.0f}s). Restarting to retry...")
                         # Comprehensive cleanup before restarting
-                        self._cleanup_setup_portal()
+                        await self._cleanup_setup_portal()
                         supervisor.reload()
 
                 # Execute async validation if triggered
@@ -1010,7 +1021,7 @@ class ConfigurationManager(ManagerBase):
                         # Stop access point (already connected to WiFi in station mode from validation)
                         try:
                             if self.connection_manager:
-                                self.connection_manager.stop_access_point()
+                                await self.connection_manager.stop_access_point()
                                 self.logger.info("Access point stopped")
                         except Exception as e:
                             self.logger.warning(f"Error stopping access point: {e}")
@@ -1029,7 +1040,7 @@ class ConfigurationManager(ManagerBase):
                             self.logger.debug("WiFi connection preserved after AP stop")
 
                         # Final cleanup (state, LED, etc.)
-                        self._cleanup_setup_portal()
+                        await self._cleanup_setup_portal()
 
                         self.logger.info("Setup complete - continuing in normal mode")
                         self.setup_complete = True
@@ -1042,7 +1053,7 @@ class ConfigurationManager(ManagerBase):
                 # Check for button interrupt via session
                 if self._active_button_session and self._active_button_session.safe_mode_ready():
                     self.logger.info("Safe Mode requested (setup portal)")
-                    self._cleanup_setup_portal()
+                    await self._cleanup_setup_portal()
                     # Session handoff requeues SAFE action for ModeManager
                     return False
 
@@ -1052,7 +1063,7 @@ class ConfigurationManager(ManagerBase):
                 if exit_reason:
                     self.logger.debug(f"Setup exit requested via {exit_reason}")
 
-                    cleanup_successful = self._cleanup_setup_portal()
+                    cleanup_successful = await self._cleanup_setup_portal()
 
                     if not cleanup_successful:
                         self.logger.warning("Cleanup completed with issues")
@@ -1069,7 +1080,7 @@ class ConfigurationManager(ManagerBase):
                 await Scheduler.sleep(1)
 
         # Comprehensive cleanup
-        self._cleanup_setup_portal()
+        await self._cleanup_setup_portal()
         server.stop()
         self._active_button_session = None
         return self.setup_complete
@@ -1252,7 +1263,7 @@ class ConfigurationManager(ManagerBase):
 
                 try:
                     if self.connection_manager:
-                        self.connection_manager.stop_access_point()
+                        await self.connection_manager.stop_access_point()
                 except Exception as e:
                     self.logger.warning(f"Error stopping AP: {e}")
 
@@ -1286,7 +1297,7 @@ class ConfigurationManager(ManagerBase):
             self.logger.debug(f"HTTP server stop after failure raised: {e}")
 
         try:
-            self._cleanup_setup_portal()
+            await self._cleanup_setup_portal()
         except Exception as cleanup_error:
             self.logger.warning(f"Cleanup after update failure reported: {cleanup_error}")
 
@@ -1406,7 +1417,7 @@ class ConfigurationManager(ManagerBase):
             self.logger.error(f"Error restarting HTTP server: {e}")
             raise
 
-    def _cleanup_setup_portal(self) -> bool:
+    async def _cleanup_setup_portal(self) -> bool:
         """
         Cleanup of setup portal resources and state.
 
@@ -1432,7 +1443,7 @@ class ConfigurationManager(ManagerBase):
             # ConnectionManager will reconnect if we were connected before entering AP mode
             try:
                 if self.connection_manager:
-                    self.connection_manager.stop_access_point(restore_connection=True)
+                    await self.connection_manager.stop_access_point(restore_connection=True)
             except Exception as ap_e:
                 self.logger.warning(f"Error stopping access point: {ap_e}")
                 cleanup_successful = False
@@ -1451,5 +1462,5 @@ class ConfigurationManager(ManagerBase):
             return cleanup_successful
 
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
+            self.logger.error(f"Error during portal cleanup: {e}")
             return False

@@ -142,7 +142,7 @@ class ConnectionManager(ManagerBase):
 
         return radio_compat
 
-    def reset_radio_to_station_mode(self) -> None:
+    async def reset_radio_to_station_mode(self) -> None:
         """
         Reset WiFi radio to station mode, clearing any AP mode state.
         This ensures the radio is ready for client connections.
@@ -152,9 +152,9 @@ class ConnectionManager(ManagerBase):
         try:
             self.logger.debug("Resetting WiFi radio to station mode")
             self._radio.enabled = False
-            time.sleep(0.3)
+            await Scheduler.sleep(0.3)
             self._radio.enabled = True
-            time.sleep(0.3)
+            await Scheduler.sleep(0.3)
             self.logger.debug("WiFi radio reset complete")
         except Exception as e:
             self.logger.warning(f"Error resetting radio: {e}")
@@ -681,7 +681,7 @@ class ConnectionManager(ManagerBase):
         self.logger.info("Reconnecting to WiFi after setup mode exit")
 
         # Reset radio to station mode (clears any AP mode state)
-        self.reset_radio_to_station_mode()
+        await self.reset_radio_to_station_mode()
 
         # Reset connection state
         self._connected = False
@@ -719,7 +719,7 @@ class ConnectionManager(ManagerBase):
         mac_binary = self._radio.mac_address
         return mac_binary.hex(":")
 
-    def start_access_point(self, ssid: str, password: str | None = None) -> str:
+    async def start_access_point(self, ssid: str, password: str | None = None) -> str:
         """
         Start WiFi access point for setup mode.
         Handles all necessary radio state transitions and configuration.
@@ -747,16 +747,16 @@ class ConnectionManager(ManagerBase):
             if self._radio.connected:
                 self.logger.debug("Disconnecting from current network")
                 self._radio.stop_station()
-                time.sleep(0.3)
+                await Scheduler.sleep(0.3)
         except Exception as e:
             self.logger.warning(f"Warning during disconnect: {e}")
 
         # Initialize/reset WiFi radio to ensure it's in a known good state
         try:
             self._radio.enabled = False
-            time.sleep(0.2)
+            await Scheduler.sleep(0.2)
             self._radio.enabled = True
-            time.sleep(0.2)
+            await Scheduler.sleep(0.2)
             self.logger.debug("WiFi radio initialized")
         except Exception as e:
             self.logger.warning(f"WiFi radio initialization warning: {e}")
@@ -802,7 +802,7 @@ class ConnectionManager(ManagerBase):
             ap_ip = self._radio.ipv4_address_ap
             if ap_ip:
                 break
-            time.sleep(0.1)
+            await Scheduler.sleep(0.1)
 
         if not ap_ip:
             ap_ip = "192.168.4.1"
@@ -810,7 +810,7 @@ class ConnectionManager(ManagerBase):
         self.logger.debug(f"AP IP address: {ap_ip}")
         return str(ap_ip)
 
-    def stop_access_point(self, restore_connection: bool = True) -> None:
+    async def stop_access_point(self, restore_connection: bool = True) -> None:
         """
         Stop access point and optionally restore previous WiFi connection.
 
@@ -837,7 +837,7 @@ class ConnectionManager(ManagerBase):
             try:
                 self._radio.stop_ap()
                 # Verify connection preserved
-                time.sleep(0.2)  # Brief pause for radio state to stabilize
+                await Scheduler.sleep(0.2)  # Brief pause for radio state to stabilize
                 still_connected = self._radio.connected
                 self.logger.info(
                     f"AP stopped - connection {'preserved' if still_connected else 'LOST'} (radio.connected={still_connected})"
@@ -867,7 +867,7 @@ class ConnectionManager(ManagerBase):
             else:
                 # Not restoring - reset radio to station mode
                 self.logger.debug("Not connected - resetting radio to station mode")
-                self.reset_radio_to_station_mode()
+                await self.reset_radio_to_station_mode()
 
         self._ap_active = False
         self._pre_ap_connected = False  # Reset saved state

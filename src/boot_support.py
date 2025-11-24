@@ -694,6 +694,7 @@ def main() -> None:
     if recovery_performed:
         # Recovery was needed - reboot to ensure clean state
         log_boot_message("\n→ Rebooting after recovery...")
+        # NOTE: time.sleep() is acceptable here - this runs in boot.py before the scheduler is initialized
         time.sleep(2)
         os.sync()
         microcontroller.reset()
