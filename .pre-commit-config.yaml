@@ -22,3 +22,12 @@ repos:
       - id: mypy
         files: ^(src|tests)/
         additional_dependencies: ["types-requests"]
+
+  - repo: local
+    hooks:
+      - id: pylint-errors-only
+        name: pylint (errors only)
+        entry: pylint
+        language: system
+        types: [python]
+        args: [--errors-only, src, tests]

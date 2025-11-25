@@ -42,3 +42,23 @@ warn_unused_ignores = false
 # CircuitPython libraries often lack type stubs.
 # This is the most important setting for a CP project.
 ignore_missing_imports = true
+
+[tool.pylint]
+# Pylint runs in a CPython environment where CircuitPython-only modules
+# (e.g., `wifi`, `board`, `neopixel`) are not importable. Treat these as
+# known external dependencies rather than real import errors.
+ignored-modules = [
+    "adafruit_hashlib",
+    "adafruit_httpserver",
+    "adafruit_requests",
+    "board",
+    "digitalio",
+    "microcontroller",
+    "neopixel",
+    "socketpool",
+    "ssl",
+    "storage",
+    "supervisor",
+    "usb_cdc",
+    "wifi",
+]

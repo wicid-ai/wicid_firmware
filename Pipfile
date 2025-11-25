@@ -9,6 +9,7 @@ rjsmin = "*"
 htmlmin2 = "*"
 beautifulsoup4 = "*"
 circup = "*"
+pylint = "*"
 
 [dev-packages]
 ruff = "*"
