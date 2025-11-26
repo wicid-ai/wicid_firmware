@@ -515,6 +515,17 @@ class UpdateManager(ManagerBase):
             self._session = self.connection_manager.create_session()
         return self._session
 
+    def reset_session(self) -> None:
+        """
+        Reset (clear) the cached HTTP session.
+
+        This is critical for resource cleanup when switching between WiFi modes
+        (e.g., AP to station mode) as the underlying SocketPool becomes invalid.
+        Safe to call multiple times (idempotent).
+        """
+        self._session = None
+        self.logger.debug("HTTP session reset")
+
     def _update_download_led(self, force: bool = False) -> None:
         """
         Update LED during download operations (flashes blue/green).

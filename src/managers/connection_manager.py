@@ -872,6 +872,10 @@ class ConnectionManager(ManagerBase):
             else:
                 # Not restoring - reset radio to station mode
                 self.logger.debug("Not connected - resetting radio to station mode")
+                try:
+                    self._radio.stop_ap()
+                except Exception as e:
+                    self.logger.warning(f"Error stopping AP during reset: {e}")
                 await self.reset_radio_to_station_mode()
 
         self._ap_active = False

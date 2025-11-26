@@ -13,6 +13,7 @@ from controllers.pixel_controller import PixelController
 from core.app_typing import Any, Callable, Optional
 from core.logging_helper import logger
 from core.scheduler import Scheduler
+from managers.configuration.states import PendingCredentials, PortalState, UpdateState, ValidationState
 from managers.connection_manager import ConnectionManager
 from managers.manager_base import ManagerBase
 from services.dns_interceptor_service import DNSInterceptorService as DNSInterceptor
@@ -73,39 +74,26 @@ class ConfigurationManager(ManagerBase):
 
     def _init(self) -> None:
         """Internal initialization method."""
+        # Access point configuration
         self.ap_ssid = "WICID-Setup"
         self.ap_password: Optional[str] = None  # Open network
-        self.setup_complete = False
+
+        # Core managers and controllers
         self.pixel = PixelController()  # Get singleton instance
         self.connection_manager = ConnectionManager.instance()  # Get ConnectionManager singleton
-        self.last_connection_error: Optional[str | dict[str, Any]] = None
-        self.pending_ready_at: Optional[float] = None  # monotonic timestamp for scheduled activation
         self.dns_interceptor = None  # DNS interceptor for captive portal
-        self.last_request_time: Optional[float] = None  # timestamp of last HTTP request for idle timeout tracking
-        self.user_connected = False  # flag indicating user has connected to portal
-        self.pending_ssid: Optional[str] = None  # SSID to test before activation
-        self.pending_password: Optional[str] = None  # Password to test before activation
-
-        # Async validation state tracking
-        self.validation_state = "idle"  # idle | validating_wifi | checking_updates | success | error
-        self.validation_result: Optional[dict[str, Any]] = None  # dict with validation results
-        self.validation_started_at: Optional[float] = None  # timestamp when validation started
-        self.validation_trigger = False  # flag to trigger validation in main loop
-        self.activation_mode: Optional[str] = None  # "continue" (no update) | "update" (download update)
-
-        # Update progress tracking
-        self.update_state = "idle"  # idle | downloading | verifying | unpacking | restarting | error
-        self.update_trigger = False  # flag to trigger update in main loop
-        self.update_progress_message: Optional[str] = None  # detailed progress message for UI
-        self.update_progress_pct: Optional[float] = None  # progress percentage (0-100)
         self._update_manager = None  # Lazy-initialized UpdateManager
         self._http_server = None  # Store server reference for update polling
-        self._last_progress_notify_state: Optional[str] = None
-        self._last_progress_notify_message: Optional[str] = None
-        self._last_progress_notify_pct: Optional[float] = None
-        self._last_progress_pct_value: Optional[float] = None
-        self._last_update_service_time = 0.0
         self._active_button_session = None  # Tracks session controller while portal active
+
+        # State management using dataclasses
+        self.portal = PortalState()
+        self.validation = ValidationState()
+        self.update = UpdateState()
+        self.credentials = PendingCredentials()
+
+        # Update service interval tracking
+        self._last_update_service_time = 0.0
 
         self.logger = logger("wicid.config")
         self._initialized = False  # Track if initialize() has been called (different from ManagerBase._initialized)
@@ -266,11 +254,11 @@ class ConfigurationManager(ManagerBase):
         self.logger.info("Entering configuration mode")
 
         # Reset setup completion flag for new session
-        self.setup_complete = False
+        self.portal.setup_complete = False
 
         # Set error message if provided
         if error:
-            self.last_connection_error = error
+            self.portal.last_connection_error = error
 
         # Reset button state tracking for this portal session
         if self._active_button_session and hasattr(self._active_button_session, "reset"):
@@ -378,6 +366,17 @@ class ConfigurationManager(ManagerBase):
                 self.logger.warning(f"Error stopping DNS interceptor: {e}")
             finally:
                 self.dns_interceptor = None
+
+    def _stop_http_server(self) -> None:
+        """Stop the HTTP server and clean up resources"""
+        if self._http_server:
+            try:
+                self._http_server.stop()
+                self.logger.debug("HTTP server stopped")
+            except Exception as e:
+                self.logger.warning(f"Error stopping HTTP server: {e}")
+            finally:
+                self._http_server = None
 
     def _check_dns_interceptor_health(self) -> bool:
         """Check DNS interceptor health"""
@@ -551,8 +550,7 @@ class ConfigurationManager(ManagerBase):
             os.sync()
 
             # Store credentials for later testing before activation
-            self.pending_ssid = ssid
-            self.pending_password = password
+            self.credentials.set(ssid, password)
 
             self.logger.info("Credentials saved")
             return True, None
@@ -570,12 +568,9 @@ class ConfigurationManager(ManagerBase):
 
     async def run_web_server(self) -> bool:
         """Run a simple web server to handle the setup interface"""
-        from adafruit_httpserver import (  # type: ignore[import-not-found, attr-defined]  # CircuitPython-only module
-            FileResponse,
-            Request,
-            Response,
-            Server,
-        )
+        from adafruit_httpserver import Server  # type: ignore[import-not-found, attr-defined]
+
+        from managers.configuration.portal_routes import PortalRoutes
 
         if not self.connection_manager:
             raise RuntimeError("ConnectionManager not initialized")
@@ -586,377 +581,12 @@ class ConfigurationManager(ManagerBase):
         self._http_server = server
 
         # Initialize idle timeout tracking
-        self.last_request_time = time.monotonic()
+        self.portal.last_request_time = time.monotonic()
         setup_idle_timeout = int(os.getenv("SETUP_IDLE_TIMEOUT", "300"))
 
-        # Helper to mark user as connected and clear retry state
-        def _mark_user_connected() -> None:
-            if not self.user_connected:
-                self.user_connected = True
-                if self.connection_manager:
-                    self.connection_manager.clear_retry_count()
-                self.logger.debug("User connected to portal")
-            self.last_request_time = time.monotonic()
-
-        # Serve the main page, pre-populating with settings and showing previous errors
-        @server.route("/")
-        def base(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                # Load current settings
-                current_settings = {"ssid": "", "password": "", "zip_code": ""}
-                with suppress(Exception):
-                    with open("/secrets.json") as f:
-                        secrets = json.load(f)
-
-                    current_settings["ssid"] = secrets.get("ssid", "")
-                    current_settings["password"] = secrets.get("password", "")
-                    current_settings["zip_code"] = secrets.get("weather_zip", "")
-
-                # Package data for the frontend
-                try:
-                    page_data = {"settings": current_settings, "error": self.last_connection_error}
-                    self.last_connection_error = None
-
-                    # Inject the data into the HTML
-                    with open("/www/index.html") as f:
-                        html = f.read()
-
-                    data_script = f"<script>window.WICID_PAGE_DATA = {json.dumps(page_data)};</script>"
-                    html = html.replace("</head>", f"{data_script}</head>")
-
-                    return Response(request, html, content_type="text/html")
-
-                except Exception:
-                    return FileResponse(request, "index.html", "/www")
-
-            except Exception as e:
-                self.logger.warning(f"Error serving index page: {e}")
-                return FileResponse(request, "index.html", "/www")
-
-        # System information endpoint
-        @server.route("/system-info", "GET")
-        def system_info(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                from utils.utils import get_machine_type, get_os_version_string_pretty_print
-
-                # Get basic system info
-                machine_type = get_machine_type()
-                os_version_string = get_os_version_string_pretty_print()
-                wicid_version = os.getenv("VERSION", "unknown")
-
-                # Load manifest for detailed machine type
-                with suppress(Exception):
-                    with open("/manifest.json") as f:
-                        manifest = json.load(f)
-                    machine_types = manifest.get("target_machine_types", [])
-                    if machine_types:
-                        machine_type = machine_types[0]
-
-                return self._json_ok(
-                    request,
-                    {"machine_type": machine_type, "os_version": os_version_string, "wicid_version": wicid_version},
-                )
-
-            except Exception as e:
-                self.logger.error(f"Error getting system info: {e}")
-                return self._json_error(
-                    request, "Could not retrieve system information.", code=500, text="Internal Server Error"
-                )
-
-        # WiFi network scanning endpoint
-        @server.route("/scan", "GET")
-        def scan_networks(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                self.logger.debug("Scanning for WiFi networks")
-                networks: list[dict[str, Any]] = []
-
-                if not self.connection_manager:
-                    return self._json_error(request, "ConnectionManager not initialized")
-
-                # Scan for available networks using the connection manager
-                for network in self.connection_manager.scan_networks():
-                    # Only add networks with SSIDs (skip hidden networks)
-                    if network.ssid:
-                        network_info = {
-                            "ssid": network.ssid,
-                            "rssi": network.rssi,
-                            "channel": network.channel,
-                            "authmode": str(network.authmode),
-                        }
-                        # Avoid duplicates (same SSID can appear on multiple channels)
-                        if not any(n["ssid"] == network.ssid for n in networks):
-                            networks.append(network_info)
-
-                # Sort by signal strength (RSSI, higher is better)
-                networks.sort(key=lambda x: x["rssi"], reverse=True)
-
-                self.logger.debug(f"Found {len(networks)} networks")
-                return self._json_ok(request, {"networks": networks})
-
-            except Exception as e:
-                self.logger.error(f"Error scanning networks: {e}")
-                return self._json_error(
-                    request, "Could not scan for networks. Please try again.", code=500, text="Internal Server Error"
-                )
-
-        # Android connectivity check endpoints
-        @server.route("/generate_204", "GET")
-        def android_generate_204(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        @server.route("/gen_204", "GET")
-        def android_gen_204(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        @server.route("/connectivitycheck/gstatic/generate_204", "GET")
-        def android_gstatic_204(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        # iOS connectivity check endpoints
-        @server.route("/hotspot-detect.html", "GET")
-        def ios_hotspot_detect(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        @server.route("/library/test/success.html", "GET")
-        def ios_library_success(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        # Windows/Linux connectivity check endpoints
-        @server.route("/ncsi.txt", "GET")
-        def windows_ncsi(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        @server.route("/connecttest.txt", "GET")
-        def windows_connecttest(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        # Generic captive portal detection route
-        @server.route("/redirect", "GET")
-        def generic_captive_redirect(request: Request) -> Response:
-            _mark_user_connected()
-            return self._create_captive_redirect_response(request)
-
-        # Handle form submission with two-stage validation
-        @server.route("/configure", "POST")
-        def configure(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                self.logger.debug("Starting configure function")
-                data = request.json()
-                self.logger.debug(f"JSON parsed successfully, type: {type(data)}")
-
-                # Validate that JSON parsing returned a dictionary
-                if not isinstance(data, dict):
-                    self.logger.error(f"JSON parsing failed, got: {type(data)} = {data}")
-                    return self._json_error(request, self.ERR_INVALID_REQUEST)
-
-                self.logger.debug("Extracting form data")
-                ssid = data.get("ssid", "").strip()
-                password = data.get("password", "")
-                zip_code = data.get("zip_code", "")
-                self.logger.debug(f"Extracted - SSID: '{ssid}', password length: {len(password)}")
-
-                # --- Stage 1: Pre-flight Checks (AP remains active) ---
-                self.logger.debug("Stage 1: Performing pre-flight checks...")
-
-                self.logger.debug(
-                    f"About to check password length. Password type: {type(password)}, value: {repr(password)}"
-                )
-                resp = self._validate_config_input(request, ssid, password, zip_code)
-                if resp:
-                    return resp
-                self.logger.debug("Input validation passed")
-
-                # Check if SSID is a real, scanned network
-                try:
-                    available_ssids = self._scan_ssids()
-                except Exception as scan_e:
-                    self.logger.warning(f"SSID validation scan failed: {scan_e}")
-                    return self._json_error(
-                        request, self.ERR_SCAN_FAIL, field="ssid", code=500, text="Internal Server Error"
-                    )
-
-                if ssid not in available_ssids:
-                    return self._json_error(request, self._net_not_found_message(ssid), field="ssid")
-
-                # Pre-checks passed - save credentials and trigger async validation
-                self.logger.debug("✓ Pre-flight checks passed. Saving credentials...")
-                save_ok, save_err = self.save_credentials(ssid, password, zip_code)
-                if not save_ok:
-                    self.logger.error(f"✗ Failed to save credentials: {save_err}")
-                    return self._json_error(
-                        request, f"Could not save settings: {save_err}", code=500, text="Internal Server Error"
-                    )
-
-                self.logger.debug("✓ Credentials saved. Triggering async validation...")
-                # Initialize validation state and trigger validation in main loop
-                self.validation_state = "validating_wifi"
-                self.validation_result = None
-                self.validation_started_at = time.monotonic()
-                self.validation_trigger = True
-
-                return self._json_ok(request, {"status": "validation_started", "status_url": "/validation-status"})
-
-            except Exception as e:
-                self.logger.error(f"Fatal error in /configure: {e}")
-                self.last_connection_error = {"message": "An unexpected server error occurred.", "field": None}
-                try:
-                    scheduler = Scheduler.instance()
-                    scheduler.schedule_now(
-                        coroutine=self.pixel.blink_error,
-                        priority=5,
-                        name="Portal Blink Error",
-                    )
-                except Exception as led_e:
-                    self.logger.warning(f"Error scheduling blink_error: {led_e}")
-                try:
-                    scheduler = Scheduler.instance()
-                    scheduler.schedule_now(
-                        coroutine=self.start_access_point,
-                        priority=5,
-                        name="Restart AP After Error",
-                    )
-                except Exception as ap_e:
-                    self.logger.error(f"Could not restart AP after fatal error: {ap_e}")
-                # Do not send a response here, as the connection is likely dead.
-                # The client will time out, which is expected in a fatal server error.
-                return None
-
-        # Get validation status (polled by client during async validation)
-        @server.route("/validation-status", "GET")
-        def validation_status(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                # Check for validation timeout (2 minutes)
-                if self.validation_started_at is not None:
-                    elapsed = time.monotonic() - self.validation_started_at
-                    if elapsed > 120:
-                        self.validation_state = "error"
-                        self.validation_result = {
-                            "error": {"message": "Validation timed out. Please try again.", "field": None}
-                        }
-                        self.validation_trigger = False
-
-                # Build response based on current state
-                response_data: dict[str, Any] = {"state": self.validation_state}
-
-                if self.validation_state == "validating_wifi":
-                    response_data["message"] = "Testing WiFi credentials..."
-                elif self.validation_state == "checking_updates":
-                    response_data["message"] = "Checking for updates..."
-                elif self.validation_state == "success":
-                    if self.validation_result:
-                        response_data["message"] = "Validation complete"
-                        response_data["update_available"] = self.validation_result.get("update_available", False)
-                        if self.validation_result.get("update_available"):
-                            response_data["update_info"] = self.validation_result.get("update_info", {})
-                elif self.validation_state == "error":
-                    if self.validation_result and "error" in self.validation_result:
-                        response_data["error"] = self.validation_result["error"]
-                    else:
-                        response_data["error"] = {"message": "Validation failed", "field": None}
-
-                return self._json_ok(request, response_data)
-
-            except Exception as e:
-                self.logger.error(f"Error in /validation-status: {e}")
-                return self._json_error(
-                    request, "Could not get validation status", code=500, text="Internal Server Error"
-                )
-
-        # Handle activation request (no update case)
-        @server.route("/activate", "POST")
-        def activate(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                self.logger.info("Activation requested (no update)")
-                # Validation must be in success state
-                if self.validation_state != "success":
-                    return self._json_error(
-                        request, "Cannot activate - validation not complete", code=400, text="Bad Request"
-                    )
-
-                # Set activation mode and schedule activation
-                self.activation_mode = "continue"
-                self.pending_ready_at = time.monotonic() + 4.0
-                return self._json_ok(request, {"status": "activating"})
-
-            except Exception as e:
-                self.logger.error(f"Error in /activate: {e}")
-                return self._json_error(request, "Activation failed", code=500, text="Internal Server Error")
-
-        # Handle update installation request
-        @server.route("/update-now", "POST")
-        def update_now(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                self.logger.info("Update installation requested by user")
-                # Validation must be in success state with update available
-                if self.validation_state != "success":
-                    return self._json_error(
-                        request, "Cannot install update - validation not complete", code=400, text="Bad Request"
-                    )
-
-                if not self.validation_result or not self.validation_result.get("update_available"):
-                    return self._json_error(
-                        request, "Cannot install update - no update available", code=400, text="Bad Request"
-                    )
-
-                # Trigger async update process
-                self.update_state = "downloading"
-                self.update_trigger = True
-                self.activation_mode = "update"
-
-                return self._json_ok(request, {"status": "update_started", "status_url": "/update-status"})
-            except Exception as e:
-                self.logger.error(f"Error in /update-now: {e}")
-                return self._json_error(request, "Update installation failed", code=500, text="Internal Server Error")
-
-        # Get update progress status (polled by client during update)
-        @server.route("/update-status", "GET")
-        def update_status(request: Request) -> Response:
-            _mark_user_connected()
-            try:
-                response_data: dict[str, Any] = {"state": self.update_state}
-
-                # Use detailed progress message from UpdateManager if available
-                if self.update_progress_message:
-                    response_data["message"] = self.update_progress_message
-                else:
-                    # Fallback to simple state-based messages
-                    if self.update_state == "downloading":
-                        response_data["message"] = "Downloading update..."
-                    elif self.update_state == "verifying":
-                        response_data["message"] = "Verifying download..."
-                    elif self.update_state == "unpacking":
-                        response_data["message"] = "Unpacking update..."
-                    elif self.update_state == "restarting":
-                        response_data["message"] = "Restarting device..."
-                    elif self.update_state == "error":
-                        response_data["message"] = "Update failed"
-                        response_data["error"] = True
-
-                # Include progress percentage if available
-                if self.update_progress_pct is not None:
-                    response_data["progress"] = self.update_progress_pct
-
-                return self._json_ok(request, response_data)
-
-            except Exception as e:
-                self.logger.error(f"Error in /update-status: {e}")
-                return self._json_error(
-                    request, "Could not connect to network.", field="password", code=500, text="Internal Server Error"
-                )
+        # Register all HTTP route handlers
+        routes = PortalRoutes(self)
+        routes.register_routes(server)
 
         # Start the server
         if not self.connection_manager:
@@ -974,68 +604,42 @@ class ConfigurationManager(ManagerBase):
         self.logger.info("Visit: http://192.168.4.1/ while connected to WICID-Setup")
 
         # Main server loop - listen for button press to exit
-        while not self.setup_complete:
+        while not self.portal.setup_complete:
             try:
                 # Service HTTP server and DNS interceptor
                 # Note: Pixel controller animation now handled by scheduler
                 self.tick()
 
                 # Check for idle timeout (no user interaction)
-                if self.last_request_time is not None:
-                    idle_time = time.monotonic() - self.last_request_time
+                if self.portal.last_request_time is not None:
+                    idle_time = time.monotonic() - self.portal.last_request_time
                     if idle_time >= setup_idle_timeout:
                         self.logger.info(f"Setup idle timeout exceeded ({idle_time:.0f}s). Restarting to retry...")
-
-                        # Stop HTTP server first to release sockets
-                        try:
-                            server.stop()
-                            self.logger.debug("HTTP server stopped (idle timeout)")
-                        except Exception as e:
-                            self.logger.warning(f"Error stopping HTTP server: {e}")
 
                         # Comprehensive cleanup before restarting
                         await self._cleanup_setup_portal()
                         supervisor.reload()
 
                 # Execute async validation if triggered
-                if self.validation_trigger and self.validation_state in ["validating_wifi", "checking_updates"]:
+                if self.validation.trigger and self.validation.state in ["validating_wifi", "checking_updates"]:
                     await self._execute_async_validation()
 
                 # Execute async update if triggered
-                if self.update_trigger and self.update_state in ["downloading", "verifying", "unpacking"]:
+                if self.update.trigger and self.update.state in ["downloading", "verifying", "unpacking"]:
                     await self._execute_async_update(server, server_ip)
 
                 # If activation scheduled (after validation or user action), execute activation
                 # Note: Update mode is handled by _execute_async_update, not here
-                if self.pending_ready_at is not None and time.monotonic() >= self.pending_ready_at:
-                    if self.activation_mode == "continue":
+                if self.portal.pending_ready_at is not None and time.monotonic() >= self.portal.pending_ready_at:
+                    if self.validation.activation_mode == "continue":
                         # Continue mode: credentials validated, no update available
                         self.logger.info("Executing activation (continue mode)")
-
-                        # Stop HTTP server first to stop accepting new requests
-                        try:
-                            server.stop()
-                            self.logger.debug("HTTP server stopped")
-                        except Exception as e:
-                            self.logger.warning(f"Error stopping HTTP server: {e}")
-
-                        # Stop DNS interceptor
-                        self._stop_dns_interceptor()
-                        self.logger.debug("DNS interceptor stopped")
 
                         # Flash green to indicate success
                         try:
                             await self.pixel.blink_success()
                         except Exception as led_e:
                             self.logger.warning(f"Error flashing LED: {led_e}")
-
-                        # Stop access point (already connected to WiFi in station mode from validation)
-                        try:
-                            if self.connection_manager:
-                                await self.connection_manager.stop_access_point()
-                                self.logger.info("Access point stopped")
-                        except Exception as e:
-                            self.logger.warning(f"Error stopping access point: {e}")
 
                         # Verify WiFi connection preserved, reconnect if needed
                         if self.connection_manager and not self.connection_manager.is_connected():
@@ -1050,27 +654,20 @@ class ConfigurationManager(ManagerBase):
                         else:
                             self.logger.debug("WiFi connection preserved after AP stop")
 
-                        # Final cleanup (state, LED, etc.)
+                        # Comprehensive cleanup
                         await self._cleanup_setup_portal()
 
                         self.logger.info("Setup complete - continuing in normal mode")
-                        self.setup_complete = True
+                        self.portal.setup_complete = True
                         return True
                     else:
                         # Unknown or update mode (update is handled by _execute_async_update)
-                        self.logger.debug(f"Ignoring pending_ready_at for mode: {self.activation_mode}")
-                        self.pending_ready_at = None
+                        self.logger.debug(f"Ignoring pending_ready_at for mode: {self.validation.activation_mode}")
+                        self.portal.pending_ready_at = None
 
                 # Check for button interrupt via session
                 if self._active_button_session and self._active_button_session.safe_mode_ready():
                     self.logger.info("Safe Mode requested (setup portal)")
-
-                    # Stop HTTP server first to release sockets
-                    try:
-                        server.stop()
-                        self.logger.debug("HTTP server stopped (safe mode)")
-                    except Exception as e:
-                        self.logger.warning(f"Error stopping HTTP server: {e}")
 
                     await self._cleanup_setup_portal()
                     # Session handoff requeues SAFE action for ModeManager
@@ -1081,13 +678,6 @@ class ConfigurationManager(ManagerBase):
                 )
                 if exit_reason:
                     self.logger.debug(f"Setup exit requested via {exit_reason}")
-
-                    # Stop HTTP server first to release sockets
-                    try:
-                        server.stop()
-                        self.logger.debug("HTTP server stopped (exit via button)")
-                    except Exception as e:
-                        self.logger.warning(f"Error stopping HTTP server: {e}")
 
                     cleanup_successful = await self._cleanup_setup_portal()
 
@@ -1107,9 +697,8 @@ class ConfigurationManager(ManagerBase):
 
         # Comprehensive cleanup
         await self._cleanup_setup_portal()
-        server.stop()
         self._active_button_session = None
-        return self.setup_complete
+        return self.portal.setup_complete
 
     def tick(self) -> None:
         """
@@ -1148,21 +737,21 @@ class ConfigurationManager(ManagerBase):
         if state == "complete":
             state = "restarting"
 
-        state_changed = state != self._last_progress_notify_state
-        message_changed = message != self._last_progress_notify_message
+        state_changed = state != self.update._last_notify_state
+        message_changed = message != self.update._last_notify_message
         progress_changed = self._progress_delta_trigger(progress_pct)
 
-        self.update_state = state
-        self.update_progress_message = message
-        self.update_progress_pct = progress_pct
+        self.update.state = state
+        self.update.progress_message = message
+        self.update.progress_pct = progress_pct
 
         if not (state_changed or message_changed or progress_changed):
             return
 
-        self._last_progress_notify_state = state
-        self._last_progress_notify_message = message
-        self._last_progress_notify_pct = progress_pct
-        self._last_progress_pct_value = self._normalize_progress(progress_pct)
+        self.update._last_notify_state = state
+        self.update._last_notify_message = message
+        self.update._last_notify_pct = progress_pct
+        self.update._last_pct_value = self._normalize_progress(progress_pct)
 
         self.logger.debug(f"Update progress: {state} - {message} ({progress_pct}%)")
 
@@ -1186,7 +775,7 @@ class ConfigurationManager(ManagerBase):
         - Non-numeric progress value changes
         """
         normalized = self._normalize_progress(progress_pct)
-        last_normalized = self._last_progress_pct_value
+        last_normalized = self.update._last_pct_value
 
         # Determinate progress comparison
         if normalized is not None:
@@ -1195,7 +784,7 @@ class ConfigurationManager(ManagerBase):
             return abs(normalized - last_normalized) >= self.PROGRESS_STEP_PERCENT
 
         # Indeterminate progress - defer to raw value comparison
-        return progress_pct != self._last_progress_notify_pct
+        return progress_pct != self.update._last_notify_pct
 
     def _service_update_timeslice(self) -> None:
         """Allow update loop to service HTTP/DNS without re-entering frequently."""
@@ -1243,7 +832,7 @@ class ConfigurationManager(ManagerBase):
         Called from main server loop when update_trigger is set.
         """
         try:
-            if self.update_state == "downloading":
+            if self.update.state == "downloading":
                 self.logger.info("Initiating update download")
                 update_manager = self._get_update_manager()
 
@@ -1260,8 +849,8 @@ class ConfigurationManager(ManagerBase):
                 except RuntimeError as e:
                     # Critical programming errors - re-raise to propagate to main() and trigger reboot
                     self.logger.critical(f"Critical update download error: {e}")
-                    self.update_state = "error"
-                    self.update_trigger = False
+                    self.update.state = "error"
+                    self.update.trigger = False
                     raise
 
                 if not download_success:
@@ -1272,19 +861,13 @@ class ConfigurationManager(ManagerBase):
                 self.logger.info("Update ready for installation")
 
                 # Move to restarting state
-                self.update_state = "restarting"
-                self.update_trigger = False
+                self.update.state = "restarting"
+                self.update.trigger = False
 
                 # Give client time to see "Restarting..." (2 seconds)
                 await self._sleep_with_portal_service(2)
 
-                # Stop server and AP
-                try:
-                    server.stop()
-                    self.logger.debug("HTTP server stopped")
-                except Exception as e:
-                    self.logger.warning(f"Error stopping HTTP server: {e}")
-
+                # Stop server and AP before reboot
                 self._stop_dns_interceptor()
 
                 try:
@@ -1308,19 +891,13 @@ class ConfigurationManager(ManagerBase):
         Gracefully exit setup mode after an update failure and resume normal mode.
         """
         self.logger.warning(f"Update failed in setup mode: {reason}. Continuing with current firmware.")
-        self.update_trigger = False
-        self.update_state = "restarting"
-        self.update_progress_message = "Restarting device..."
-        self.update_progress_pct = 100
-        self.pending_ready_at = None
-        self.activation_mode = None
-        self.setup_complete = True
-
-        try:
-            server.stop()
-            self.logger.debug("HTTP server stopped after update failure")
-        except Exception as e:
-            self.logger.debug(f"HTTP server stop after failure raised: {e}")
+        self.update.trigger = False
+        self.update.state = "restarting"
+        self.update.progress_message = "Restarting device..."
+        self.update.progress_pct = 100
+        self.validation.activation_mode = None
+        self.portal.setup_complete = True
+        self.portal.pending_ready_at = None
 
         try:
             await self._cleanup_setup_portal()
@@ -1339,29 +916,32 @@ class ConfigurationManager(ManagerBase):
         """
         try:
             # Test WiFi credentials
-            if self.validation_state == "validating_wifi":
-                if not self.pending_ssid or not self.pending_password:
+            if self.validation.state == "validating_wifi":
+                if not self.credentials.has_credentials():
                     self.logger.error("No credentials to validate")
-                    self.validation_state = "error"
-                    self.validation_result = {
+                    self.validation.state = "error"
+                    self.validation.result = {
                         "error": {"message": "No credentials available for validation", "field": None}
                     }
-                    self.validation_trigger = False
+                    self.validation.trigger = False
                     return
 
-                self.logger.info(f"Validating WiFi credentials for '{self.pending_ssid}'")
+                # Extract credentials (guaranteed non-None by has_credentials() check above)
+                ssid = self.credentials.ssid
+                password = self.credentials.password
+                assert ssid is not None and password is not None  # Type narrowing for mypy
+
+                self.logger.info(f"Validating WiFi credentials for '{ssid}'")
                 if not self.connection_manager:
                     success = False
                     error_msg: str | dict[str, Any] | None = "ConnectionManager not initialized"
                 else:
-                    success, error_msg = await self.connection_manager.test_credentials_from_ap(
-                        self.pending_ssid, self.pending_password
-                    )
+                    success, error_msg = await self.connection_manager.test_credentials_from_ap(ssid, password)
 
                 if not success:
                     # Credentials failed
                     self.logger.warning(f"WiFi validation failed: {error_msg}")
-                    self.validation_state = "error"
+                    self.validation.state = "error"
 
                     # Extract error message from dict if present
                     if isinstance(error_msg, dict):
@@ -1372,21 +952,20 @@ class ConfigurationManager(ManagerBase):
                         error_message = str(error_msg) if error_msg else "WiFi connection test failed"
                         error_field = "password"
 
-                    self.validation_result = {"error": {"message": error_message, "field": error_field}}
-                    self.validation_trigger = False
+                    self.validation.result = {"error": {"message": error_message, "field": error_field}}
+                    self.validation.trigger = False
 
                     # Clear credentials for retry
-                    self.pending_ssid = None
-                    self.pending_password = None
+                    self.credentials.clear()
                     return
 
                 # WiFi validation successful - move to update check
                 self.logger.info("WiFi credentials validated successfully")
-                self.validation_state = "checking_updates"
+                self.validation.state = "checking_updates"
                 # Don't return - continue to update check
 
             # Check for updates
-            if self.validation_state == "checking_updates":
+            if self.validation.state == "checking_updates":
                 try:
                     update_manager = self._get_update_manager()
 
@@ -1396,28 +975,28 @@ class ConfigurationManager(ManagerBase):
                     if update_info:
                         # Update available
                         self.logger.info(f"Update available: {update_info.get('version')}")
-                        self.validation_state = "success"
-                        self.validation_result = {"update_available": True, "update_info": update_info}
+                        self.validation.state = "success"
+                        self.validation.result = {"update_available": True, "update_info": update_info}
                     else:
                         # No update available
                         self.logger.info("No updates available")
-                        self.validation_state = "success"
-                        self.validation_result = {"update_available": False}
+                        self.validation.state = "success"
+                        self.validation.result = {"update_available": False}
 
-                    self.validation_trigger = False
+                    self.validation.trigger = False
 
                 except Exception as update_e:
                     # Update check failed - but WiFi works, so continue anyway
                     self.logger.warning(f"Update check failed: {update_e}")
-                    self.validation_state = "success"
-                    self.validation_result = {"update_available": False}
-                    self.validation_trigger = False
+                    self.validation.state = "success"
+                    self.validation.result = {"update_available": False}
+                    self.validation.trigger = False
 
         except Exception as e:
             self.logger.error(f"Error during async validation: {e}")
-            self.validation_state = "error"
-            self.validation_result = {"error": {"message": f"Validation error: {e}", "field": None}}
-            self.validation_trigger = False
+            self.validation.state = "error"
+            self.validation.result = {"error": {"message": f"Validation error: {e}", "field": None}}
+            self.validation.trigger = False
 
     def _restart_portal_services(self, server: Any, server_ip: str) -> None:
         """
@@ -1445,7 +1024,15 @@ class ConfigurationManager(ManagerBase):
 
     async def _cleanup_setup_portal(self) -> bool:
         """
-        Cleanup of setup portal resources and state.
+        Comprehensive cleanup of ALL setup portal resources and state.
+
+        Ensures idempotent, exception-safe cleanup of:
+        - HTTP Server
+        - DNS Interceptor
+        - Update Manager Session
+        - Access Point
+        - LED State
+        - Portal State
 
         ConnectionManager automatically handles connection restoration when stopping AP,
         so we just need to trigger cleanup and it will restore previous connection state.
@@ -1456,17 +1043,18 @@ class ConfigurationManager(ManagerBase):
         cleanup_successful = True
 
         try:
+            # Stop HTTP server (new centralized method)
+            self._stop_http_server()
+
             # Stop DNS interceptor
             self._stop_dns_interceptor()
 
-            # Verify DNS interceptor is fully stopped
-            if hasattr(self, "dns_interceptor") and self.dns_interceptor:
-                # _stop_dns_interceptor() already calls stop() which handles cleanup
-                # Just ensure the reference is cleared
-                self.dns_interceptor = None
-
-            # Clear HTTP server reference to allow socket pool garbage collection
-            self._http_server = None
+            # Reset Update Manager session (invalidates socket pool)
+            if self._update_manager:
+                try:
+                    self._update_manager.reset_session()
+                except Exception as e:
+                    self.logger.warning(f"Error resetting update manager session: {e}")
 
             # Stop access point with automatic connection restoration
             # ConnectionManager will reconnect if we were connected before entering AP mode
@@ -1483,10 +1071,8 @@ class ConfigurationManager(ManagerBase):
             except Exception as led_e:
                 self.logger.warning(f"Error clearing LED: {led_e}")
 
-            # Reset setup state
-            self.setup_complete = False
-            self.pending_ready_at = None
-            self.last_connection_error = None
+            # Reset portal state (use dataclass for clean reset)
+            self.portal = PortalState()
 
             return cleanup_successful
 
