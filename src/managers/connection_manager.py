@@ -14,17 +14,17 @@ ConnectionManager is a singleton - use ConnectionManager.instance() to access it
 
 import json
 import os
-import ssl  # type: ignore[import-not-found]  # CircuitPython-only module
+import ssl  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 import time
 
-import socketpool  # type: ignore[import-not-found]  # CircuitPython-only module
+import socketpool  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
-from app_typing import Any, Callable, Generator
-from logging_helper import logger
-from manager_base import ManagerBase
-from scheduler import Scheduler
-from utils import suppress
-from wifi_radio_controller import WiFiRadioController
+from controllers.wifi_radio_controller import WiFiRadioController
+from core.app_typing import Any, Callable, Generator
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.manager_base import ManagerBase
+from utils.utils import suppress
 
 
 class AuthenticationError(Exception):
@@ -97,6 +97,7 @@ class ConnectionManager(ManagerBase):
         self._ap_active = False
         self._credentials = None  # Cached credentials from secrets.json
         self._pre_ap_connected = False  # Track connection state before AP mode
+        self._socket_pool = None  # Cached socket pool to avoid creating multiple pools
 
         # Hardware abstraction for the WiFi radio (injectable for tests)
         self._radio_controller = radio_controller or WiFiRadioController()
@@ -155,6 +156,10 @@ class ConnectionManager(ManagerBase):
             await Scheduler.sleep(0.3)
             self._radio.enabled = True
             await Scheduler.sleep(0.3)
+
+            # Clear socket pool cache since radio was reset
+            self._socket_pool = None
+
             self.logger.debug("WiFi radio reset complete")
         except Exception as e:
             self.logger.warning(f"Error resetting radio: {e}")
@@ -359,7 +364,7 @@ class ConnectionManager(ManagerBase):
                 self.logger.debug(f"Connection attempt #{attempts} to '{ssid}'")
 
                 # Check for button interrupt before attempting connection
-                from input_manager import InputManager
+                from managers.input_manager import InputManager
 
                 input_mgr = InputManager.instance()
                 if input_mgr.is_pressed():
@@ -521,7 +526,7 @@ class ConnectionManager(ManagerBase):
         self.logger.debug(f"Waiting {wait_time:.1f}s before retry...")
 
         # Wait with button interrupt checking using InputManager
-        from input_manager import InputManager
+        from managers.input_manager import InputManager
 
         input_mgr = InputManager.instance()
         start = time.monotonic()
@@ -872,6 +877,9 @@ class ConnectionManager(ManagerBase):
         self._ap_active = False
         self._pre_ap_connected = False  # Reset saved state
 
+        # Clear socket pool cache since radio state has changed
+        self._socket_pool = None
+
     async def _wait_for_radio_ready_for_concurrent_mode(self, timeout: float = 1.0) -> bool:
         """
         Wait for radio to be ready for concurrent AP+STA mode.
@@ -1026,6 +1034,10 @@ class ConnectionManager(ManagerBase):
             self.logger.warning(f"Warning disabling radio: {e}")
 
         self._ap_active = False
+
+        # Clear socket pool cache since radio is being disabled
+        self._socket_pool = None
+
         self.logger.debug("Access point shutdown complete")
 
     def is_ap_active(self) -> bool:
@@ -1037,10 +1049,17 @@ class ConnectionManager(ManagerBase):
         Get a socket pool for the current WiFi radio.
         Used by DNS interceptor and other network services.
 
+        Returns cached socket pool if available, creates new one if needed.
+        The pool is invalidated when radio state changes (AP start/stop, reconnection).
+
         Returns:
             socketpool.SocketPool instance
         """
-        return socketpool.SocketPool(self._radio)
+        # Reuse existing pool if available
+        if self._socket_pool is None:
+            self._socket_pool = socketpool.SocketPool(self._radio)
+            self.logger.debug("Created new socket pool")
+        return self._socket_pool
 
     def get_ap_ip_address(self) -> str:
         """
@@ -1132,6 +1151,7 @@ class ConnectionManager(ManagerBase):
             self._ap_active = False
             self._pre_ap_connected = False
             self._credentials = None
+            self._socket_pool = None
             self._init_radio_controller = None
 
             # Radio controller should be managed by its own lifecycle

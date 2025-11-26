@@ -27,7 +27,7 @@ repos:
     hooks:
       - id: pylint-errors-only
         name: pylint (errors only)
-        entry: pylint
+        entry: pipenv run pylint
         language: system
         types: [python]
         args: [--errors-only, src, tests]

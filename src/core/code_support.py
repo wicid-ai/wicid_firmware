@@ -6,20 +6,20 @@ Orchestrates system initialization and mode execution using manager classes.
 import os
 import sys
 
-import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
+import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
 # Ensure root directory is in path for module imports
 sys.path.insert(0, "/")
 
-import test_mode
-from configuration_manager import ConfigurationManager
-from input_manager import InputManager
-from logging_helper import configure_logging, logger
-from mode_manager import ModeManager
-from modes import PrecipDemoMode, SetupPortalMode, TempDemoMode, WeatherMode
-from pixel_controller import PixelController
-from scheduler import Scheduler
-from utils import trigger_safe_mode
+from controllers.pixel_controller import PixelController
+from core.logging_helper import configure_logging, logger
+from core.scheduler import Scheduler
+from managers.configuration_manager import ConfigurationManager
+from managers.input_manager import InputManager
+from managers.mode_manager import ModeManager
+from modes import test_mode
+from modes.modes import PrecipDemoMode, SetupPortalMode, TempDemoMode, WeatherMode
+from utils.utils import trigger_safe_mode
 
 # Configure logging from settings
 log_level = os.getenv("LOG_LEVEL", "INFO")

@@ -11,8 +11,8 @@ Version: 0.1
 import asyncio
 import time
 
-from app_typing import Any, Callable
-from logging_helper import logger
+from core.app_typing import Any, Callable
+from core.logging_helper import logger
 
 
 # Simple min-heap for CircuitPython (lacks heapq module)
@@ -244,14 +244,24 @@ class Scheduler:
             The global Scheduler instance
         """
         if cls._instance is None:
-            cls._instance = cls()
+            obj = super().__new__(cls)
+            cls._instance = obj
+            obj._initialized = False
+            obj._init()
         return cls._instance
 
     def __init__(self) -> None:
         """Initialize scheduler (called once via singleton pattern)."""
-        if self._initialized:
+        # Guard against re-initialization
+        if getattr(self, "_initialized", False):
             return
+        # If _instance is already set, don't override it
+        if Scheduler._instance is None:
+            Scheduler._instance = self
+        self._init()
 
+    def _init(self) -> None:
+        """Internal initialization method."""
         self.logger = logger("wicid.scheduler")
         self.logger.info("Initializing Scheduler v0.1")
 
@@ -552,7 +562,8 @@ class Scheduler:
         start_time = time.monotonic()
 
         try:
-            self.logger.debug(f"Running task '{task.name}'")
+            # Disable debug logging for tasks to reduce noise
+            # self.logger.debug(f"Running task '{task.name}'")
 
             # Execute the coroutine (create fresh instance each run)
             coroutine = task.coroutine_factory()
@@ -573,9 +584,10 @@ class Scheduler:
                     f"CPU time (actual={runtime_ms:.1f}ms)"
                 )
 
-            self.logger.debug(
-                f"Task '{task.name}' completed in {runtime_ms:.1f}ms (total executions: {task.execution_count})"
-            )
+            # Disable debug logging for task completion to reduce noise
+            # self.logger.debug(
+            #     f"Task '{task.name}' completed in {runtime_ms:.1f}ms (total executions: {task.execution_count})"
+            # )
 
             # Reschedule if periodic/recurring
             if task.task_type in (TaskType.PERIODIC.name, TaskType.RECURRING.name):

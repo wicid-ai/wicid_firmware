@@ -7,15 +7,15 @@ Handles:
 - Special mode entry (setup, safe mode)
 """
 
-from button_action_router import ButtonAction, ButtonActionRouter
-from input_manager import InputManager
-from logging_helper import logger
-from manager_base import ManagerBase
-from mode_interface import Mode
-from modes import SetupPortalMode
-from pixel_controller import PixelController
-from scheduler import Scheduler
-from utils import trigger_safe_mode
+from controllers.pixel_controller import PixelController
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.input_manager import InputManager
+from managers.manager_base import ManagerBase
+from modes.mode_interface import Mode
+from modes.modes import SetupPortalMode
+from services.button_action_router_service import ButtonAction, ButtonActionRouterService
+from utils.utils import trigger_safe_mode
 
 
 class ModeManager(ManagerBase):
@@ -46,7 +46,7 @@ class ModeManager(ManagerBase):
         self.pixel = PixelController()
         self.logger = logger("wicid.mode_mgr")
         self.input_mgr = InputManager.instance()
-        self.button_router = ButtonActionRouter.instance()
+        self.button_router = ButtonActionRouterService.instance()
         self._initialized = True
 
     def register_modes(self, mode_classes: list[type[Mode]]) -> None:

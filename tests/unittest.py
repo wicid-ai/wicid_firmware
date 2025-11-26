@@ -1,7 +1,7 @@
 import sys
 import traceback
 
-from app_typing import Any
+from core.app_typing import Any, Iterator
 
 
 class SkipTest(Exception):
@@ -458,6 +458,24 @@ class TestSuite:
             cls: str
         """
         self.tests.append(cls)
+
+    def countTestCases(self) -> int:  # noqa
+        """
+        Method to count the number of test cases in the suite.
+
+        Returns:
+            int: Number of test classes in the suite
+        """
+        return len(self.tests)
+
+    def __iter__(self) -> Iterator[type]:
+        """
+        Make TestSuite iterable so it can be used in for loops.
+
+        Returns:
+            iterator: Iterator over test classes
+        """
+        return iter(self.tests)
 
 
 class TestRunner:

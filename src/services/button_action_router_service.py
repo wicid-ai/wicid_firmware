@@ -5,10 +5,10 @@ Provides a shared queue used by ModeManager and temporary sessions
 (e.g., setup portal) so button semantics stay consistent across modes.
 """
 
-from app_typing import Any
-from input_manager import ButtonEvent, InputManager
-from logging_helper import logger
-from pixel_controller import PixelController
+from controllers.pixel_controller import PixelController
+from core.app_typing import Any
+from core.logging_helper import logger
+from managers.input_manager import ButtonEvent, InputManager
 
 
 class ButtonAction:
@@ -19,7 +19,7 @@ class ButtonAction:
     SAFE = "safe"
 
 
-class ButtonActionRouter:
+class ButtonActionRouterService:
     """
     Singleton that listens to InputManager events and translates them into
     high-level actions (next/setup/safe). Actions are queued either for the
@@ -45,7 +45,7 @@ class ButtonActionRouter:
             self.input_mgr.register_callback(event, callback)
 
     @classmethod
-    def instance(cls) -> "ButtonActionRouter":
+    def instance(cls) -> "ButtonActionRouterService":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -116,7 +116,7 @@ class _ButtonActionSession:
     so setup behavior stays identical to the primary mode loop.
     """
 
-    def __init__(self, router: ButtonActionRouter, session_logger: Any = None) -> None:
+    def __init__(self, router: ButtonActionRouterService, session_logger: Any = None) -> None:
         self._router = router
         self._queue: list[str] = []
         self._pending_setup_release = False
@@ -146,11 +146,11 @@ class _ButtonActionSession:
             if self._input_mgr.is_pressed():
                 self._pending_setup_release = True
             else:
-                ButtonActionRouter._remove_action_from_queue(ButtonAction.SETUP, self._queue)
+                ButtonActionRouterService._remove_action_from_queue(ButtonAction.SETUP, self._queue)
                 return "hold"
 
         if ButtonAction.NEXT in self._queue:
-            ButtonActionRouter._remove_action_from_queue(ButtonAction.NEXT, self._queue)
+            ButtonActionRouterService._remove_action_from_queue(ButtonAction.NEXT, self._queue)
             return "single"
 
         return None

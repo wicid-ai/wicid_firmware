@@ -1,7 +1,7 @@
-from app_typing import Any
-from connection_manager import ConnectionManager
-from logging_helper import logger
-from scheduler import Scheduler
+from core.app_typing import Any
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.connection_manager import ConnectionManager
 
 
 class WeatherService:

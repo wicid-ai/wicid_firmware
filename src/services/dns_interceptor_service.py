@@ -15,12 +15,12 @@ all DNS traffic and redirecting it to the setup portal.
 import struct
 import time
 
-from app_typing import Any, Optional
-from logging_helper import logger
-from utils import suppress
+from core.app_typing import Any, Optional
+from core.logging_helper import logger
+from utils.utils import suppress
 
 
-class DNSInterceptor:
+class DNSInterceptorService:
     """
     DNS query interceptor for captive portal functionality.
 

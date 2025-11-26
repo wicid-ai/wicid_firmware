@@ -17,42 +17,48 @@ import sys
 import time
 import traceback
 
-import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
-import storage  # type: ignore[import-not-found]  # CircuitPython-only module
-
-from app_typing import Any
+import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
+import storage  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
 sys.path.insert(0, "/")
 
+from .app_typing import Any
+
 IMPORT_ERROR = None
 
+# CRITICAL imports - these MUST succeed or boot should fail
+# If these fail, it indicates file corruption or incomplete deployment
 try:
-    from pixel_controller import PixelController
-    from update_manager import UpdateManager
-    from utils import check_release_compatibility, mark_incompatible_release, suppress
+    from core.logging_helper import logger  # noqa: F401 - Used by code later in module
+    from utils.utils import check_release_compatibility, mark_incompatible_release, suppress
+except ImportError as e:
+    # CRITICAL: Cannot continue without these fundamental utilities
+    print("=" * 50)
+    print(f"FATAL BOOT ERROR: Critical import failed - {e}")
+    print("This indicates file corruption or incomplete firmware deployment!")
+    print("Device cannot boot safely. Please:")
+    print("  1. Enter Safe Mode (hold BOOT button during power-on)")
+    print("  2. Run installer.py with HARD update mode")
+    print("=" * 50)
+    # Re-raise to halt boot - this is NOT recoverable
+    raise
+
+# OPTIONAL imports - graceful degradation if these fail
+# Update/Recovery functionality will be disabled but device can still operate
+try:
+    from controllers.pixel_controller import PixelController
+    from managers.recovery_manager import RecoveryManager
+    from managers.update_manager import UpdateManager
 except ImportError as e:
     IMPORT_ERROR = str(e)
     print("=" * 50)
-    print(f"CRITICAL: Import failed - {e}")
-    print("Update functionality DISABLED")
+    print(f"WARNING: Optional import failed - {e}")
+    print("Update and Recovery functionality DISABLED")
+    print("Device will operate in degraded mode")
     print("=" * 50)
-    check_release_compatibility = None  # type: ignore
-    mark_incompatible_release = None  # type: ignore
     PixelController = None  # type: ignore
     UpdateManager = None  # type: ignore
-
-    # Define fallback suppress if needed
-    class _DummySuppress:
-        def __init__(self, *args: Any) -> None:
-            pass
-
-        def __enter__(self) -> None:
-            pass
-
-        def __exit__(self, *args: Any) -> None:
-            pass
-
-    suppress = _DummySuppress  # type: ignore
+    RecoveryManager = None  # type: ignore
 
 # Check for pending firmware update
 PENDING_UPDATE_DIR = "/pending_update"
@@ -435,8 +441,8 @@ def process_pending_update() -> None:
                 # Step 3.5: Validate extracted update contains all critical files
                 # This is a second check before destructive operations begin
                 log_boot_message("Validating update package integrity...")
-                if UpdateManager is not None:
-                    all_present, missing_files = UpdateManager.validate_extracted_update(PENDING_ROOT_DIR)
+                if RecoveryManager is not None:
+                    all_present, missing_files = RecoveryManager.validate_extracted_update(PENDING_ROOT_DIR)
 
                     if not all_present:
                         log_boot_message("ERROR: Update package is incomplete")
@@ -463,7 +469,7 @@ def process_pending_update() -> None:
 
                     log_boot_message("✓ All critical files present in update package")
                 else:
-                    log_boot_message("⚠ UpdateManager not available for validation - proceeding anyway")
+                    log_boot_message("⚠ RecoveryManager not available for validation - proceeding anyway")
 
                 # Update LED after validation
                 if installer:
@@ -527,15 +533,15 @@ def process_pending_update() -> None:
                         raise Exception("File move deleted secrets.json") from e
 
                 # Step 7: Validate critical files are present after installation
-                # Use centralized validation from UpdateManager if available
-                if UpdateManager is not None:
-                    all_present, missing_files = UpdateManager.validate_critical_files()
+                # Use centralized validation from RecoveryManager if available
+                if RecoveryManager is not None:
+                    all_present, missing_files = RecoveryManager.validate_critical_files()
                 else:
-                    # Fallback if UpdateManager couldn't be imported
+                    # Fallback if RecoveryManager couldn't be imported
                     # This itself indicates a critical failure
-                    log_boot_message("ERROR: UpdateManager not available for validation")
+                    log_boot_message("ERROR: RecoveryManager not available for validation")
                     all_present = False
-                    missing_files = ["UpdateManager module (import failed)"]
+                    missing_files = ["RecoveryManager module (import failed)"]
 
                 if not all_present:
                     log_boot_message("ERROR: Critical files missing after installation:")
@@ -555,9 +561,9 @@ def process_pending_update() -> None:
 
                 # Step 8: Create or update recovery backup
                 log_boot_message("Creating recovery backup...")
-                if UpdateManager is not None:
+                if RecoveryManager is not None:
                     try:
-                        success, backup_msg = UpdateManager.create_recovery_backup()
+                        success, backup_msg = RecoveryManager.create_recovery_backup()
                         if success:
                             log_boot_message(f"✓ {backup_msg}")
                         else:
@@ -565,7 +571,7 @@ def process_pending_update() -> None:
                     except Exception as e:
                         log_boot_message(f"⚠ Recovery backup failed: {e}")
                 else:
-                    log_boot_message("⚠ UpdateManager not available for backup")
+                    log_boot_message("⚠ RecoveryManager not available for backup")
 
                 # Update LED after backup
                 if installer:
@@ -617,12 +623,12 @@ def check_and_restore_from_recovery() -> bool:
     Returns:
         bool: True if recovery was needed and performed, False otherwise
     """
-    if UpdateManager is None:
-        log_boot_message("UpdateManager not available, skipping recovery check")
+    if RecoveryManager is None:
+        log_boot_message("RecoveryManager not available, skipping recovery check")
         return False
 
     # Check if all critical files are present
-    all_present, missing_files = UpdateManager.validate_critical_files()
+    all_present, missing_files = RecoveryManager.validate_critical_files()
 
     if all_present:
         # All good, no recovery needed
@@ -638,7 +644,7 @@ def check_and_restore_from_recovery() -> bool:
     if len(missing_files) > 10:
         log_boot_message(f"  ... and {len(missing_files) - 10} more")
 
-    if not UpdateManager.recovery_exists():
+    if not RecoveryManager.recovery_exists():
         log_boot_message("\n✗ No recovery backup available")
         log_boot_message("Device may not boot correctly")
         log_boot_message("Manual intervention required")
@@ -646,7 +652,7 @@ def check_and_restore_from_recovery() -> bool:
 
     # Attempt recovery
     log_boot_message("\n→ Attempting recovery from backup...")
-    success, message = UpdateManager.restore_from_recovery()
+    success, message = RecoveryManager.restore_from_recovery()
 
     if success:
         log_boot_message(f"✓ {message}")

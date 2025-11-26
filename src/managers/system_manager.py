@@ -9,12 +9,12 @@ import os
 import time
 import traceback
 
-import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
+import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
-from app_typing import Any
-from logging_helper import logger
-from manager_base import ManagerBase
-from scheduler import Scheduler
+from core.app_typing import Any
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.manager_base import ManagerBase
 
 
 class SystemManager(ManagerBase):
@@ -56,7 +56,7 @@ class SystemManager(ManagerBase):
         """
         # Encapsulate UpdateManager creation - callers don't need to know about it
         if update_manager is None:
-            from update_manager import UpdateManager
+            from managers.update_manager import UpdateManager
 
             update_manager = UpdateManager.instance()
 

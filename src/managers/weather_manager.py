@@ -7,12 +7,12 @@ Provides cached weather data accessible synchronously by other components.
 Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 """
 
-from app_typing import Any, Optional
-from connection_manager import ConnectionManager
-from logging_helper import logger
-from manager_base import ManagerBase
-from scheduler import Scheduler, TaskFatalError, TaskNonFatalError
-from weather_service import WeatherService
+from core.app_typing import Any, Optional
+from core.logging_helper import logger
+from core.scheduler import Scheduler, TaskFatalError, TaskNonFatalError
+from managers.connection_manager import ConnectionManager
+from managers.manager_base import ManagerBase
+from services.weather_service import WeatherService
 
 
 class WeatherManager(ManagerBase):

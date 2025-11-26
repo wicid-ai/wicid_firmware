@@ -782,6 +782,16 @@ def build_package(manifest, version):
         for file in build_dir.rglob("*"):
             if file.is_file():
                 arcname = file.relative_to(build_dir)
+
+                # Skip .py source files if a corresponding .mpy exists
+                # Exception: boot.py and code.py must remain as source
+                if file.suffix == ".py" and file.name not in ("boot.py", "code.py"):
+                    # Check if .mpy version exists
+                    mpy_file = file.with_suffix(".mpy")
+                    if mpy_file.exists():
+                        # Skip the .py file, we'll use the .mpy instead
+                        continue
+
                 zf.write(file, arcname)
                 print(f"  Added: {arcname}")
 
@@ -817,9 +827,9 @@ def validate_build_artifacts(build_dir: Path):
         errors.append("code.py must remain source (.py)")
 
     critical_mpy = [
-        "boot_support.mpy",
-        "code_support.mpy",
-        "utils.mpy",
+        "core/boot_support.mpy",
+        "core/code_support.mpy",
+        "utils/utils.mpy",
     ]
     for filename in critical_mpy:
         if not (build_dir / filename).exists():

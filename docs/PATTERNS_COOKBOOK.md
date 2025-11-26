@@ -23,11 +23,11 @@ This document provides concrete, copy-pasteable examples of common architectural
 Use `Scheduler.sleep()` for delays within tasks. This allows other tasks to run while waiting.
 
 ```python
-from scheduler import Scheduler
+from core.scheduler import Scheduler
 
 async def my_task():
     # ... do some work ...
-    await Scheduler.sleep(0.1) # Yields control for 0.1s
+    await Scheduler.sleep(0.1)  # Yields control for 0.1s
 ```
 
 ### ❌ Don't (Incorrect)
@@ -53,7 +53,7 @@ async def my_task():
 Access the singleton instance using `.instance()`. You can pass dependencies (like mock pins) here if needed (e.g., in tests).
 
 ```python
-from input_manager import InputManager
+from managers.input_manager import InputManager
 
 # Normal usage
 mgr = InputManager.instance()
@@ -85,7 +85,7 @@ mgr._instance = mgr # Wrong: Never manually set _instance
 Raise `TaskNonFatalError` for issues that should be logged but shouldn't crash the system. The scheduler will catch this and keep the task alive (or restart it).
 
 ```python
-from scheduler import TaskNonFatalError
+from core.scheduler import TaskNonFatalError
 
 def fetch_data():
     if response.status_code == 404:
@@ -111,10 +111,10 @@ def fetch_data():
 
 ### ✅ Do (Correct)
 
-Use `suppress` from `utils` to cleanly ignore expected exceptions.
+Use `suppress` from `utils.utils` to cleanly ignore expected exceptions.
 
 ```python
-from utils import suppress
+from utils.utils import suppress
 
 # Suppress a single exception type
 with suppress(OSError):
@@ -155,7 +155,7 @@ with contextlib.suppress(OSError):
 Use `create_mock_button_pin` or similar helpers to create simulated hardware objects.
 
 ```python
-from test_helpers import create_mock_button_pin
+from tests.test_helpers import create_mock_button_pin
 
 def test_button_logic():
     mock_pin = create_mock_button_pin()
@@ -185,7 +185,7 @@ def test_button_logic():
 Use `await Scheduler.yield_control()` inside tight loops.
 
 ```python
-from scheduler import Scheduler
+from core.scheduler import Scheduler
 
 async def processing_loop():
     while True:
@@ -215,7 +215,7 @@ async def processing_loop():
 Import types from `app_typing` instead of `typing`. This allows standard syntax `List[int]` without runtime crashes or memory overhead.
 
 ```python
-from app_typing import List, Dict, Optional
+from core.app_typing import List, Dict, Optional
 
 def process_data(data: List[int]) -> Optional[Dict[str, int]]:
     # ... implementation ...

@@ -9,11 +9,11 @@ import json
 import os
 import sys
 
-import board  # type: ignore[import-not-found]  # CircuitPython-only module
-import microcontroller  # type: ignore[import-not-found]  # CircuitPython-only module
+import board  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
+import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
-from app_typing import Any, Optional
-from logging_helper import logger
+from core.app_typing import Any, Optional
+from core.logging_helper import logger
 
 
 class suppress:
@@ -119,7 +119,7 @@ def get_mac_address() -> str | None:
     """
     try:
         # Lazy import to avoid circular dependency
-        from connection_manager import ConnectionManager
+        from managers.connection_manager import ConnectionManager
 
         connection_manager = ConnectionManager.instance()
         return connection_manager.get_mac_address()

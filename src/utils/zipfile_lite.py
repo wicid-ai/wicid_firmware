@@ -8,9 +8,9 @@ Supports stored (uncompressed) and deflated files.
 import struct
 import zlib
 
-from app_typing import Any, Dict, List
-from logging_helper import logger
-from utils import suppress
+from core.app_typing import Any, Dict, List
+from core.logging_helper import logger
+from utils.utils import suppress
 
 
 class ZipFile:

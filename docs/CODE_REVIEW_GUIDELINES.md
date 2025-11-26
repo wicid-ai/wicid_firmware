@@ -62,7 +62,7 @@ Evaluate the code against the following criteria. Use the referenced documentati
 *Reference: `docs/STYLE_GUIDE.md`*
 
 - **[ ] Type Hinting**: Do all new functions have full type hints (`def foo(x: int) -> bool:`)?
-- **[ ] App Typing**: Are types imported from `app_typing` (e.g. `from app_typing import List`) instead of `typing`?
+- **[ ] App Typing**: Are types imported from `app_typing` (e.g. `from core.app_typing import List`) instead of `typing`?
 - **[ ] Docstrings**: Do public methods have Google-style docstrings?
 - **[ ] Comments**: Do comments explain "Why", not "What"? (Avoid "Increment i" style comments).
 - **[ ] Naming**: Do variables use `snake_case` and constants use `UPPER_CASE`?

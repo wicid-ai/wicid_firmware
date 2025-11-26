@@ -1,11 +1,11 @@
 import time
 
-import board  # type: ignore[import-not-found]  # CircuitPython-only module
-import neopixel  # type: ignore[import-not-found]  # CircuitPython-only module
+import board  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
+import neopixel  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
-from app_typing import Any, Dict, List, Optional
-from logging_helper import logger
-from scheduler import Scheduler
+from core.app_typing import Any, Dict, List, Optional
+from core.logging_helper import logger
+from core.scheduler import Scheduler
 
 
 class _OperationContext:

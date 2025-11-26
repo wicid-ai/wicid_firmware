@@ -1,13 +1,13 @@
 import os
 import time
 
-from app_typing import Any
-from button_action_router import ButtonActionRouter
-from configuration_manager import ConfigurationManager
-from mode_interface import Mode
-from scheduler import Scheduler
-from system_manager import SystemManager
-from weather_service import WeatherService
+from core.app_typing import Any
+from core.scheduler import Scheduler
+from managers.configuration_manager import ConfigurationManager
+from managers.system_manager import SystemManager
+from modes.mode_interface import Mode
+from services.button_action_router_service import ButtonActionRouterService
+from services.weather_service import WeatherService
 
 
 def temperature_color(temp_f: float | None) -> tuple[int, int, int]:
@@ -364,7 +364,7 @@ class SetupPortalMode(Mode):
         self._error = error
         self._session: Any = None  # Will be set in initialize()
         self._config_mgr = ConfigurationManager.instance()
-        self._button_router = ButtonActionRouter.instance()
+        self._button_router = ButtonActionRouterService.instance()
 
     def initialize(self) -> bool:
         self._session = self._button_router.acquire_session(session_logger=self.logger)

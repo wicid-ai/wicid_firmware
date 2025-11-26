@@ -32,11 +32,11 @@ if "/tests" not in sys.path:
 # Import unittest framework
 from unittest import TestCase
 
-from app_typing import Any
-from hardware_mocks import MockButtonController
-from input_manager import ButtonEvent, InputManager
-from test_helpers import create_mock_button_pin
-from utils import suppress
+from core.app_typing import Any
+from managers.input_manager import ButtonEvent, InputManager
+from tests.hardware_mocks import MockButtonController
+from tests.test_helpers import create_mock_button_pin
+from utils.utils import suppress
 
 
 class TestInputManagerBasic(TestCase):

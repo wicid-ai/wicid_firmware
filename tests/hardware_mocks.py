@@ -20,7 +20,7 @@ Usage:
 
 import time
 
-from app_typing import Any, Callable, Optional
+from core.app_typing import Any, Callable, Optional
 
 
 class MockPin:

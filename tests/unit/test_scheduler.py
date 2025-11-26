@@ -27,8 +27,8 @@ sys.path.insert(0, "/")
 from unittest import TestCase
 from unittest.mock import patch
 
-from app_typing import Any
-from scheduler import Scheduler, Task, TaskFatalError, TaskHandle, TaskNonFatalError, TaskType
+from core.app_typing import Any
+from core.scheduler import Scheduler, Task, TaskFatalError, TaskHandle, TaskNonFatalError, TaskType
 
 
 class TestSchedulerBasic(TestCase):

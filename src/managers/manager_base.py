@@ -13,9 +13,9 @@ Subclasses are expected to:
 - Optionally override ``instance()`` or ``_is_compatible_with()`` for smart reinitialization when dependencies change.
 """
 
-from app_typing import Any
-from scheduler import Scheduler
-from utils import suppress
+from core.app_typing import Any
+from core.scheduler import Scheduler
+from utils.utils import suppress
 
 
 class ManagerBase:

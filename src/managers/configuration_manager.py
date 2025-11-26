@@ -2,21 +2,21 @@ import json
 import os
 import time
 
-import supervisor  # type: ignore[import-not-found]  # CircuitPython-only module
+import supervisor  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 from adafruit_httpserver import (  # type: ignore[import-not-found, attr-defined]  # CircuitPython-only module
     JSONResponse,
     Request,
     Response,
 )
 
-from app_typing import Any, Callable, Optional
-from connection_manager import ConnectionManager
-from dns_interceptor import DNSInterceptor
-from logging_helper import logger
-from manager_base import ManagerBase
-from pixel_controller import PixelController
-from scheduler import Scheduler
-from utils import suppress
+from controllers.pixel_controller import PixelController
+from core.app_typing import Any, Callable, Optional
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.connection_manager import ConnectionManager
+from managers.manager_base import ManagerBase
+from services.dns_interceptor_service import DNSInterceptorService as DNSInterceptor
+from utils.utils import suppress
 
 
 class ConfigurationManager(ManagerBase):
@@ -264,6 +264,9 @@ class ConfigurationManager(ManagerBase):
         self._active_button_session = button_session
 
         self.logger.info("Entering configuration mode")
+
+        # Reset setup completion flag for new session
+        self.setup_complete = False
 
         # Set error message if provided
         if error:
@@ -636,7 +639,7 @@ class ConfigurationManager(ManagerBase):
         def system_info(request: Request) -> Response:
             _mark_user_connected()
             try:
-                from utils import get_machine_type, get_os_version_string_pretty_print
+                from utils.utils import get_machine_type, get_os_version_string_pretty_print
 
                 # Get basic system info
                 machine_type = get_machine_type()
@@ -982,6 +985,14 @@ class ConfigurationManager(ManagerBase):
                     idle_time = time.monotonic() - self.last_request_time
                     if idle_time >= setup_idle_timeout:
                         self.logger.info(f"Setup idle timeout exceeded ({idle_time:.0f}s). Restarting to retry...")
+
+                        # Stop HTTP server first to release sockets
+                        try:
+                            server.stop()
+                            self.logger.debug("HTTP server stopped (idle timeout)")
+                        except Exception as e:
+                            self.logger.warning(f"Error stopping HTTP server: {e}")
+
                         # Comprehensive cleanup before restarting
                         await self._cleanup_setup_portal()
                         supervisor.reload()
@@ -1053,6 +1064,14 @@ class ConfigurationManager(ManagerBase):
                 # Check for button interrupt via session
                 if self._active_button_session and self._active_button_session.safe_mode_ready():
                     self.logger.info("Safe Mode requested (setup portal)")
+
+                    # Stop HTTP server first to release sockets
+                    try:
+                        server.stop()
+                        self.logger.debug("HTTP server stopped (safe mode)")
+                    except Exception as e:
+                        self.logger.warning(f"Error stopping HTTP server: {e}")
+
                     await self._cleanup_setup_portal()
                     # Session handoff requeues SAFE action for ModeManager
                     return False
@@ -1062,6 +1081,13 @@ class ConfigurationManager(ManagerBase):
                 )
                 if exit_reason:
                     self.logger.debug(f"Setup exit requested via {exit_reason}")
+
+                    # Stop HTTP server first to release sockets
+                    try:
+                        server.stop()
+                        self.logger.debug("HTTP server stopped (exit via button)")
+                    except Exception as e:
+                        self.logger.warning(f"Error stopping HTTP server: {e}")
 
                     cleanup_successful = await self._cleanup_setup_portal()
 
@@ -1202,7 +1228,7 @@ class ConfigurationManager(ManagerBase):
             UpdateManager: Instance
         """
         if self._update_manager is None:
-            from update_manager import UpdateManager
+            from managers.update_manager import UpdateManager
 
             self._update_manager = UpdateManager.instance()
         return self._update_manager
@@ -1438,6 +1464,9 @@ class ConfigurationManager(ManagerBase):
                 # _stop_dns_interceptor() already calls stop() which handles cleanup
                 # Just ensure the reference is cleared
                 self.dns_interceptor = None
+
+            # Clear HTTP server reference to allow socket pool garbage collection
+            self._http_server = None
 
             # Stop access point with automatic connection restoration
             # ConnectionManager will reconnect if we were connected before entering AP mode

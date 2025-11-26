@@ -29,7 +29,11 @@ try:
 
     load_dotenv()
 except ImportError:
-    pass  # python-dotenv not installed, use defaults
+    pass
+
+# Prevent macOS from creating ._ metadata files when copying to FAT32 volumes
+# This is critical for devices with limited storage (e.g., 941KB CIRCUITPY drives)
+os.environ["COPYFILE_DISABLE"] = "1"
 
 
 SYSTEM_FOLDERS = [

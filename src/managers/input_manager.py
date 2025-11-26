@@ -15,12 +15,12 @@ Architecture: See docs/SCHEDULER_ARCHITECTURE.md
 
 import time
 
-from app_typing import Any, Callable
-from button_controller import ButtonController
-from logging_helper import logger
-from manager_base import ManagerBase
-from scheduler import Scheduler
-from utils import suppress
+from controllers.button_controller import ButtonController
+from core.app_typing import Any, Callable
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.manager_base import ManagerBase
+from utils.utils import suppress
 
 
 class ButtonEvent:

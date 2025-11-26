@@ -19,10 +19,10 @@ import os
 import sys
 import traceback
 
-from app_typing import Any
-from input_manager import ButtonEvent, InputManager
-from logging_helper import configure_logging, logger
-from scheduler import Scheduler
+from core.app_typing import Any
+from core.logging_helper import configure_logging, logger
+from core.scheduler import Scheduler
+from managers.input_manager import ButtonEvent, InputManager
 
 TEST_LOG = logger("wicid.test_mode")
 

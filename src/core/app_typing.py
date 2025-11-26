@@ -14,7 +14,7 @@ Usage:
 
 # 1. Try to import standard typing symbols (for static analysis/CPython)
 try:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Iterator
 
     # noqa: UP035 - We explicitly need these deprecated types for the shim interface to match.
     # The suppression must be at the start of the block.
@@ -65,6 +65,9 @@ except ImportError:
     class Generator:  # type: ignore[no-redef]  # noqa: UP035
         pass
 
+    class Iterator:  # type: ignore[no-redef]
+        pass
+
     # Simple alias for Any
     Any: object = object()  # type: ignore[no-redef]
 
@@ -78,7 +81,7 @@ except ImportError:
 
 # 2. Try to import CircuitPython-specific types (for static analysis)
 try:
-    from circuitpython_typing import (  # type: ignore[import-not-found]  # CircuitPython-only module
+    from circuitpython_typing import (  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
         ReadableBuffer,
         WriteableBuffer,
     )

@@ -5,11 +5,11 @@ Defines the contract that all modes must implement and provides
 access to shared system resources (connection manager, pixel controller, etc.).
 """
 
-from connection_manager import ConnectionManager
-from input_manager import InputManager
-from logging_helper import logger
-from pixel_controller import PixelController
-from scheduler import Scheduler
+from controllers.pixel_controller import PixelController
+from core.logging_helper import logger
+from core.scheduler import Scheduler
+from managers.connection_manager import ConnectionManager
+from managers.input_manager import InputManager
 
 
 class Mode:

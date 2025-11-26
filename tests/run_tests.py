@@ -32,12 +32,8 @@ if "/tests" not in sys.path:
 from unittest import TestResult as CustomTestResult
 
 # Import logging after path is set up
-from app_typing import TYPE_CHECKING, Callable, cast
-from logging_helper import logger
-
-if TYPE_CHECKING:
-    from tests.unittest import TestResult as CPTestResult
-    from tests.unittest import TestSuite as CPTestSuite
+from core.app_typing import Any, Callable
+from core.logging_helper import logger
 
 TEST_LOG = logger("wicid.tests")
 
@@ -51,7 +47,7 @@ def _restore_hardware_input_manager() -> None:
     again without requiring a device reset.
     """
     try:
-        from input_manager import InputManager
+        from managers.input_manager import InputManager
 
         InputManager.instance()
     except Exception:
@@ -111,7 +107,7 @@ class GroupedTestResult(unittest.TestResult):
             self.current_test_info = None
 
 
-def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None = None) -> "CPTestResult":
+def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None = None) -> Any:
     """Run all tests in the test suite.
 
     Args:
@@ -128,7 +124,7 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
 
     # CircuitPython unittest doesn't have TestLoader.discover()
     # Manually import and add test modules
-    suite: CPTestSuite = unittest.TestSuite()  # type: ignore[assignment]
+    suite: Any = unittest.TestSuite()
 
     # Track test modules by name for organization
     test_modules = {}  # module_name -> (dir_path, package_prefix, filename)
@@ -171,19 +167,19 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
     discover_tests_in_directory("/tests/functional", "functional")
 
     # Require at least one test to be discovered in Test Mode
-    if not suite.tests:
+    if suite.countTestCases() == 0:
         raise RuntimeError("No tests discovered in /tests directories. This is a blocking error in Test Mode.")
 
     # Create custom result collector and output capture
     grouped_result = GroupedTestResult()
-    result: CPTestResult = CustomTestResult()  # type: ignore[assignment]
+    result: Any = CustomTestResult()
 
     # Run tests, grouping by module and class, suppressing default output
     def format_error(e: Exception) -> str:
         """Format exception with full traceback."""
         return "".join(traceback.format_exception(e))
 
-    for test_class in suite.tests:
+    for test_class in suite:
         if tick_callback:
             tick_callback()  # Update animation between test classes
 
@@ -407,7 +403,7 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
     return result
 
 
-def run_unit_tests(verbosity: int = 2) -> "CPTestResult":
+def run_unit_tests(verbosity: int = 2) -> Any:
     """Run only unit tests.
 
     Args:
@@ -426,7 +422,7 @@ def run_unit_tests(verbosity: int = 2) -> "CPTestResult":
     return run_all_tests(verbosity)
 
 
-def run_integration_tests(verbosity: int = 2) -> "CPTestResult":
+def run_integration_tests(verbosity: int = 2) -> Any:
     """Run only integration tests.
 
     Args:
@@ -441,10 +437,10 @@ def run_integration_tests(verbosity: int = 2) -> "CPTestResult":
     TEST_LOG.testing("")
     TEST_LOG.testing("No integration tests yet.")
     TEST_LOG.testing("=" * 70)
-    return cast("CPTestResult", unittest.TestResult())
+    return unittest.TestResult()
 
 
-def run_functional_tests(verbosity: int = 2) -> "CPTestResult":
+def run_functional_tests(verbosity: int = 2) -> Any:
     """Run only functional tests.
 
     Args:
@@ -459,7 +455,7 @@ def run_functional_tests(verbosity: int = 2) -> "CPTestResult":
     TEST_LOG.testing("")
     TEST_LOG.testing("No functional tests yet.")
     TEST_LOG.testing("=" * 70)
-    return cast("CPTestResult", unittest.TestResult())
+    return unittest.TestResult()
 
 
 def main() -> None:

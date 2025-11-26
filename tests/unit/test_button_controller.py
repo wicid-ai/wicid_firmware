@@ -26,11 +26,10 @@ if "/tests" not in sys.path:
 # Import unittest framework
 from unittest import TestCase
 
-from button_controller import ButtonController
-from hardware_mocks import MockDigitalInOut
-from logging_helper import logger
-from test_helpers import create_mock_button_pin
-from utils import suppress
+from controllers.button_controller import ButtonController
+from core.logging_helper import logger
+from tests.hardware_mocks import MockDigitalInOut
+from tests.test_helpers import create_mock_button_pin
 
 
 class TestButtonControllerBasic(TestCase):
@@ -47,10 +46,8 @@ class TestButtonControllerBasic(TestCase):
 
     def tearDown(self) -> None:
         """Clean up after each test."""
-        # Clean up any controller instances
-        if hasattr(self, "controller") and self.controller is not None:
-            with suppress(Exception):
-                self.controller.deinit()
+        # Individual tests are responsible for deinitializing controllers they create.
+        pass
 
     def test_button_controller_init(self) -> None:
         """Verify ButtonController initializes with mock pin."""

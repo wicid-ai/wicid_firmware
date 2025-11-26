@@ -8,7 +8,7 @@ eventual fallback to indefinite Setup Mode.
 
 import json
 
-from logging_helper import logger
+from core.logging_helper import logger
 
 STATE_FILE = "/wifi_retry_state.json"
 
