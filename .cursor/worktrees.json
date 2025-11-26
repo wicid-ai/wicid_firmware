@@ -1,0 +1,8 @@
+{
+  "setup-worktree": [
+    "pip install --user pipenv",
+    "pipenv install --dev",
+    "pipenv sync --dev",
+    "pipenv run pre-commit install"
+  ]
+}
