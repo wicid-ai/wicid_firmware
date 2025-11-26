@@ -5,13 +5,8 @@ These minimal tests ensure the test runner, unittest framework, and LED
 feedback are functioning correctly on the device.
 """
 
-import sys
-
-# Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, "/")
-
-# Import unittest framework
-from unittest import TestCase
+# Import from unit package - path setup happens automatically
+from tests.unit import TestCase
 
 
 class TestSmoke(TestCase):

@@ -8,27 +8,14 @@ These tests run on CircuitPython hardware and verify:
 - Starvation prevention
 - Timing accuracy
 
-Run via REPL:
-    >>> import tests
-    >>> tests.run_unit()
-
-Or run specific test class:
-    >>> from tests.unit.test_scheduler import TestSchedulerBasic
-    >>> import unittest
-    >>> unittest.main(module='tests.unit.test_scheduler', exit=False)
+See tests.unit for instructions on running tests.
 """
 
-import sys
-
-# Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, "/")
-
-# Import unittest framework
-from unittest import TestCase
-from unittest.mock import patch
+# Import from unit package - path setup happens automatically
 
 from core.app_typing import Any
 from core.scheduler import Scheduler, Task, TaskFatalError, TaskHandle, TaskNonFatalError, TaskType
+from tests.unit import TestCase
 
 
 class TestSchedulerBasic(TestCase):
@@ -61,21 +48,25 @@ class TestSchedulerBasic(TestCase):
         self.assertNotEqual(handle1.task_id, handle2.task_id, "Handles have unique IDs")
 
     def test_task_creation(self) -> None:
-        """Verify Task object creation."""
+        """Verify Task dataclass creation and field access."""
 
         async def dummy_coro() -> None:
             pass
 
         task = Task(
-            name="Test Task", priority=50, coroutine_factory=dummy_coro, task_type=TaskType.PERIODIC, timing_param=1.0
+            name="Test Task",
+            priority=50,
+            coroutine_factory=dummy_coro,
+            task_type=TaskType.PERIODIC,
+            timing_param=1.0,
         )
 
-        self.assertEqual(task.name, "Test Task")
-        self.assertEqual(task.priority, 50)
-        self.assertEqual(task.task_type, TaskType.PERIODIC)
-        self.assertEqual(task.timing_param, 1.0)
-        self.assertEqual(task.execution_count, 0)
-        self.assertFalse(task.cancelled)
+        self.assertEqual(task.name, "Test Task", "Task name set correctly")
+        self.assertEqual(task.priority, 50, "Priority set correctly")
+        self.assertEqual(task.task_type, "PERIODIC", "Task type is PERIODIC (stored as string)")
+        self.assertEqual(task.timing_param, 1.0, "Timing param set correctly")
+        self.assertEqual(task.execution_count, 0, "Execution count starts at 0")
+        self.assertFalse(task.cancelled, "Cancelled is initially False")
 
     def test_task_comparison(self) -> None:
         """Verify task heap ordering."""
@@ -196,22 +187,31 @@ class TestSchedulerAsyncWrappers(TestCase):
     """Tests for asyncio wrapper functions."""
 
     def test_yield_control(self) -> None:
-        """Verify yield_control proxies to asyncio.sleep(0)."""
-        sentinel = object()
-        with patch("scheduler.asyncio.sleep", return_value=sentinel) as mock_sleep:
-            awaitable = Scheduler.yield_control()
+        """Verify yield_control returns an awaitable and works correctly."""
+        import asyncio
 
-        mock_sleep.assert_called_once_with(0)
-        self.assertIs(awaitable, sentinel, "Returns awaitable from asyncio.sleep(0)")
+        async def test_coro() -> bool:
+            # yield_control should return an awaitable that completes immediately
+            await Scheduler.yield_control()
+            return True
+
+        result = asyncio.run(test_coro())
+        self.assertTrue(result, "yield_control() completes successfully")
 
     def test_sleep(self) -> None:
-        """Verify sleep proxies to asyncio.sleep with duration."""
-        sentinel = object()
-        with patch("scheduler.asyncio.sleep", return_value=sentinel) as mock_sleep:
-            awaitable = Scheduler.sleep(1.23)
+        """Verify sleep returns an awaitable and sleeps for the correct duration."""
+        import asyncio
+        import time
 
-        mock_sleep.assert_called_once_with(1.23)
-        self.assertIs(awaitable, sentinel, "Returns awaitable from asyncio.sleep(seconds)")
+        async def test_coro() -> float:
+            start = time.monotonic()
+            await Scheduler.sleep(0.1)  # Sleep for 100ms
+            return time.monotonic() - start
+
+        duration = asyncio.run(test_coro())
+        # Allow 50ms tolerance for timing (CircuitPython unittest doesn't have assertGreaterEqual)
+        self.assertTrue(duration >= 0.05, f"sleep() duration {duration} should be at least 50ms")
+        self.assertTrue(duration < 0.2, f"sleep() duration {duration} should be less than 200ms")
 
 
 class TestSchedulerIntegration(TestCase):

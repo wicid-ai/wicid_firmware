@@ -548,3 +548,130 @@ class MockButtonController:
     def deinit(self) -> None:
         """Deinitialize (no-op for mock)."""
         self._pressed = False
+
+
+class MockRadio:
+    """
+    Mock for circuitpython wifi.radio object.
+    """
+
+    def __init__(self) -> None:
+        self.enabled = True
+        self.connected = False
+        self.ipv4_address: Any = None
+        self.ipv4_address_ap: Any = None
+        self.mac_address = b"\xaa\xbb\xcc\xdd\xee\xff"
+        self._ap_active = False
+
+    def connect(self, ssid: Any, password: Any, timeout: Any = None) -> None:
+        # Simulate connection
+        self.connected = True
+        import ipaddress
+
+        self.ipv4_address = ipaddress.IPv4Address("192.168.1.100")
+
+    def stop_station(self) -> None:
+        self.connected = False
+        self.ipv4_address = None
+
+    def start_ap(self, ssid: Any, password: Any = None) -> None:
+        self._ap_active = True
+        import ipaddress
+
+        self.ipv4_address_ap = ipaddress.IPv4Address("192.168.4.1")
+
+    def stop_ap(self) -> None:
+        self._ap_active = False
+        self.ipv4_address_ap = None
+
+    def start_scanning_networks(self) -> list[Any]:
+        return []
+
+    def stop_scanning_networks(self) -> None:
+        pass
+
+    def set_ipv4_address_ap(self, ipv4: Any, netmask: Any, gateway: Any) -> None:
+        self.ipv4_address_ap = ipv4
+
+
+class MockWiFiRadioController:
+    """Mock WiFi radio controller for testing."""
+
+    def __init__(self) -> None:
+        self.radio = MockRadio()
+
+
+class MockConnectionManager:
+    """Mock ConnectionManager for testing ConfigurationManager."""
+
+    def __init__(self) -> None:
+        self.stop_access_point_called = False
+        self.start_access_point_called = False
+        self.ap_ip = "192.168.4.1"
+        self.scan_results: list[Any] = []
+
+    async def stop_access_point(self, restore_connection: bool = True) -> None:
+        """Mock stop_access_point."""
+        self.stop_access_point_called = True
+
+    async def start_access_point(self, ssid: str, password: str) -> str:
+        """Mock start_access_point."""
+        self.start_access_point_called = True
+        return self.ap_ip
+
+    def get_socket_pool(self) -> Any:
+        """Mock get_socket_pool."""
+        return object()  # Return a dummy object
+
+    def scan_networks(self) -> list[Any]:
+        """Mock scan_networks."""
+        return self.scan_results
+
+
+class MockPixelController:
+    """Mock PixelController for testing ConfigurationManager."""
+
+    def __init__(self) -> None:
+        self.clear_called = False
+        self.indicate_setup_mode_called = False
+
+    def clear(self) -> None:
+        """Mock clear."""
+        self.clear_called = True
+
+    def indicate_setup_mode(self) -> None:
+        """Mock indicate_setup_mode."""
+        self.indicate_setup_mode_called = True
+
+
+class MockUpdateManager:
+    """Mock UpdateManager for testing ConfigurationManager."""
+
+    def __init__(self) -> None:
+        self.reset_session_called = False
+
+    def reset_session(self) -> None:
+        """Mock reset_session."""
+        self.reset_session_called = True
+
+
+class MockDNSInterceptor:
+    """Mock DNSInterceptorService for testing ConfigurationManager."""
+
+    def __init__(self) -> None:
+        self.stop_called = False
+
+    def stop(self) -> None:
+        """Mock stop."""
+        self.stop_called = True
+
+
+class MockHTTPServer:
+    """Mock HTTP Server for testing ConfigurationManager."""
+
+    def __init__(self) -> None:
+        self.stop_called = False
+
+    def stop(self) -> None:
+        """Mock stop."""
+        self.stop_called = True

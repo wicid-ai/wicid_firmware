@@ -10,32 +10,15 @@ Tests verify:
 - Event firing
 - Button state tracking
 
-Run via REPL:
-    >>> import tests
-    >>> tests.run_unit()
-
-Or run specific test class:
-    >>> from tests.unit.test_input_manager import TestInputManagerBasic
-    >>> import unittest
-    >>> unittest.main(module='tests.unit.test_input_manager', exit=False)
+See tests.unit for instructions on running tests.
 """
 
-import sys
-
-# Add root to path for imports (source files are in root on CircuitPython device)
-sys.path.insert(0, "/")
-
-# Add tests directory to path for test helpers
-if "/tests" not in sys.path:
-    sys.path.insert(0, "/tests")
-
-# Import unittest framework
-from unittest import TestCase
-
+# Import from unit package - path setup happens automatically
 from core.app_typing import Any
 from managers.input_manager import ButtonEvent, InputManager
 from tests.hardware_mocks import MockButtonController
 from tests.test_helpers import create_mock_button_pin
+from tests.unit import TestCase
 from utils.utils import suppress
 
 

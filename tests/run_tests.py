@@ -40,20 +40,13 @@ TEST_LOG = logger("wicid.tests")
 
 def _restore_hardware_input_manager() -> None:
     """
-    Reinitialize InputManager with real hardware after tests complete.
+    Skip hardware restoration after tests.
 
-    Tests replace the controller with mocks; this helper ensures the
-    production InputManager is recreated so the physical button works
-    again without requiring a device reset.
+    CircuitPython hardware is in an inconsistent state after mocking during tests.
+    Attempting to reinitialize real hardware causes hard faults. A device reset
+    is required anyway to restore normal operation, so this restoration is skipped.
     """
-    try:
-        from managers.input_manager import InputManager
-
-        InputManager.instance()
-    except Exception:
-        # If InputManager can't be imported (e.g., desktop host)
-        # we silently skip hardware restoration.
-        TEST_LOG.debug("Skipping InputManager hardware restoration after tests")
+    TEST_LOG.debug("Skipping InputManager hardware restoration (device reset required after tests)")
 
 
 class GroupedTestResult(unittest.TestResult):
