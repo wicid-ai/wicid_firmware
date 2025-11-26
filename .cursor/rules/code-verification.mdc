@@ -9,7 +9,7 @@ After updating any Python code, follow these verification steps:
 
 ## ✅ Required Actions
 
-- **Always run**: `pipenv run pre-commit run`
+- **Always run**: `pipenv run pre-commit run --all-files`
   - This validates code quality, formatting, and linting
   - Ensures code meets project standards before committing
 
