@@ -1,0 +1,21 @@
+---
+description: Verification steps after Python code updates
+globs: **/*.py
+alwaysApply: true
+---
+# Code Verification Steps
+
+After updating any Python code, follow these verification steps:
+
+## ✅ Required Actions
+
+- **Always run**: `pipenv run pre-commit run`
+  - This validates code quality, formatting, and linting
+  - Ensures code meets project standards before committing
+
+## ❌ DO NOT Run
+
+- **NEVER run automated tests** (pytest, unittest, etc.)
+  - Tests are only executable on-device manually
+  - Running tests in development environment will fail
+  - Testing must be performed on actual hardware
