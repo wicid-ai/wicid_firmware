@@ -110,7 +110,7 @@ class ModeManager(ManagerBase):
             # Create mode instance (modes use InputManager singleton, not button parameter)
             mode = mode_class()
 
-            self.logger.info(f"Starting {mode.name}")
+            self.logger.debug(f"Starting {mode.name}")
 
             # Initialize mode
             try:
@@ -170,18 +170,18 @@ class ModeManager(ManagerBase):
                 break
             for action in actions:
                 if action == ButtonAction.SAFE:
-                    self.logger.info("Safe Mode requested (callback)")
+                    self.logger.debug("Safe Mode requested (callback)")
                     trigger_safe_mode()
                 elif action == ButtonAction.SETUP:
-                    self.logger.info("Setup Mode requested (callback)")
+                    self.logger.debug("Setup Mode requested (callback)")
                     setup_success = await SetupPortalMode.execute()
                     self._goto_primary_mode()
                     if setup_success:
-                        self.logger.info("Setup complete - returning to primary mode")
+                        self.logger.debug("Setup complete - returning to primary mode")
                     else:
-                        self.logger.info("Setup cancelled - returning to primary mode")
+                        self.logger.debug("Setup cancelled - returning to primary mode")
                 elif action == ButtonAction.NEXT:
-                    self.logger.info("Switching to next mode")
+                    self.logger.debug("Switching to next mode")
                     self._next_mode()
                 else:
                     self.logger.debug(f"Unhandled button action: {action}")

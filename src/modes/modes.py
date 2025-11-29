@@ -185,7 +185,7 @@ class WeatherMode(Mode):
         # Wait for button release
         await self.wait_for_button_release()
 
-        self.logger.info("Starting display loop")
+        self.logger.debug("Starting display loop")
         self._start_weather_refresh_task()
 
         while self._running:
@@ -211,11 +211,12 @@ class WeatherMode(Mode):
             await Scheduler.sleep(0.05)
 
         self._stop_weather_refresh_task()
-        self.logger.info("Exiting")
+        self.logger.debug("WeatherMode: Exiting")
 
     def cleanup(self) -> None:
         """Clean up weather mode resources."""
         super().cleanup()
+        # WeatherService doesn't own socket resources - ConnectionManager handles cleanup
         self.weather = None
         self.system_manager = None
         self._stop_weather_refresh_task()
@@ -314,7 +315,7 @@ class TempDemoMode(Mode):
                     return
                 await Scheduler.sleep(0.05)
 
-        self.logger.info("Exiting")
+        self.logger.debug("TempDemoMode: Exiting")
 
 
 class PrecipDemoMode(Mode):
@@ -347,7 +348,7 @@ class PrecipDemoMode(Mode):
             if self.is_button_pressed():
                 break
 
-        self.logger.debug("Exiting")
+        self.logger.debug("PrecipDemoMode: Exiting")
 
 
 class SetupPortalMode(Mode):

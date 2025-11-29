@@ -689,8 +689,8 @@ class Scheduler:
             TaskFatalError: If a task encounters a fatal error
             Exception: If the scheduler itself crashes
         """
-        self.logger.info("Starting scheduler event loop...")
-        self.logger.info(
+        self.logger.debug("Starting scheduler event loop...")
+        self.logger.debug(
             f"Configuration: MAX_STARVATION_TIME={self.MAX_STARVATION_TIME}s, "
             f"STARVATION_PRIORITY_BOOST={self.STARVATION_PRIORITY_BOOST}, "
             f"TASK_WARNING_THRESHOLD_MS={self.TASK_WARNING_THRESHOLD_MS}ms"

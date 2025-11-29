@@ -157,8 +157,8 @@ class ConnectionManager(ManagerBase):
             self._radio.enabled = True
             await Scheduler.sleep(0.3)
 
-            # Clear socket pool cache since radio was reset
-            self._socket_pool = None
+            # Close session since radio was reset (pool can be reused)
+            self._close_session("radio reset")
 
             self.logger.debug("WiFi radio reset complete")
         except Exception as e:
@@ -295,7 +295,7 @@ class ConnectionManager(ManagerBase):
             self.logger.error(error_msg)
             return False, error_msg
 
-        self.logger.info(f"Connecting to '{ssid}'...")
+        self.logger.debug(f"Connecting to '{ssid}'...")
 
         # Attempt connection with backoff
         try:
@@ -383,7 +383,7 @@ class ConnectionManager(ManagerBase):
 
                 # Verify connection
                 if self._radio.connected and self._radio.ipv4_address:
-                    self.logger.info(f"WiFi connected - IP: {self._radio.ipv4_address}")
+                    self.logger.debug(f"WiFi connected - IP: {self._radio.ipv4_address}")
                     self._connected = True
 
                     # Create socket pool and session
@@ -695,9 +695,13 @@ class ConnectionManager(ManagerBase):
         # Reconnect using standard backoff logic
         return await self.connect_with_backoff(ssid, password, timeout)
 
-    def create_session(self) -> Any:
+    def get_session(self) -> Any:
         """
-        Create and return an HTTP session for making requests.
+        Get the HTTP session for making requests.
+
+        Returns the cached session if available, or creates a new one.
+        The session is automatically invalidated when the socket pool changes
+        (e.g., during AP mode transitions).
 
         Returns:
             adafruit_requests.Session instance
@@ -706,12 +710,15 @@ class ConnectionManager(ManagerBase):
             RuntimeError: If not connected to WiFi
         """
         if not self.is_connected():
-            raise RuntimeError("Cannot create session: not connected to WiFi")
+            raise RuntimeError("Cannot get session: not connected to WiFi")
 
-        import adafruit_requests
+        if self.session is None:
+            import adafruit_requests
 
-        pool = socketpool.SocketPool(self._radio)
-        self.session = adafruit_requests.Session(pool, ssl.create_default_context())
+            pool = self.get_socket_pool()
+            self.session = adafruit_requests.Session(pool, ssl.create_default_context())
+            self.logger.debug(f"Created HTTP session id={id(self.session)}")
+
         return self.session
 
     def get_mac_address(self) -> str:
@@ -881,8 +888,8 @@ class ConnectionManager(ManagerBase):
         self._ap_active = False
         self._pre_ap_connected = False  # Reset saved state
 
-        # Clear socket pool cache since radio state has changed
-        self._socket_pool = None
+        # Close session since radio state has changed (pool can be reused)
+        self._close_session("AP stopped")
 
     async def _wait_for_radio_ready_for_concurrent_mode(self, timeout: float = 1.0) -> bool:
         """
@@ -1039,14 +1046,57 @@ class ConnectionManager(ManagerBase):
 
         self._ap_active = False
 
-        # Clear socket pool cache since radio is being disabled
-        self._socket_pool = None
+        # Close session since radio is being disabled (pool can be reused after re-enable)
+        self._close_session("AP shutdown")
 
         self.logger.debug("Access point shutdown complete")
 
     def is_ap_active(self) -> bool:
         """Check if access point mode is currently active."""
         return self._ap_active
+
+    def _close_session(self, reason: str) -> None:
+        """
+        Close the HTTP session and release its socket resources.
+
+        This is called when transitioning between modes (AP/station) to ensure
+        sockets are properly released. The socket pool is NOT cleared - it is
+        reused for the lifetime of the application to prevent socket descriptor
+        exhaustion at the lwIP level.
+
+        Args:
+            reason: Description of why the session is being closed (for logging)
+        """
+        if self.session is not None:
+            self.logger.debug(f"Closing HTTP session id={id(self.session)} ({reason})")
+            with suppress(Exception):
+                # Try to close any cached socket in the session
+                if hasattr(self.session, "_socket") and self.session._socket is not None:
+                    self.session._socket.close()
+                    self.session._socket = None
+            self.session = None
+
+    def _invalidate_socket_pool(self, reason: str) -> None:
+        """
+        Fully invalidate the socket pool - only for shutdown/hard reset.
+
+        This should ONLY be called during:
+        - Full ConnectionManager shutdown
+        - Hard radio reset/disable
+
+        For normal mode transitions (AP to station), use _close_session() instead.
+        Creating new socket pools exhausts lwIP socket descriptors.
+
+        Args:
+            reason: Description of why the pool is being invalidated (for logging)
+        """
+        # Close the session first
+        self._close_session(reason)
+
+        # Now clear the socket pool reference
+        if self._socket_pool is not None:
+            self.logger.debug(f"Invalidating socket pool id={id(self._socket_pool)} ({reason})")
+        self._socket_pool = None
 
     def get_socket_pool(self) -> Any:
         """
@@ -1062,7 +1112,9 @@ class ConnectionManager(ManagerBase):
         # Reuse existing pool if available
         if self._socket_pool is None:
             self._socket_pool = socketpool.SocketPool(self._radio)
-            self.logger.debug("Created new socket pool")
+            self.logger.debug(f"Created new socket pool id={id(self._socket_pool)}")
+        else:
+            self.logger.debug(f"Reusing existing socket pool id={id(self._socket_pool)}")
         return self._socket_pool
 
     def get_ap_ip_address(self) -> str:
@@ -1149,13 +1201,14 @@ class ConnectionManager(ManagerBase):
                 with suppress(Exception):
                     self._radio.enabled = False
 
-            # Clear references
-            self.session = None
+            # Invalidate socket pool and session
+            self._invalidate_socket_pool("shutdown")
+
+            # Clear remaining references
             self._connected = False
             self._ap_active = False
             self._pre_ap_connected = False
             self._credentials = None
-            self._socket_pool = None
             self._init_radio_controller = None
 
             # Radio controller should be managed by its own lifecycle

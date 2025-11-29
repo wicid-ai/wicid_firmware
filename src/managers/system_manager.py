@@ -169,7 +169,7 @@ class SystemManager(ManagerBase):
         if not self.update_manager.should_check_now():
             return
 
-        self.logger.info("Scheduled update check triggered")
+        self.logger.debug("Scheduled update check triggered")
         try:
             # Use centralized update workflow - handles check, download, and reboot
             await self.update_manager.check_download_and_reboot(delay_seconds=1)

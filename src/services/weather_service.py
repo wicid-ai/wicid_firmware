@@ -5,14 +5,21 @@ from managers.connection_manager import ConnectionManager
 
 
 class WeatherService:
+    """
+    Service for fetching weather data from Open-Meteo API.
+
+    Uses the HTTP session managed by ConnectionManager. The session lifecycle
+    is handled by ConnectionManager, so this service does not need to manage
+    socket resources.
+    """
+
     def __init__(self, weather_zip: str, session: Any = None) -> None:
         """
-        Initialize the WeatherService with an active HTTP session.
-        Retrieves latitude/longitude for the target ZIP code using Open-Meteo's geocoding API.
+        Initialize the WeatherService.
 
         Args:
             weather_zip: ZIP code string for weather location
-            session: Optional adafruit_requests.Session instance (for tests)
+            session: Optional adafruit_requests.Session instance (for tests only)
 
         Note:
             Uses adafruit_requests.Session (blocking) because CircuitPython does not
@@ -21,14 +28,23 @@ class WeatherService:
         """
         self.logger = logger("wicid.weather")
         self.zip_code = weather_zip
+        self._test_session = session  # Only used for testing
 
-        connection_manager = ConnectionManager.instance()
-        self.session = session or connection_manager.create_session()
-
-        # Coordinates will be fetched on first use or passed in
+        # Coordinates will be fetched on first use
         self.lat: float | None = None
         self.lon: float | None = None
         self.timezone: str = "America%2FNew_York"
+
+    def _get_session(self) -> Any:
+        """
+        Get the HTTP session for making requests.
+
+        Uses the test session if provided, otherwise gets the session from ConnectionManager.
+        ConnectionManager owns the session lifecycle.
+        """
+        if self._test_session is not None:
+            return self._test_session
+        return ConnectionManager.instance().get_session()
 
     async def _ensure_location(self) -> bool:
         """Ensure we have coordinates for the ZIP code."""
@@ -40,7 +56,8 @@ class WeatherService:
             # We yield control immediately after to allow scheduler to run other tasks
             # See docs/STYLE_GUIDE.md (CircuitPython Compatibility) for details
             url = f"https://geocoding-api.open-meteo.com/v1/search?name={self.zip_code}&count=1&language=en&format=json"
-            response = self.session.get(url)
+            session = self._get_session()
+            response = session.get(url)
             await Scheduler.yield_control()
 
             data = response.json()
@@ -72,7 +89,8 @@ class WeatherService:
             return None
 
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&current_weather=true&temperature_unit=fahrenheit&timezone={self.timezone}&models=dmi_seamless"
-        response = self.session.get(url)
+        session = self._get_session()
+        response = session.get(url)
         await Scheduler.yield_control()
 
         data = response.json()
@@ -91,7 +109,8 @@ class WeatherService:
             return None
 
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&daily=temperature_2m_max&forecast_days=1&temperature_unit=fahrenheit&timezone={self.timezone}&models=dmi_seamless"
-        response = self.session.get(url)
+        session = self._get_session()
+        response = session.get(url)
         await Scheduler.yield_control()
 
         data = response.json()
@@ -110,7 +129,8 @@ class WeatherService:
             return None
 
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&daily=precipitation_probability_max&forecast_days=1&timezone={self.timezone}&models=dmi_seamless"
-        response = self.session.get(url)
+        session = self._get_session()
+        response = session.get(url)
         await Scheduler.yield_control()
 
         data = response.json()
@@ -137,7 +157,8 @@ class WeatherService:
             return None
 
         url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&current_weather=true&hourly=precipitation_probability&forecast_days=3&timezone={self.timezone}&models=dmi_seamless"
-        response = self.session.get(url)
+        session = self._get_session()
+        response = session.get(url)
         await Scheduler.yield_control()
 
         data = response.json()

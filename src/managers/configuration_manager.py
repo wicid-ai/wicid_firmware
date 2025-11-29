@@ -191,18 +191,17 @@ class ConfigurationManager(ManagerBase):
 
             # Try to connect with existing credentials
             if self.connection_manager and self.connection_manager.is_connected():
-                self.logger.info("Already connected")
+                self.logger.debug("Already connected")
                 self._initialized = True
                 return True
 
             # Attempt connection with saved credentials
-            self.logger.info("Connecting with saved credentials")
+            self.logger.debug("Connecting with saved credentials")
             if not self.connection_manager:
                 raise RuntimeError("ConnectionManager not initialized")
             success, error_msg = await self.connection_manager.ensure_connected(timeout=60)
 
             if success:
-                self.logger.info("WiFi connected")
                 self._initialized = True
                 return True
             else:
@@ -372,7 +371,6 @@ class ConfigurationManager(ManagerBase):
         if self._http_server:
             try:
                 self._http_server.stop()
-                self.logger.debug("HTTP server stopped")
             except Exception as e:
                 self.logger.warning(f"Error stopping HTTP server: {e}")
             finally:
@@ -599,9 +597,6 @@ class ConfigurationManager(ManagerBase):
         debounce_end = time.monotonic() + 0.5
         while time.monotonic() < debounce_end:
             await Scheduler.sleep(0.05)
-
-        self.logger.info("Starting main server loop")
-        self.logger.info("Visit: http://192.168.4.1/ while connected to WICID-Setup")
 
         # Main server loop - listen for button press to exit
         while not self.portal.setup_complete:
@@ -1040,16 +1035,18 @@ class ConfigurationManager(ManagerBase):
         Returns:
             bool: True if cleanup was successful, False if issues were detected
         """
+        import gc
+
         cleanup_successful = True
 
         try:
-            # Stop HTTP server (new centralized method)
+            # Stop HTTP server
             self._stop_http_server()
 
             # Stop DNS interceptor
             self._stop_dns_interceptor()
 
-            # Reset Update Manager session (invalidates socket pool)
+            # Reset Update Manager session
             if self._update_manager:
                 try:
                     self._update_manager.reset_session()
@@ -1071,8 +1068,11 @@ class ConfigurationManager(ManagerBase):
             except Exception as led_e:
                 self.logger.warning(f"Error clearing LED: {led_e}")
 
-            # Reset portal state (use dataclass for clean reset)
+            # Reset portal state
             self.portal = PortalState()
+
+            # Force garbage collection to release socket resources
+            gc.collect()
 
             return cleanup_successful
 

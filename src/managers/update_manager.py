@@ -82,7 +82,6 @@ class UpdateManager(ManagerBase):
         else:
             self.connection_manager = connection_manager
 
-        self._session: Any = None  # Lazy-created HTTP session
         self._cached_update_info: dict[str, Any] | None = None  # Store check_for_updates() results
         self.next_update_check: float | None = None
         self._download_flash_start: float | None = None
@@ -340,7 +339,7 @@ class UpdateManager(ManagerBase):
 
             # Include device info in User-Agent header
             user_agent = f"WICID/{current_version} ({device_machine}; {device_os}; ZIP:{weather_zip})"
-            headers = {"User-Agent": user_agent}
+            headers = self._build_request_headers(user_agent=user_agent)
 
             # Fetch the releases manifest
             response = session.get(manifest_url, headers=headers)
@@ -506,25 +505,34 @@ class UpdateManager(ManagerBase):
 
     def _get_session(self) -> Any:
         """
-        Get or create HTTP session lazily.
+        Get HTTP session from ConnectionManager.
+
+        ConnectionManager owns the session lifecycle - it creates, caches, and
+        cleans up the session when the socket pool changes.
 
         Returns:
             HTTP session instance
         """
-        if self._session is None:
-            self._session = self.connection_manager.create_session()
-        return self._session
+        return self.connection_manager.get_session()
 
-    def reset_session(self) -> None:
+    def _build_request_headers(self, user_agent: str | None = None) -> dict[str, str]:
         """
-        Reset (clear) the cached HTTP session.
+        Build HTTP request headers with Connection: close for socket cleanup.
 
-        This is critical for resource cleanup when switching between WiFi modes
-        (e.g., AP to station mode) as the underlying SocketPool becomes invalid.
-        Safe to call multiple times (idempotent).
+        The Connection: close header ensures that sockets are released immediately
+        after the request completes, rather than being kept alive for reuse.
+        This is critical on resource-constrained devices to prevent socket exhaustion.
+
+        Args:
+            user_agent: Optional User-Agent string to include in headers
+
+        Returns:
+            dict[str, str]: Headers dictionary with Connection: close and optional User-Agent
         """
-        self._session = None
-        self.logger.debug("HTTP session reset")
+        headers = {"Connection": "close"}
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        return headers
 
     def _update_download_led(self, force: bool = False) -> None:
         """
@@ -636,7 +644,7 @@ class UpdateManager(ManagerBase):
 
                 content_length = None
                 try:
-                    head_response = session.head(zip_url)
+                    head_response = session.head(zip_url, headers=self._build_request_headers())
                     if hasattr(head_response, "headers") and head_response.headers:
                         content_length_str = _get_content_length(head_response.headers)
                         if content_length_str:
@@ -649,7 +657,7 @@ class UpdateManager(ManagerBase):
                 except Exception as e:
                     self.logger.debug(f"HEAD request failed (non-critical): {e}")
 
-                response = session.get(zip_url)
+                response = session.get(zip_url, headers=self._build_request_headers())
 
                 if content_length is None and hasattr(response, "headers") and response.headers:
                     content_length_str = _get_content_length(response.headers)

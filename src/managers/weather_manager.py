@@ -134,7 +134,7 @@ class WeatherManager(ManagerBase):
         self.logger.info(f"Initializing weather service for ZIP: {weather_zip}")
 
         try:
-            session = self.connection_manager.create_session()
+            session = self.connection_manager.get_session()
             self._weather = WeatherService(weather_zip, session=session)
             self._weather_zip = weather_zip
 
