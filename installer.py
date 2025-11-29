@@ -266,9 +266,30 @@ def extract_zip_to_temp(zip_path):
         raise
 
 
+def get_disk_space(path):
+    """Get available disk space in bytes."""
+    import shutil
+
+    stat = shutil.disk_usage(path)
+    return stat.free
+
+
+def cleanup_single_directory(dir_path):
+    """Remove hidden files from a single directory (non-recursive)."""
+    with contextlib.suppress(Exception):
+        for item in dir_path.iterdir():
+            if item.is_file() and item.name.startswith("."):
+                if item.name == ".Trashes":
+                    continue
+                with contextlib.suppress(Exception):
+                    item.unlink()
+
+
 def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
     """
     Copy files from source to destination, maintaining directory structure.
+
+    Aggressively cleans hidden files during copy to prevent filling small FAT32 drives.
 
     Args:
         source_dir: Source directory path
@@ -282,6 +303,15 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
 
     copied_count = 0
 
+    # Check available space before starting
+    try:
+        free_space = get_disk_space(dest_dir)
+        print(f"  Available space on device: {free_space:,} bytes ({free_space / 1024:.1f} KB)")
+        if free_space < 100_000:  # Less than 100KB
+            print(f"  WARNING: Very low disk space ({free_space:,} bytes)")
+    except Exception as e:
+        print(f"  Warning: Could not check disk space: {e}")
+
     try:
         for item in os.listdir(source_dir):
             # Skip all hidden files (starting with .)
@@ -289,7 +319,6 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
                 continue
 
             # Skip preserved files - never overwrite them
-            # Use case-insensitive comparison for FAT32 filesystem
             if item.lower() in [f.lower() for f in PRESERVED_FILES]:
                 print(f"  Skipping preserved file: {item}")
                 continue
@@ -299,54 +328,115 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
 
             if src_path.is_dir():
                 if recursive:
+                    # Check space before copying directory
+                    try:
+                        free_space = get_disk_space(dest_dir)
+                        if free_space < 50_000:  # Less than 50KB
+                            raise OSError(
+                                f"Insufficient disk space ({free_space:,} bytes) to copy directory {item}/. "
+                                f"Clean up hidden files or use a device with more storage."
+                            )
+                    except Exception:
+                        pass
+
                     # Remove destination if it exists (handles stale dirs/files)
                     if dst_path.exists():
                         if dst_path.is_dir():
                             shutil.rmtree(dst_path)
                         else:
                             dst_path.unlink()
-                    # Use copy_function=shutil.copyfile to avoid metadata/permission issues on FAT32
-                    # copyfile() only copies data, no permissions or timestamps
-                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True, copy_function=shutil.copyfile)
+
+                    # Create directory first
+                    dst_path.mkdir(parents=True, exist_ok=True)
+
+                    # Copy contents file by file to allow cleanup between files
+                    for subroot, subdirs, subfiles in os.walk(src_path):
+                        # Filter out hidden directories
+                        subdirs[:] = [d for d in subdirs if not d.startswith(".") and d != "__pycache__"]
+
+                        # Calculate relative path
+                        rel_dir = Path(subroot).relative_to(src_path)
+                        target_dir = dst_path / rel_dir
+                        target_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Copy files in this directory
+                        for file in subfiles:
+                            if file.startswith("."):
+                                continue
+
+                            src_file = Path(subroot) / file
+                            dst_file = target_dir / file
+
+                            try:
+                                shutil.copyfile(src_file, dst_file)
+                            except OSError as e:
+                                if e.errno == 28:  # ENOSPC - No space left on device
+                                    # Try to clean up and retry once
+                                    cleanup_macos_artifacts(dest_dir)
+                                    try:
+                                        shutil.copyfile(src_file, dst_file)
+                                    except OSError:
+                                        raise OSError(
+                                            f"No space left on device while copying {file}. "
+                                            f"The CircuitPython drive may be too small for this firmware. "
+                                            f"Try removing unnecessary library files or use a device with more storage."
+                                        ) from e
+                                else:
+                                    raise
+
+                        # Clean up hidden files in this directory after copying
+                        cleanup_single_directory(target_dir)
+
                     print(f"  Copied directory: {item}/")
                     copied_count += 1
+
+                    # Clean up hidden files in the entire tree periodically
+                    if copied_count % 3 == 0:  # Every 3 directories
+                        cleanup_macos_artifacts(dest_dir)
             else:
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
 
                 # Additional safety check: never delete preserved files from destination
-                # This protects against FAT32 aliasing or path confusion bugs
                 dst_name = dst_path.name
                 if dst_name.lower() in [f.lower() for f in PRESERVED_FILES]:
                     print(f"  ERROR: Attempted to overwrite preserved file: {dst_name}")
-                    print(f"    Source: {src_path}")
-                    print(f"    Destination: {dst_path}")
                     raise Exception(f"BUG: Copy operation would overwrite preserved file {dst_name}")
 
-                # Remove destination if it exists (handles stale dirs/files)
+                # Remove destination if it exists
                 if dst_path.exists():
                     if dst_path.is_dir():
                         shutil.rmtree(dst_path)
                     else:
                         dst_path.unlink()
 
-                # Use a safer two-step copy for FAT32 filesystems to avoid file handle confusion
-                # Copy to temporary name first, then rename
+                # Use a safer two-step copy for FAT32 filesystems
                 temp_dst = dst_path.parent / f".tmp_{item}_{os.getpid()}"
                 try:
-                    # Copy to temporary file
                     shutil.copyfile(src_path, temp_dst)
-                    # Rename to final destination (atomic operation)
                     temp_dst.rename(dst_path)
                     print(f"  Copied file: {item}")
                     copied_count += 1
-                except Exception as e:
-                    # Clean up temp file if something failed
+                except OSError as e:
+                    if e.errno == 28:  # ENOSPC
+                        # Clean up and retry
+                        cleanup_macos_artifacts(dest_dir)
+                        try:
+                            shutil.copyfile(src_path, temp_dst)
+                            temp_dst.rename(dst_path)
+                            print(f"  Copied file: {item}")
+                            copied_count += 1
+                        except OSError:
+                            raise OSError(
+                                "No space left on device. CircuitPython drive is too small. "
+                                "Free space needed, but hidden files may be consuming storage."
+                            ) from e
+                    else:
+                        raise
+                finally:
                     with contextlib.suppress(Exception):
                         temp_dst.unlink()
-                    raise e
 
     except OSError as e:
-        # Check for read-only filesystem error
         if e.errno == 30:  # EROFS - Read-only file system
             raise OSError(
                 "CIRCUITPY drive is READ-ONLY. "
@@ -368,6 +458,9 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
         raise
 
     print_success(f"Copied {copied_count} items")
+
+    # Final cleanup of all hidden files
+    cleanup_macos_artifacts(dest_dir)
 
 
 def cleanup_macos_artifacts(circuitpy_path):
@@ -819,22 +912,118 @@ def _case_insensitive_exists(path):
     if path.exists():
         return path
 
-    # Check parent directory exists first
+    # Always find parent directory case-insensitively to get the correct case
+    # This is critical on FAT32 where case doesn't matter but Path operations are case-sensitive
     parent = path.parent
-    if not parent.exists():
+    grandparent = parent.parent
+
+    # Find parent directory case-insensitively with retry logic for FAT32 reliability
+    parent_found = None
+    max_retries = 3
+
+    for attempt in range(max_retries):
+        if grandparent.exists() and grandparent.is_dir():
+            parent_name = parent.name.lower()
+            try:
+                for item in grandparent.iterdir():
+                    if item.name.lower() == parent_name:
+                        # Debug: Show exactly what we're checking
+                        item_str = str(item)
+                        print(f"  DEBUG: Checking if '{item_str}' is a directory...")
+                        print(f"  DEBUG: item.name = '{item.name}'")
+                        print(f"  DEBUG: item.exists() = {item.exists()}")
+
+                        # Use os.path.isdir() for more reliable directory checking on FAT32
+                        # Path.is_dir() can fail on FAT32 due to caching/metadata issues
+                        import os
+
+                        is_dir_result = os.path.isdir(item_str)
+                        print(f"  DEBUG: os.path.isdir('{item_str}') = {is_dir_result}")
+
+                        # Also try stat to see what type it is
+                        try:
+                            import stat
+
+                            st = os.stat(item_str)
+                            print(f"  DEBUG: stat mode = {oct(st.st_mode)}, is dir = {stat.S_ISDIR(st.st_mode)}")
+                        except Exception as e:
+                            print(f"  DEBUG: stat failed: {e}")
+
+                        if is_dir_result:
+                            parent_found = item
+                            break
+                        else:
+                            # Parent name exists but is a file - filesystem corruption
+                            print(
+                                f"  Warning: Parent path component '{parent.name}' exists as a file, not a directory (filesystem corruption?)"
+                            )
+                            return None
+
+                if parent_found:
+                    break
+
+            except (OSError, PermissionError) as e:
+                if attempt < max_retries - 1:
+                    # Retry on transient errors (common on FAT32 removable media)
+                    import time
+
+                    time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                    continue
+                else:
+                    # Final attempt failed - try alternative approach
+                    print(
+                        f"  Warning: Could not read grandparent directory {grandparent} after {max_retries} attempts: {e}"
+                    )
+                    # Try direct check of parent path
+                    import os
+
+                    if os.path.isdir(str(parent)):
+                        parent_found = parent
+                        break
+                    return None
+        else:
+            # Grandparent doesn't exist or isn't a directory
+            import os
+
+            if not os.path.isdir(str(parent)):
+                return None
+            parent_found = parent
+            break
+
+    if parent_found is None:
         return None
+
+    parent = parent_found
 
     # Get the filename we're looking for (case-insensitive)
     target_name = path.name.lower()
 
-    # List directory and find case-insensitive match
-    try:
-        for item in parent.iterdir():
-            if item.name.lower() == target_name:
-                return item
-    except (OSError, PermissionError):
-        # If we can't read the directory, fall back to regular exists check
-        pass
+    # List directory and find case-insensitive match with retry logic
+    for attempt in range(max_retries):
+        try:
+            for item in parent.iterdir():
+                if item.name.lower() == target_name:
+                    return item
+            # No match found after successful iteration
+            return None
+        except (OSError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                # Retry on transient errors
+                import time
+
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            else:
+                # Final attempt failed - try alternative approach
+                print(f"  Warning: Could not read directory {parent} after {max_retries} attempts: {e}")
+                # Try to check the file directly
+                if path.exists():
+                    return path
+                # Try with uppercase filename as fallback
+                alt_path = parent / path.name.upper()
+                if alt_path.exists():
+                    return alt_path
+                return None
 
     return None
 
@@ -914,9 +1103,20 @@ def copy_tests_incremental(circuitpy_path, tests_dir):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         files = [f for f in files if not f.startswith(".")]
 
+        # Skip __pycache__ directories - these are Python bytecode cache files
+        # that are platform-specific and should never be copied to CircuitPython devices
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        # Also skip files inside __pycache__ directories
+        if "__pycache__" in Path(root).parts:
+            continue
+
         for file in files:
             # Get relative path from tests_dir
             rel_path = Path(root).relative_to(tests_dir) / file
+
+            # Skip __pycache__ directories and their contents
+            if "__pycache__" in rel_path.parts:
+                continue
 
             src_path = Path(root) / file
             dst_path = tests_dest / rel_path
@@ -1055,6 +1255,13 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
             dirs[:] = [d for d in dirs if not d.startswith(".")]
             files = [f for f in files if not f.startswith(".")]
 
+            # Skip __pycache__ directories - these are Python bytecode cache files
+            # that are platform-specific and should never be copied to CircuitPython devices
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            # Also skip files inside __pycache__ directories
+            if "__pycache__" in Path(root).parts:
+                continue
+
             for file in files:
                 # Get relative path from temp_dir
                 rel_path = Path(root).relative_to(temp_dir) / file
@@ -1067,6 +1274,11 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
 
                 # Skip runtime-generated files (e.g., boot_out.txt)
                 if file in RUNTIME_FILES:
+                    skipped_count += 1
+                    continue
+
+                # Skip __pycache__ directories and their contents
+                if "__pycache__" in rel_path.parts:
                     skipped_count += 1
                     continue
 
