@@ -1,17 +1,15 @@
 """
-CircuitPython Test Runner
+WICID Firmware Test Runner
 
-Unified test runner for executing all WICID firmware tests.
+Unified test runner for executing WICID firmware tests.
 
-Usage from command line (desktop Python):
-    python tests/run_tests.py
+Desktop (python tests/run_tests.py):
+    Runs unit tests only. These are fully mocked and require no hardware.
 
-Usage from REPL:
+On-device (CircuitPython REPL):
     >>> import tests
-    >>> tests.run_all()
-
-Or run specific test suites:
-    >>> tests.run_unit()
+    >>> tests.run_all()       # All tests (unit, integration, functional)
+    >>> tests.run_unit()      # Unit tests only
     >>> tests.run_integration()
     >>> tests.run_functional()
 """
@@ -19,21 +17,90 @@ Or run specific test suites:
 import os
 import sys
 import traceback
-import unittest
 
 # Add root to path (source files are in root on CircuitPython device)
-sys.path.insert(0, "/")
+IS_CIRCUITPYTHON = hasattr(sys, "implementation") and sys.implementation.name == "circuitpython"
 
-# Add tests to path for custom unittest
-if "/tests" not in sys.path:
-    sys.path.insert(0, "/tests")
+if IS_CIRCUITPYTHON:
+    sys.path.insert(0, "/")
+    TEST_ROOT = "/tests"
+else:
+    # Desktop execution - add src and project root to path
+    # CRITICAL: src must be added FIRST and remain accessible
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    src_dir = os.path.join(project_root, "src")
+
+    # Add src FIRST so core modules can be imported even when tests/ is temporarily removed
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    # Add project_root so that 'tests' package can be imported (tests.unit.test_smoke)
+    # This must be added, not tests/ directory itself
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    TEST_ROOT = current_dir
+
+
+def mock_circuitpython_modules() -> None:
+    """Mock CircuitPython modules for desktop testing."""
+    import sys
+
+    # Temporarily remove tests directory from path to import standard unittest.mock
+    # because tests/unittest.py shadows the standard unittest package
+    # IMPORTANT: Only remove tests/, keep src/ and project_root in path
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    paths_to_restore = []
+
+    # Remove only the tests directory, not src or project_root
+    while current_dir in sys.path:
+        sys.path.remove(current_dir)
+        paths_to_restore.append(current_dir)
+
+    try:
+        from unittest.mock import MagicMock
+    finally:
+        # Restore paths (in reverse order to maintain roughly same order)
+        for p in reversed(paths_to_restore):
+            sys.path.insert(0, p)
+
+        # Remove cached standard library unittest so our custom one is used
+        # (importing unittest.mock caches the standard library unittest)
+        if "unittest" in sys.modules:
+            del sys.modules["unittest"]
+
+    # List of modules to mock - these must be mocked BEFORE other imports
+    modules = [
+        "board",
+        "microcontroller",
+        "digitalio",
+        "neopixel",
+        "supervisor",
+        "socketpool",
+        "wifi",
+        "adafruit_requests",
+        "adafruit_httpserver",
+        "adafruit_hashlib",
+        "adafruit_pixelbuf",
+        "ssl",
+    ]
+
+    for mod_name in modules:
+        if mod_name not in sys.modules:
+            sys.modules[mod_name] = MagicMock()
+
+
+if not IS_CIRCUITPYTHON:
+    mock_circuitpython_modules()
+
+import unittest  # noqa: E402
 
 # Import custom TestResult from our unittest implementation
-from unittest import TestResult as CustomTestResult
+from unittest import TestResult as CustomTestResult  # noqa: E402
 
 # Import logging after path is set up
-from core.app_typing import Any, Callable
-from core.logging_helper import logger
+from core.app_typing import Any, Callable  # noqa: E402
+from core.logging_helper import logger  # noqa: E402
 
 TEST_LOG = logger("wicid.tests")
 
@@ -154,10 +221,16 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
                     # Log import error but continue with other tests
                     TEST_LOG.warning(f"Failed to import test module {full_module_name}: {e}")
 
-    # Auto-discover tests from all test directories
-    discover_tests_in_directory("/tests/unit", "unit")
-    discover_tests_in_directory("/tests/integration", "integration")
-    discover_tests_in_directory("/tests/functional", "functional")
+    # Auto-discover tests from test directories
+    # - CircuitPython: runs all tests (unit, integration, functional)
+    # - Desktop: runs only unit tests (integration/functional require hardware)
+    if IS_CIRCUITPYTHON:
+        discover_tests_in_directory(f"{TEST_ROOT}/unit", "unit")
+        discover_tests_in_directory(f"{TEST_ROOT}/integration", "integration")
+        discover_tests_in_directory(f"{TEST_ROOT}/functional", "functional")
+    else:
+        # Desktop: unit tests only (fully mocked, no hardware required)
+        discover_tests_in_directory(os.path.join(TEST_ROOT, "unit"), "tests.unit")
 
     # Require at least one test to be discovered in Test Mode
     if suite.countTestCases() == 0:

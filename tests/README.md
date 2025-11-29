@@ -33,9 +33,33 @@ Connect to your device's REPL and run:
 
 ### Run From Command Line (Desktop Python)
 
+Unit tests can be run locally in your development environment. They are fully mocked and require no hardware:
+
 ```bash
 python tests/run_tests.py
 ```
+
+**Note:** On desktop, only unit tests are executed. Integration and functional tests require hardware and must be run on-device.
+
+### Pre-commit Integration
+
+Unit tests are automatically run as part of the pre-commit checks. When you commit code, the test suite will execute and block the commit if any tests fail.
+
+To run pre-commit checks manually (including tests):
+
+```bash
+pipenv run pre-commit run --all-files
+```
+
+**Development Workflow:**
+1. Write or update code
+2. Create or update corresponding unit tests
+3. Run `pipenv run pre-commit run --all-files` to verify:
+   - Code formatting (ruff)
+   - Type checking (mypy)
+   - Linting (ruff, pylint)
+   - **Unit tests** (all must pass)
+4. Commit your changes
 
 ## How the Test Framework Works
 
@@ -217,16 +241,70 @@ tests/
     └── __init__.py
 ```
 
+## Test-Driven Development (TDD)
+
+For **medium to large tasks**, we encourage a Test-Driven Development (TDD) approach. This ensures your tests verify the intended behavior and that new features are properly covered.
+
+### TDD Workflow
+
+1. **Confirm baseline**: Run pre-commit hooks to ensure existing tests pass and code is clean:
+   ```bash
+   pipenv run pre-commit run --all-files
+   ```
+
+2. **Write tests first**: Create tests that verify the behavior of your intended change:
+   ```python
+   # tests/unit/test_new_feature.py
+   from tests.unit import TestCase
+   from your_module import YourClass
+
+   class TestNewFeature(TestCase):
+       def test_new_behavior(self):
+           """Test the new behavior we want to implement."""
+           obj = YourClass()
+           result = obj.new_method()
+           self.assertEqual(result, expected_value)
+   ```
+
+3. **Confirm tests fail**: Run the tests to verify they fail in the expected way:
+   ```bash
+   python tests/run_tests.py
+   ```
+   The tests should fail because the feature doesn't exist yet. This confirms your tests are actually testing the right thing.
+
+4. **Implement the feature**: Develop the new feature or changes to make the tests pass.
+
+5. **Verify everything passes**: Re-run pre-commit hooks to confirm:
+   - All tests pass (including your new ones)
+   - Code formatting is correct
+   - Type checking passes
+   - Linting passes
+   ```bash
+   pipenv run pre-commit run --all-files
+   ```
+
+6. **Commit**: Once all checks pass, commit your changes.
+
+### When to Use TDD
+
+- **Medium to large tasks**: Features with multiple components, significant logic changes, or new functionality
+- **Bug fixes**: Write a test that reproduces the bug, then fix it
+- **Refactoring**: Ensure existing tests pass before and after refactoring
+
+For small changes (typos, minor tweaks), you may write tests after implementation, but all tests must pass before committing.
+
 ## Adding New Tests
 
-1. Create `test_your_feature.py` in the appropriate directory:
-   - `tests/unit/` for isolated component tests
-   - `tests/integration/` for multi-component tests
-   - `tests/functional/` for end-to-end tests
+When working on new features or modifying existing code, you should create or update corresponding unit tests.
 
-2. Import `TestCase` from `unittest`:
+1. Create `test_your_feature.py` in the appropriate directory:
+   - `tests/unit/` for isolated component tests (can run locally)
+   - `tests/integration/` for multi-component tests (requires hardware)
+   - `tests/functional/` for end-to-end tests (requires hardware)
+
+2. Import `TestCase` from `tests.unit`:
    ```python
-   from unittest import TestCase
+   from tests.unit import TestCase
    ```
 
 3. Create test classes inheriting from `TestCase`:
@@ -236,7 +314,10 @@ tests/
            self.assertEqual(1 + 1, 2)
    ```
 
-4. Run tests via REPL or command line
+4. **Verify locally**: Run `python tests/run_tests.py` to ensure tests pass
+5. **Verify pre-commit**: Run `pipenv run pre-commit run --all-files` before committing
+
+**Important:** All unit tests must pass before committing. The pre-commit hook will block commits if tests fail.
 
 ## Test Naming Conventions
 

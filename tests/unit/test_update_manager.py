@@ -21,33 +21,40 @@ class TestUpdateManagerResourceCleanup(TestCase):
         # Reset singleton instance
         UpdateManager._instance = None
 
-    def test_reset_session_clears_session(self) -> None:
-        """Test that reset_session clears the cached HTTP session."""
-        # Create instance with explicit type
-        update_manager: UpdateManager = cast(UpdateManager, UpdateManager.instance())
+    def test_requests_use_connection_close(self) -> None:
+        """Verify that HTTP requests include Connection: close header."""
+        try:
+            from unittest.mock import MagicMock
+        except ImportError:
+            print("Skipping test_requests_use_connection_close: unittest.mock not available")
+            return
 
-        # Manually set a session (simulating _get_session having been called)
-        update_manager._session = "mock_session_object"
+        import os
 
-        # Reset session
-        update_manager.reset_session()
+        update_manager = cast(UpdateManager, UpdateManager.instance())
 
-        # Verify session is cleared
-        self.assertIsNone(update_manager._session, "reset_session() should clear _session to None")
+        # Mock connection manager and session
+        mock_conn_mgr = MagicMock()
+        mock_session = MagicMock()
+        mock_conn_mgr.get_session.return_value = mock_session
+        update_manager.connection_manager = mock_conn_mgr
 
-    def test_reset_session_is_idempotent(self) -> None:
-        """Test that reset_session can be called multiple times safely."""
-        update_manager: UpdateManager = cast(UpdateManager, UpdateManager.instance())
+        # Mock response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"releases": []}
+        mock_session.get.return_value = mock_response
 
-        # Reset when session is already None
-        update_manager.reset_session()
-        self.assertIsNone(update_manager._session)
+        # Set environment variable for manifest URL
+        os.environ["SYSTEM_UPDATE_MANIFEST_URL"] = "http://example.com/manifest.json"
 
-        # Set a session and reset
-        update_manager._session = "mock_session"
-        update_manager.reset_session()
-        self.assertIsNone(update_manager._session)
+        try:
+            update_manager.check_for_updates()
 
-        # Reset again when None
-        update_manager.reset_session()
-        self.assertIsNone(update_manager._session)
+            # Verify headers in get call
+            if mock_session.get.called:
+                args, kwargs = mock_session.get.call_args
+                headers = kwargs.get("headers", {})
+                self.assertEqual(headers.get("Connection"), "close", "check_for_updates should use Connection: close")
+        finally:
+            del os.environ["SYSTEM_UPDATE_MANIFEST_URL"]

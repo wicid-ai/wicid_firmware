@@ -31,3 +31,10 @@ repos:
         language: system
         types: [python]
         args: [--errors-only, src, tests]
+
+      - id: unit-tests
+        name: unit tests
+        entry: python tests/run_tests.py
+        language: system
+        pass_filenames: false
+        always_run: true

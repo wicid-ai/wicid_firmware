@@ -10,16 +10,21 @@ Code reviews ensure the long-term health, reliability, and maintainability of th
 
 ## 2. Phase 1: Automated Checks
 
-Before inspecting logic, ensure the code passes all automated static analysis.
+Before inspecting logic, ensure the code passes all automated static analysis and tests.
 
-Run the pre-commit hooks on all files.
+Run the pre-commit hooks on all files. This includes:
+- Code formatting (ruff)
+- Type checking (mypy)
+- Linting (ruff, pylint)
+- **Unit tests** (all must pass)
+
 ```bash
 pipenv run pre-commit run --all-files
 ```
 
 **Action:**
 - If these commands fail, the review **fails immediately**.
-- Report the specific linting, formatting, or typing errors found.
+- Report the specific linting, formatting, typing, or test failures found.
 - Do not proceed to logic review until these are resolved.
 
 ---
@@ -56,6 +61,9 @@ Evaluate the code against the following criteria. Use the referenced documentati
 
 - **[ ] Hardware Mocks**: Does the code use mocks (e.g., `create_mock_button_pin`) instead of importing `board` in logic tests?
 - **[ ] Coverage**: Do new features have corresponding unit tests?
+- **[ ] TDD Approach**: For medium/large tasks, were tests written first (TDD)? Do tests verify the intended behavior?
+- **[ ] Unit Tests Pass**: Can unit tests be run locally (`python tests/run_tests.py`) and do they pass?
+- **[ ] Pre-commit Tests**: Do all pre-commit checks pass, including unit tests?
 - **[ ] Layered Approach**: Are logic tests separated from hardware integration tests?
 
 ### 3.4 Style & Quality
@@ -101,8 +109,9 @@ Rank every issue found using these levels:
 1. **[Category]**: [Description].
 
 ## ✅ Verification
-- [ ] Pre-commit checks passed?
+- [ ] Pre-commit checks passed (formatting, linting, type checking, **unit tests**)?
 - [ ] Type checks (mypy) passed?
+- [ ] Unit tests pass locally (`python tests/run_tests.py`)?
 - [ ] Architecture patterns followed?
 - [ ] Scheduler rules respected?
 ```

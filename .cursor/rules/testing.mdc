@@ -5,14 +5,31 @@ alwaysApply: false
 ---
 # Testing Rules
 
-Tests must run on non-microcontroller hardware (CI).
+Unit tests must run locally in development environments and are automatically executed as part of pre-commit checks.
 
 ## Critical Rules
 
-- **No Hardware Imports**: NEVER import `board` or `microcontroller` in logic tests.
+- **No Hardware Imports**: NEVER import `board` or `microcontroller` in unit tests.
 - **Use Mocks**: Use helpers like `create_mock_button_pin()` from `tests.test_helpers`.
-- **Mock Hardware**: All hardware interactions (GPIO, I2C, SPI) must be mocked.
+- **Mock Hardware**: All hardware interactions (GPIO, I2C, SPI) must be mocked in unit tests.
+- **Local Execution**: Unit tests must be runnable via `python tests/run_tests.py` without hardware.
+- **Pre-commit Integration**: All unit tests must pass before code can be committed.
+
+## Development Workflow
+
+### Test-Driven Development (TDD) for Medium/Large Tasks
+
+1. **Confirm baseline**: Run `pipenv run pre-commit run --all-files` to ensure existing tests pass
+2. **Write tests first**: Create tests that verify the intended behavior
+3. **Confirm tests fail**: Verify new tests fail in the expected way (feature doesn't exist yet)
+4. **Implement feature**: Develop changes to make tests pass
+5. **Verify everything**: Re-run `pipenv run pre-commit run --all-files` to confirm all checks pass
+6. **Commit**: Once all checks pass, commit changes
+
+### Small Changes
+
+For small changes, you may write tests after implementation, but all tests must pass before committing.
 
 ## Reference
 - `docs/PATTERNS_COOKBOOK.md` (Testing with Mocks)
-- `tests/README.md`
+- `tests/README.md` (Complete testing documentation)

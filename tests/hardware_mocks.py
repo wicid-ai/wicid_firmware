@@ -660,6 +660,7 @@ class MockDNSInterceptor:
 
     def __init__(self) -> None:
         self.stop_called = False
+        self.socket = None  # Mock socket attribute for logging
 
     def stop(self) -> None:
         """Mock stop."""

@@ -202,6 +202,37 @@ The device includes robust error handling and will:
 
 This project uses `ruff` for code formatting/linting and `mypy` for static type checking. These tools are enforced automatically using `pre-commit` git hooks.
 
+### Testing
+
+**Unit tests** can be run locally in your development environment. They are fully mocked and require no hardware:
+
+```bash
+python tests/run_tests.py
+```
+
+Unit tests are automatically executed as part of the pre-commit checks. When you commit code, the test suite will run and block the commit if any tests fail.
+
+**Development Workflow:**
+
+For **medium to large tasks**, we recommend a Test-Driven Development (TDD) approach:
+
+1. **Confirm baseline**: Run `pipenv run pre-commit run --all-files` to ensure existing tests pass
+2. **Write tests first**: Create tests that verify the intended behavior
+3. **Confirm tests fail**: Verify the new tests fail in the expected way (feature doesn't exist yet)
+4. **Implement the feature**: Develop the changes to make the tests pass
+5. **Verify everything**: Re-run `pipenv run pre-commit run --all-files` to confirm:
+   - Code formatting (ruff)
+   - Type checking (mypy)
+   - Linting (ruff, pylint)
+   - **Unit tests** (all must pass, including new ones)
+6. **Commit**: Once all checks pass, commit your changes
+
+For **small changes**, you may write tests after implementation, but all tests must pass before committing.
+
+See `tests/README.md` for detailed TDD guidance and testing best practices.
+
+**Note:** Integration and functional tests require hardware and must be run on-device via the CircuitPython REPL (see `tests/README.md` for details).
+
 ### Environment and Tooling Setup
 
 1.  **Install `pipenv`**: If you don't have it, install `pipenv` globally.
@@ -215,12 +246,12 @@ This project uses `ruff` for code formatting/linting and `mypy` for static type 
     pipenv sync --dev
     ```
 
-3.  **Install Git Hooks**: This command installs the `pre-commit` hooks into your local `.git` directory. It will automatically run checks before you commit code.
+3.  **Install Git Hooks**: This command installs the `pre-commit` hooks into your local `.git` directory. It will automatically run checks (including unit tests) before you commit code.
     ```bash
     pipenv run pre-commit install
     ```
 
-Now, when you run `git commit`, your code will be automatically formatted and checked for errors. If the tools make any changes, you will need to `git add` the modified files and commit again.
+Now, when you run `git commit`, your code will be automatically formatted, checked for errors, and unit tests will be executed. If the tools make any changes or tests fail, you will need to fix the issues, `git add` the modified files, and commit again.
 
 ### Filesystem Modes
 
@@ -390,7 +421,6 @@ The installer provides three installation modes:
 - Points device to local server for OTA updates
 - Tests complete OTA update flow in development environment
 - Requires WICID Web repository at `../wicid_web` (configurable via `.env` file)
-- Optional: Install `python-dotenv` for `.env` support (`pip install python-dotenv`)
 
 The installer will:
 1. Auto-detect your CIRCUITPY device
