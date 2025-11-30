@@ -19,6 +19,7 @@ from managers.input_manager import InputManager
 from managers.mode_manager import ModeManager
 from modes import test_mode
 from modes.modes import PrecipDemoMode, SetupPortalMode, TempDemoMode, WeatherMode
+from services.ntp_rtc_service import NTPRTCService
 from utils.utils import trigger_safe_mode
 
 # Configure logging from settings
@@ -66,6 +67,11 @@ async def _startup_sequence() -> None:
         APP_LOG.info("Initializing configuration...")
         config_mgr = ConfigurationManager.instance()
         await config_mgr.initialize(portal_runner=lambda error=None: SetupPortalMode.execute(error=error))
+
+        # Start NTP RTC update service after connection is established
+        ntp_service = NTPRTCService()
+        ntp_service.start()
+        APP_LOG.info("NTP RTC service started")
 
         APP_LOG.info("Configuration complete - starting mode loop")
         mode_mgr = ModeManager.instance()

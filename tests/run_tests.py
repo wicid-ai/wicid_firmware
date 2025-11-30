@@ -71,18 +71,21 @@ def mock_circuitpython_modules() -> None:
 
     # List of modules to mock - these must be mocked BEFORE other imports
     modules = [
-        "board",
-        "microcontroller",
-        "digitalio",
-        "neopixel",
-        "supervisor",
-        "socketpool",
-        "wifi",
-        "adafruit_requests",
-        "adafruit_httpserver",
         "adafruit_hashlib",
-        "adafruit_pixelbuf",
+        "adafruit_httpserver",
+        "adafruit_ntp",
+        "adafruit_requests",
+        "board",
+        "digitalio",
+        "microcontroller",
+        "neopixel",
+        "rtc",
+        "socketpool",
         "ssl",
+        "storage",
+        "supervisor",
+        "usb_cdc",
+        "wifi",
     ]
 
     for mod_name in modules:

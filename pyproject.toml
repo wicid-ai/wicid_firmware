@@ -50,11 +50,13 @@ ignore_missing_imports = true
 ignored-modules = [
     "adafruit_hashlib",
     "adafruit_httpserver",
+    "adafruit_ntp",
     "adafruit_requests",
     "board",
     "digitalio",
     "microcontroller",
     "neopixel",
+    "rtc",
     "socketpool",
     "ssl",
     "storage",

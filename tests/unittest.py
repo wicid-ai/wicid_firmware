@@ -48,6 +48,11 @@ class AssertRaisesContext:
         self.traceback: Any = None
         self.exception_value: Exception | None = None
 
+    @property
+    def exception(self) -> Exception | None:
+        """Alias for exception_value to match standard library API."""
+        return self.exception_value
+
     def __enter__(self) -> "AssertRaisesContext":
         """
         Magic method to handle enter implementation objects used with the with statement
