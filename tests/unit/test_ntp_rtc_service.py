@@ -22,7 +22,7 @@ from unittest.mock import patch
 from core.app_typing import Any
 from core.scheduler import TaskNonFatalError
 from tests.unit import TestCase
-from tests.unit.mocks import (
+from tests.unit.unit_mocks import (
     MockConnectionManager,
     MockNTP,
     MockRTCModule,

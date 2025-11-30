@@ -5,7 +5,8 @@ Provides reusable mock objects for testing hardware-dependent components
 in isolation without resource conflicts.
 
 This module provides convenient factory functions and re-exports from
-the comprehensive hardware_mocks module.
+the integration_mocks module for on-device tests, or can be used in
+unit tests on desktop.
 
 Usage Examples:
 
@@ -40,9 +41,9 @@ Usage Examples:
     >>> assert button.is_pressed()
 """
 
-# Import comprehensive mocks from hardware_mocks module
+# Import comprehensive mocks from integration_mocks module
 from core.app_typing import Any
-from tests.hardware_mocks import MockAsyncButton, MockPin, MockPixel
+from tests.integration.integration_mocks import MockAsyncButton, MockPin, MockPixel
 
 
 def create_mock_button_pin(pin_number: int = 42, initial_value: bool = True) -> MockPin:

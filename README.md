@@ -361,7 +361,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
 
 **Adding or Removing Libraries:**
 
-1. **Install circup** (if not already installed):
+1. **Install circup** (if not already installed with pipenv):
    ```bash
    pip install circup
    ```

@@ -8,5 +8,24 @@
         }
     },
     "ruff.enable": true,
-    "ruff.lint.enable": true
+    "ruff.lint.enable": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/src"
+    ],
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "${workspaceFolder}",
+        "-p",
+        "test_*.py",
+        "-t",
+        "${workspaceFolder}"
+    ],
+    "python.testing.unittestEnv": {
+        "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}"
+    },
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true,
+    "python.testing.cwd": "${workspaceFolder}",
+    "python.testing.autoTestDiscoverOnSaveEnabled": true
 }

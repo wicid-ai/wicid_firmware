@@ -1,45 +1,44 @@
 # WICID Firmware Test Suite
 
-On-device testing framework for CircuitPython firmware built on a lightweight unittest shim (`tests/unittest.py`). The shim mirrors CPython's familiar API closely enough for most tests while remaining compatible with constrained hardware.
+Testing framework for CircuitPython firmware with a clear separation between desktop unit tests and on-device integration/functional tests.
 
 ## Overview
 
-This test suite runs directly on CircuitPython hardware via the REPL. It uses the custom shim plus a higher-level orchestrator (`tests/run_tests.py`) to provide discovery, grouping, and logging functionality that mirrors CPython's unittest experience.
+**Testing Philosophy:**
+- **Unit tests**: Desktop-only, fully mocked, fast feedback (pre-commit integration)
+- **Integration/Functional tests**: Device-only, real hardware validation (run sparingly)
+
+This separation allows for rapid development feedback via desktop tests while reserving hardware-dependent testing for targeted validation.
 
 Tests are organized following Python conventions:
-- `tests/unit/` - Unit tests (isolated component testing)
-- `tests/integration/` - Integration tests (multi-component interactions)
-- `tests/functional/` - Functional/E2E tests (complete system behaviors)
+- `tests/unit/` - Unit tests (desktop-only, fully mocked)
+- `tests/integration/` - Integration tests (device-only, real hardware)
+- `tests/functional/` - Functional/E2E tests (device-only, full system)
 
 ## Quick Start
 
-### Run All Tests
+### Run Unit Tests (Desktop)
 
-Connect to your device's REPL and run:
-
-```python
->>> import tests
->>> tests.run_all()
-```
-
-### Run Specific Test Suites
-
-```python
->>> import tests
->>> tests.run_unit()          # Unit tests only
->>> tests.run_integration()   # Integration tests only
->>> tests.run_functional()    # Functional tests only
-```
-
-### Run From Command Line (Desktop Python)
-
-Unit tests can be run locally in your development environment. They are fully mocked and require no hardware:
+Unit tests run locally in your development environment, fully mocked with no hardware required:
 
 ```bash
 python tests/run_tests.py
 ```
 
-**Note:** On desktop, only unit tests are executed. Integration and functional tests require hardware and must be run on-device.
+Unit tests are automatically run as part of pre-commit checks.
+
+### Run Integration/Functional Tests (Device)
+
+Connect to your device's REPL and run:
+
+```python
+>>> import tests
+>>> tests.run_all()           # Integration + functional tests
+>>> tests.run_integration()   # Integration tests only
+>>> tests.run_functional()    # Functional tests only
+```
+
+**Note:** Unit tests are NOT run on-device. They are desktop-only for fast feedback.
 
 ### Pre-commit Integration
 
@@ -229,17 +228,29 @@ class TestConditional(TestCase):
 ```
 tests/
 ├── __init__.py              # Package initialization with convenience functions
-├── unittest.py              # Lightweight unittest shim (inspired by CircuitPython_Unittest)
-├── run_tests.py             # Test runner
+├── unittest.py              # Lightweight unittest shim (CircuitPython compatible)
+├── run_tests.py             # Test runner (desktop: unit only, device: integration/functional)
+├── test_helpers.py          # Factory functions for common mocks
 ├── README.md                # This file
-├── unit/                    # Unit tests
+├── unit/                    # Unit tests (desktop-only)
 │   ├── __init__.py
+│   ├── unit_mocks.py        # Desktop-only mocks (MagicMock-based)
 │   └── test_*.py            # Unit test modules
-├── integration/             # Integration tests
-│   └── __init__.py
-└── functional/              # Functional/E2E tests
+├── integration/             # Integration tests (device-only)
+│   ├── __init__.py
+│   ├── integration_mocks.py # Hardware simulation mocks
+│   └── test_*.py            # Integration test modules
+└── functional/              # Functional/E2E tests (device-only)
     └── __init__.py
 ```
+
+### Mock File Organization
+
+- **`tests/unit/unit_mocks.py`**: Desktop-only mocks using `unittest.mock.MagicMock`. Used for mocking CircuitPython-only modules (rtc, adafruit_ntp, etc.) and services (ConnectionManager, Scheduler).
+
+- **`tests/integration/integration_mocks.py`**: Hardware simulation mocks that work on both desktop and CircuitPython. Used when integration tests need controlled hardware behavior without accessing real hardware.
+
+- **`tests/test_helpers.py`**: Factory functions that create mocks from integration_mocks for convenience.
 
 ## Test-Driven Development (TDD)
 
@@ -348,42 +359,39 @@ The `unittest.py` module is specifically designed for CircuitPython:
 - No subtests or test parameterization
 - No mock/patch support (manual mocking required)
 
-## Testing Philosophy: Layered Testing with Strategic Hardware Usage
+## Testing Philosophy: Desktop Unit Tests + Device Integration Tests
 
-### The Hardware Testing Hierarchy
+### Core Principle
 
-WICID firmware follows a **layered testing approach** that minimizes hardware dependencies while maintaining comprehensive test coverage. This philosophy balances real hardware validation with scalable, deterministic testing.
+**Unit tests run on desktop, integration tests run on device.**
 
-### Three-Layer Testing Model
+This separation provides:
+- **Fast feedback**: Unit tests run in seconds via pre-commit
+- **Comprehensive coverage**: Mock everything for isolated testing
+- **Hardware validation**: Integration tests verify real device behavior
+
+### Two-Layer Testing Model
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  HIGH-LEVEL COMPONENTS (Modes, Managers, Orchestrators)    │
+│  UNIT TESTS (Desktop Only)                                  │
 │  ─────────────────────────────────────────────────────────  │
-│  Hardware: ALWAYS use mocks                                  │
-│  Why: Complex behavior, composition of lower layers          │
-│  Examples: WeatherMode, ModeManager, InputManager           │
+│  Location: tests/unit/                                       │
+│  Hardware: ALWAYS mocked via unit_mocks.py                   │
+│  Execution: python tests/run_tests.py (pre-commit)          │
+│  Purpose: Test logic, behavior, edge cases                   │
+│  Examples: test_scheduler.py, test_connection_manager.py    │
 └─────────────────────────────────────────────────────────────┘
-                             ▲
-                             │ Builds on
                              │
+                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  MID-LEVEL COMPONENTS (Services, Coordinators)              │
+│  INTEGRATION/FUNCTIONAL TESTS (Device Only)                 │
 │  ─────────────────────────────────────────────────────────  │
-│  Hardware: Prefer mocks, use real HW only for integration   │
-│  Why: Business logic, service orchestration                 │
-│  Examples: WeatherService, UpdateManager                    │
-└─────────────────────────────────────────────────────────────┘
-                             ▲
-                             │ Builds on
-                             │
-┌─────────────────────────────────────────────────────────────┐
-│  LOW-LEVEL COMPONENTS (Controllers, Hardware Abstraction)   │
-│  ─────────────────────────────────────────────────────────  │
-│  Hardware: Use real HW ONLY when safe and contention-free   │
-│           Otherwise use mocks (preferred for automation)     │
-│  Why: Direct hardware interaction, minimal dependencies     │
-│  Examples: ButtonController, PixelController                │
+│  Location: tests/integration/, tests/functional/             │
+│  Hardware: Real hardware or integration_mocks.py             │
+│  Execution: On-device via REPL                               │
+│  Purpose: Validate hardware behavior, catch import errors    │
+│  Examples: Test real WiFi connections, LED hardware          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -766,6 +774,116 @@ The test runner supports optional visual feedback during test execution:
 - **Status signaling**: Can be used to signal test completion or failure states
 
 This feature is particularly useful for headless testing on embedded devices.
+
+## Recommended On-Device Functional Tests
+
+The following functional tests are recommended for on-device validation. These tests exercise hardware-dependent code paths that cannot be adequately tested via desktop unit tests.
+
+### High-Value Functional Tests
+
+| Test Category | Coverage Impact | Description |
+|---------------|-----------------|-------------|
+| **WiFi Connection Flow** | `connection_manager.py` (24%) | Test real WiFi connection, AP mode, and credential handling |
+| **Configuration Portal** | `configuration_manager.py` (37%), `portal_routes.py` (48%) | Test HTTP server, captive portal, and form submission |
+| **OTA Update Flow** | `update_manager.py` (51%) | Test download, verification, and extraction with real network |
+| **Boot Sequence** | `boot_support.py` (0%), `code_support.py` (0%) | Validate full boot sequence and mode initialization |
+| **Hardware Test Mode** | `test_mode.py` (0%) | Run hardware diagnostics for LED, button, and WiFi |
+
+### Recommended Test Scenarios
+
+#### 1. WiFi Connection Test
+```python
+# tests/functional/test_wifi_connection.py
+class TestWiFiConnection(TestCase):
+    """Validate real WiFi connection flow."""
+
+    def test_connect_to_known_network(self):
+        """Connect to configured WiFi network."""
+        mgr = ConnectionManager.instance()
+        mgr.load_credentials()
+        result = mgr.connect()
+        self.assertTrue(result)
+        self.assertTrue(mgr.is_connected())
+
+    def test_ap_mode_activation(self):
+        """Activate AP mode for configuration."""
+        mgr = ConnectionManager.instance()
+        result = mgr.start_access_point()
+        self.assertTrue(result)
+        # Verify AP is broadcasting
+```
+
+#### 2. Configuration Portal Test
+```python
+# tests/functional/test_portal.py
+class TestConfigurationPortal(TestCase):
+    """Validate configuration portal flow."""
+
+    def test_portal_serves_index_page(self):
+        """Portal serves the configuration page."""
+        # Start portal, make HTTP request, verify response
+
+    def test_network_scan_returns_results(self):
+        """Network scan returns available networks."""
+        # Trigger scan, verify JSON response
+
+    def test_credential_save_persists(self):
+        """Saved credentials persist to secrets.json."""
+        # Submit credentials, verify file written
+```
+
+#### 3. Update Flow Test
+```python
+# tests/functional/test_update_flow.py
+class TestUpdateFlow(TestCase):
+    """Validate OTA update process."""
+
+    def test_update_check_connects_to_server(self):
+        """Update check reaches the update server."""
+        mgr = UpdateManager.instance()
+        result = mgr.check_for_updates()
+        # Verify network request was made
+
+    def test_download_verifies_checksum(self):
+        """Downloaded update passes checksum verification."""
+        # Download update, verify SHA256 matches
+```
+
+#### 4. Full Boot Test
+```python
+# tests/functional/test_boot.py
+class TestBootSequence(TestCase):
+    """Validate full boot sequence."""
+
+    def test_boot_initializes_all_managers(self):
+        """Boot sequence initializes all required managers."""
+        # Verify ConnectionManager, InputManager, etc. are initialized
+
+    def test_boot_enters_weather_mode(self):
+        """Boot sequence enters primary weather mode."""
+        # Verify WeatherMode is active after boot
+```
+
+### Running Functional Tests
+
+Connect to device REPL and run:
+
+```python
+>>> import tests
+>>> tests.run_functional()
+```
+
+### Expected Coverage Impact
+
+Running these functional tests on-device should significantly increase coverage for:
+
+- `connection_manager.py`: 24% → ~70%
+- `configuration_manager.py`: 37% → ~65%
+- `boot_support.py`: 0% → ~80%
+- `code_support.py`: 0% → ~80%
+- `test_mode.py`: 0% → ~90%
+
+Combined with unit tests, this should achieve the 75%+ coverage target.
 
 ## Resources
 

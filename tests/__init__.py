@@ -13,10 +13,24 @@ Usage from REPL:
     >>> tests.run_integration()
 """
 
+import os
 import sys
 
 # Add src to path for imports
-sys.path.insert(0, "/src")
+# On CircuitPython, use /src (absolute path on device)
+# On desktop, use relative path from project root
+IS_CIRCUITPYTHON = hasattr(sys, "implementation") and sys.implementation.name == "circuitpython"
+
+if IS_CIRCUITPYTHON:
+    sys.path.insert(0, "/src")
+else:
+    # Desktop: add src directory relative to project root
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _src_dir = os.path.join(_project_root, "src")
+    if _src_dir not in sys.path:
+        sys.path.insert(0, _src_dir)
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
 
 
 def run_all() -> None:

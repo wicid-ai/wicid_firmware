@@ -101,6 +101,25 @@ class ConfigurationManager(ManagerBase):
         # ManagerBase initialization flag
         self._manager_initialized = True
 
+    def _load_saved_configuration(self) -> tuple[str, str, str] | None:
+        """Read stored credentials from disk."""
+        try:
+            with open("/secrets.json") as f:
+                secrets = json.load(f)
+        except (OSError, ValueError) as e:
+            self.logger.info(f"No configuration found: {e}")
+            return None
+
+        ssid = secrets.get("ssid", "").strip()
+        password = secrets.get("password", "")
+        zip_code = secrets.get("weather_zip", "")
+        return ssid, password, zip_code
+
+    @staticmethod
+    def _has_complete_configuration(ssid: str, password: str, zip_code: str) -> bool:
+        """Return True when all configuration fields are populated."""
+        return bool(ssid and password and zip_code)
+
     def __init__(self) -> None:
         """Private constructor. Use instance() instead."""
         # Guard against re-initialization
@@ -171,54 +190,46 @@ class ConfigurationManager(ManagerBase):
 
         self.logger.info("Initializing configuration")
 
-        # Check if configuration exists
-        try:
-            with open("/secrets.json") as f:
-                secrets = json.load(f)
-
-            ssid = secrets.get("ssid", "").strip()
-            password = secrets.get("password", "")
-            zip_code = secrets.get("weather_zip", "")
-
-            # Validate configuration is complete
-            if not ssid or not password or not zip_code:
-                self.logger.info("Configuration incomplete - entering setup")
-                if portal_runner is None:
-                    raise ValueError("portal_runner is required to enter setup mode")
-                return await portal_runner(error=None)
-
-            self.logger.debug(f"Configuration found for '{ssid}'")
-
-            # Try to connect with existing credentials
-            if self.connection_manager and self.connection_manager.is_connected():
-                self.logger.debug("Already connected")
-                self._initialized = True
-                return True
-
-            # Attempt connection with saved credentials
-            self.logger.debug("Connecting with saved credentials")
-            if not self.connection_manager:
-                raise RuntimeError("ConnectionManager not initialized")
-            success, error_msg = await self.connection_manager.ensure_connected(timeout=60)
-
-            if success:
-                self._initialized = True
-                return True
-            else:
-                # Connection failed - enter setup mode
-                self.logger.warning(f"Connection failed: {error_msg}")
-                self.logger.info("Entering setup mode")
-                friendly_message, field = self._build_connection_error(ssid, error_msg)
-                if portal_runner is None:
-                    raise ValueError("portal_runner is required to enter setup mode")
-                return await portal_runner(error={"message": friendly_message, "field": field})
-
-        except (OSError, ValueError) as e:
-            # Configuration file missing or invalid - normal for first boot
-            self.logger.info(f"No configuration found: {e}")
+        config = self._load_saved_configuration()
+        if config is None:
             if portal_runner is None:
-                raise ValueError("portal_runner is required to enter setup mode") from e
+                raise ValueError("portal_runner is required to enter setup mode")
             return await portal_runner(error=None)
+
+        ssid, password, zip_code = config
+
+        # Validate configuration is complete
+        if not self._has_complete_configuration(ssid, password, zip_code):
+            self.logger.info("Configuration incomplete - entering setup")
+            if portal_runner is None:
+                raise ValueError("portal_runner is required to enter setup mode")
+            return await portal_runner(error=None)
+
+        self.logger.debug(f"Configuration found for '{ssid}'")
+
+        # Try to connect with existing credentials
+        if self.connection_manager and self.connection_manager.is_connected():
+            self.logger.debug("Already connected")
+            self._initialized = True
+            return True
+
+        # Attempt connection with saved credentials
+        self.logger.debug("Connecting with saved credentials")
+        if not self.connection_manager:
+            raise RuntimeError("ConnectionManager not initialized")
+        success, error_msg = await self.connection_manager.ensure_connected(timeout=60)
+
+        if success:
+            self._initialized = True
+            return True
+
+        # Connection failed - enter setup mode
+        self.logger.warning(f"Connection failed: {error_msg}")
+        self.logger.info("Entering setup mode")
+        friendly_message, field = self._build_connection_error(ssid, error_msg)
+        if portal_runner is None:
+            raise ValueError("portal_runner is required to enter setup mode")
+        return await portal_runner(error={"message": friendly_message, "field": field})
 
     async def run_portal(self, error: dict[str, str] | None = None, button_session: Any = None) -> bool:
         """

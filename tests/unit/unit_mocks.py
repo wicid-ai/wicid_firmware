@@ -1,5 +1,5 @@
 """
-Unit test mocks for WICID firmware.
+Unit test mocks for WICID firmware (desktop-only).
 
 Provides configurable mocks for CircuitPython-only modules and services.
 These mocks use MagicMock when available and are designed for desktop-only
@@ -11,11 +11,11 @@ Design Principles:
 - Class-level state tracking for assertions
 - Reset methods for test isolation
 
-For hardware mocks that need to run on CircuitPython (on-device tests),
-see tests/hardware_mocks.py instead.
+For hardware simulation mocks that work on CircuitPython (on-device integration tests),
+see tests/integration/integration_mocks.py instead.
 
 Usage:
-    from tests.unit.mocks import MockNTP, MockRTCModule, MockConnectionManager
+    from tests.unit.unit_mocks import MockNTP, MockRTCModule, MockConnectionManager
 
     # Configure mock behavior via constructor
     ntp = MockNTP(datetime=(2025, 1, 15, 12, 0, 0, 2, 15))
@@ -27,13 +27,11 @@ import sys
 # =============================================================================
 # Environment Detection
 # =============================================================================
-# These mocks are primarily designed for desktop unit testing. They can be
-# imported on CircuitPython, but tests using them should skip on-device
-# since mocking CircuitPython-native modules (rtc, adafruit_ntp) makes no
-# sense when running on actual hardware.
+# These mocks are designed for desktop unit testing only. They should NOT
+# be imported on CircuitPython. Unit tests run only on desktop.
 #
-# For hardware simulation mocks that work on CircuitPython (MockPin, MockPixel),
-# see tests/hardware_mocks.py instead.
+# For hardware simulation mocks that work on CircuitPython,
+# see tests/integration/integration_mocks.py instead.
 
 IS_CIRCUITPYTHON = hasattr(sys, "implementation") and sys.implementation.name == "circuitpython"
 
@@ -544,6 +542,159 @@ class MockTaskHandle:
     def __hash__(self) -> int:
         """Hash by task ID."""
         return hash(self.task_id)
+
+
+# =============================================================================
+# HTTP Session Mocks (for testing services that make HTTP requests)
+# =============================================================================
+
+
+class MockResponse:
+    """
+    Mock HTTP response for testing.
+
+    Tracks close() calls and provides configurable JSON responses.
+    """
+
+    def __init__(self, json_data: Any = None, should_raise: Exception | None = None) -> None:
+        """
+        Initialize mock response.
+
+        Args:
+            json_data: Data to return from json()
+            should_raise: Exception to raise on json()
+        """
+        self._json_data = json_data or {}
+        self._should_raise = should_raise
+        self.closed = False
+
+    def json(self) -> Any:
+        """Return configured JSON data or raise error."""
+        if self._should_raise:
+            raise self._should_raise
+        return self._json_data
+
+    def close(self) -> None:
+        """Mark response as closed."""
+        self.closed = True
+
+
+class MockSession:
+    """
+    Mock HTTP session for testing services.
+
+    Configurable to return different responses or raise errors.
+
+    Example:
+        session = MockSession()
+        session.add_response("geocoding", {"results": [{"latitude": 40.7, "longitude": -74.0}]})
+        session.add_response("forecast", {"current_weather": {"temperature": 72.0}})
+
+        response = session.get("https://geocoding-api.open-meteo.com/...")
+        data = response.json()  # Returns geocoding response
+    """
+
+    def __init__(self) -> None:
+        """Initialize mock session."""
+        self._responses: list[MockResponse] = []
+        self._response_index = 0
+        self._default_response: dict[str, Any] = {}
+        self.get_call_count = 0
+        self.get_urls: list[str] = []
+
+    def add_response(self, json_data: Any = None, should_raise: Exception | None = None) -> None:
+        """Add a response to the queue (FIFO order)."""
+        self._responses.append(MockResponse(json_data, should_raise))
+
+    def set_default_response(self, json_data: dict[str, Any]) -> None:
+        """Set a default response when queue is empty."""
+        self._default_response = json_data
+
+    def get(self, url: str, **kwargs: Any) -> MockResponse:
+        """Mock GET request."""
+        self.get_call_count += 1
+        self.get_urls.append(url)
+
+        if self._response_index < len(self._responses):
+            response = self._responses[self._response_index]
+            self._response_index += 1
+            return response
+
+        return MockResponse(self._default_response)
+
+    def reset(self) -> None:
+        """Reset session state for test isolation."""
+        self._responses.clear()
+        self._response_index = 0
+        self._default_response = {}
+        self.get_call_count = 0
+        self.get_urls.clear()
+
+
+class MockWeatherService:
+    """
+    Mock WeatherService for testing WeatherManager.
+
+    Provides configurable return values for all weather methods.
+    """
+
+    def __init__(
+        self,
+        current_temp: float | None = 72.0,
+        daily_high: float | None = 80.0,
+        daily_precip: int | None = 20,
+        window_precip: int | None = 30,
+        should_raise: Exception | None = None,
+    ) -> None:
+        """
+        Initialize mock weather service.
+
+        Args:
+            current_temp: Value to return for get_current_temperature()
+            daily_high: Value to return for get_daily_high()
+            daily_precip: Value to return for get_daily_precip_chance()
+            window_precip: Value to return for get_precip_chance_in_window()
+            should_raise: Exception to raise on any method call
+        """
+        self.current_temp = current_temp
+        self.daily_high = daily_high
+        self.daily_precip = daily_precip
+        self.window_precip = window_precip
+        self.should_raise = should_raise
+
+        # Call tracking
+        self.get_current_temperature_count = 0
+        self.get_daily_high_count = 0
+        self.get_daily_precip_chance_count = 0
+        self.get_precip_chance_in_window_count = 0
+
+    async def get_current_temperature(self) -> float | None:
+        """Return configured temperature or raise error."""
+        self.get_current_temperature_count += 1
+        if self.should_raise:
+            raise self.should_raise
+        return self.current_temp
+
+    async def get_daily_high(self) -> float | None:
+        """Return configured high temperature or raise error."""
+        self.get_daily_high_count += 1
+        if self.should_raise:
+            raise self.should_raise
+        return self.daily_high
+
+    async def get_daily_precip_chance(self) -> int | None:
+        """Return configured precipitation chance or raise error."""
+        self.get_daily_precip_chance_count += 1
+        if self.should_raise:
+            raise self.should_raise
+        return self.daily_precip
+
+    async def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
+        """Return configured window precipitation or raise error."""
+        self.get_precip_chance_in_window_count += 1
+        if self.should_raise:
+            raise self.should_raise
+        return self.window_precip
 
 
 # =============================================================================

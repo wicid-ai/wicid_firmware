@@ -10,7 +10,7 @@ See tests.unit for instructions on running tests.
 # Import from unit package - path setup happens automatically
 from controllers.button_controller import ButtonController
 from core.logging_helper import logger
-from tests.hardware_mocks import MockDigitalInOut
+from tests.integration.integration_mocks import MockDigitalInOut
 from tests.test_helpers import create_mock_button_pin
 from tests.unit import TestCase
 

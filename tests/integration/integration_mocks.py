@@ -1,17 +1,23 @@
 """
-Hardware mocks for WICID firmware tests.
+Integration test mocks for WICID firmware.
 
-Provides comprehensive mocks that simulate CircuitPython hardware behavior,
-including async_button compatibility, event simulation, and hardware state tracking.
+Provides comprehensive mocks that simulate CircuitPython hardware behavior
+for on-device integration testing. These mocks are designed to work on
+CircuitPython and are used when real hardware cannot be safely accessed
+during automated integration tests.
+
+For desktop-only unit test mocks (using MagicMock, patch, etc.),
+see tests/unit/unit_mocks.py instead.
 
 Design Goals:
 - Full compatibility with async_button.Button library
 - Support for both polling (is_pressed) and async event handling
 - Realistic state transitions and timing
 - Easy test setup with sensible defaults
+- Works on both CircuitPython and desktop Python
 
 Usage:
-    >>> from hardware_mocks import MockAsyncButton
+    >>> from tests.integration.integration_mocks import MockAsyncButton
     >>> button = MockAsyncButton()
     >>> button.simulate_press()  # Simulate hardware press
     >>> assert button.is_pressed()

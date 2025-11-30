@@ -5,15 +5,31 @@ alwaysApply: false
 ---
 # Testing Rules
 
-Unit tests must run locally in development environments and are automatically executed as part of pre-commit checks.
+## Testing Philosophy
+
+- **Unit tests**: Desktop-only, fully mocked, run in pre-commit (fast feedback)
+- **Integration tests**: Device-only, real hardware validation (run sparingly)
 
 ## Critical Rules
 
 - **No Hardware Imports**: NEVER import `board` or `microcontroller` in unit tests.
-- **Use Mocks**: Use helpers like `create_mock_button_pin()` from `tests.test_helpers`.
-- **Mock Hardware**: All hardware interactions (GPIO, I2C, SPI) must be mocked in unit tests.
-- **Local Execution**: Unit tests must be runnable via `python tests/run_tests.py` without hardware.
+- **Use Unit Mocks**: Import from `tests.unit.unit_mocks` for service/module mocks.
+- **Use Integration Mocks**: Import from `tests.integration.integration_mocks` for hardware simulation.
+- **Local Execution**: Unit tests run via `python tests/run_tests.py` without hardware.
 - **Pre-commit Integration**: All unit tests must pass before code can be committed.
+
+## Mock File Locations
+
+- `tests/unit/unit_mocks.py` - Desktop-only mocks (MagicMock-based, for unit tests)
+- `tests/integration/integration_mocks.py` - Hardware simulation mocks (for integration tests)
+- `tests/test_helpers.py` - Factory functions for common mocks
+
+## Test Quality Principles
+
+- Test functional correctness, not implementation details
+- Avoid pedantic tests (e.g., testing exact error message wording)
+- Write minimum tests needed for meaningful coverage
+- Tests should be robust to refactoring
 
 ## Development Workflow
 
@@ -31,5 +47,4 @@ Unit tests must run locally in development environments and are automatically ex
 For small changes, you may write tests after implementation, but all tests must pass before committing.
 
 ## Reference
-- `docs/PATTERNS_COOKBOOK.md` (Testing with Mocks)
 - `tests/README.md` (Complete testing documentation)

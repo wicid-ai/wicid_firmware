@@ -1,21 +1,40 @@
 """
 Unit tests for the scheduler subsystem.
 
-These tests run on CircuitPython hardware and verify:
+Tests cover:
 - Task scheduling and execution
 - Priority ordering
 - Error handling
-- Starvation prevention
-- Timing accuracy
+- TaskType enum compatibility
 
 See tests.unit for instructions on running tests.
 """
 
-# Import from unit package - path setup happens automatically
-
 from core.app_typing import Any
-from core.scheduler import Scheduler, Task, TaskFatalError, TaskHandle, TaskNonFatalError, TaskType
+from core.scheduler import (
+    Scheduler,
+    Task,
+    TaskFatalError,
+    TaskHandle,
+    TaskNonFatalError,
+    TaskType,
+)
 from tests.unit import TestCase
+
+
+class TestTaskType(TestCase):
+    """Tests for TaskType pseudo-enum."""
+
+    def test_task_types_exist(self) -> None:
+        """All expected task types are defined."""
+        self.assertEqual(TaskType.PERIODIC.name, "PERIODIC")
+        self.assertEqual(TaskType.ONE_SHOT.name, "ONE_SHOT")
+        self.assertEqual(TaskType.RECURRING.name, "RECURRING")
+
+    def test_task_type_values_unique(self) -> None:
+        """Task type values are distinct."""
+        values = [TaskType.PERIODIC.value, TaskType.ONE_SHOT.value, TaskType.RECURRING.value]
+        self.assertEqual(len(values), len(set(values)))
 
 
 class TestSchedulerBasic(TestCase):
@@ -92,6 +111,57 @@ class TestSchedulerBasic(TestCase):
         # Same time, lower priority value wins
         self.assertTrue(task2 < task1, "Lower priority value wins when times equal")
 
+    def test_task_comparison_with_none_times(self) -> None:
+        """Tasks with None next_run_time sort first."""
+
+        async def dummy() -> None:
+            pass
+
+        task_none = Task("A", 50, dummy, TaskType.ONE_SHOT, 1.0)
+        task_none.next_run_time = None
+
+        task_with_time = Task("B", 50, dummy, TaskType.ONE_SHOT, 1.0)
+        task_with_time.next_run_time = 100.0
+
+        # None sorts before any value
+        self.assertTrue(task_none < task_with_time)
+        self.assertFalse(task_with_time < task_none)
+
+    def test_task_comparison_same_time_same_priority(self) -> None:
+        """Tasks with same time/priority are ordered by task_id."""
+
+        async def dummy() -> None:
+            pass
+
+        task1 = Task("A", 50, dummy, TaskType.ONE_SHOT, 1.0)
+        task1.next_run_time = 100.0
+        task1.effective_priority = 50
+
+        task2 = Task("B", 50, dummy, TaskType.ONE_SHOT, 1.0)
+        task2.next_run_time = 100.0
+        task2.effective_priority = 50
+
+        # Lower task_id wins (task1 created before task2)
+        self.assertTrue(task1 < task2)
+
+    def test_task_repr(self) -> None:
+        """Task repr includes key info."""
+
+        async def dummy() -> None:
+            pass
+
+        task = Task("Test Task", 50, dummy, TaskType.PERIODIC, 1.0)
+        repr_str = repr(task)
+
+        self.assertIn("Test Task", repr_str)
+        self.assertIn("50", repr_str)
+        self.assertIn("PERIODIC", repr_str)
+
+    def test_task_handle_repr(self) -> None:
+        """TaskHandle repr includes task_id."""
+        handle = TaskHandle(42)
+        self.assertEqual(repr(handle), "TaskHandle(42)")
+
     def test_exceptions_exist(self) -> None:
         """Verify custom exception types are defined."""
         with self.assertRaises(TaskNonFatalError):
@@ -99,6 +169,34 @@ class TestSchedulerBasic(TestCase):
 
         with self.assertRaises(TaskFatalError):
             raise TaskFatalError("test")
+
+
+class TestSchedulerHelpers(TestCase):
+    """Tests for scheduler helper methods."""
+
+    def test_is_awaitable_with_coroutine(self) -> None:
+        """_is_awaitable returns True for coroutines."""
+
+        async def coro() -> None:
+            pass
+
+        awaitable = coro()
+        self.assertTrue(Scheduler._is_awaitable(awaitable))
+        # Clean up the coroutine to avoid warnings
+        awaitable.close()
+
+    def test_is_awaitable_with_non_awaitable(self) -> None:
+        """_is_awaitable returns False for regular objects."""
+        self.assertFalse(Scheduler._is_awaitable(42))
+        self.assertFalse(Scheduler._is_awaitable("string"))
+        self.assertFalse(Scheduler._is_awaitable(lambda: None))
+
+    def test_make_coroutine_factory_with_non_callable(self) -> None:
+        """_make_coroutine_factory raises TypeError for non-callable."""
+        scheduler = Scheduler.instance()
+
+        with self.assertRaises(TypeError):
+            scheduler._make_coroutine_factory(42)  # type: ignore[arg-type]
 
 
 class TestSchedulerTaskScheduling(TestCase):
@@ -255,6 +353,69 @@ class TestSchedulerIntegration(TestCase):
 
         # Clean up
         scheduler.cancel(handle)
+
+
+class TestTaskTypeEnum(TestCase):
+    """Additional tests for TaskType enum behavior."""
+
+    def test_task_type_equality(self) -> None:
+        """TaskType values can be compared."""
+        self.assertEqual(TaskType.PERIODIC, TaskType.PERIODIC)
+        self.assertNotEqual(TaskType.PERIODIC, TaskType.ONE_SHOT)
+
+    def test_task_type_in_set(self) -> None:
+        """TaskType values can be used in sets."""
+        s = {TaskType.PERIODIC, TaskType.ONE_SHOT}
+        self.assertIn(TaskType.PERIODIC, s)
+        self.assertNotIn(TaskType.RECURRING, s)
+
+
+class TestSchedulerSingleton(TestCase):
+    """Additional singleton tests."""
+
+    def test_instance_same_as_constructor(self) -> None:
+        """Both access methods return same instance."""
+        s1 = Scheduler.instance()
+        s2 = Scheduler()
+        self.assertIs(s1, s2)
+
+
+class TestTaskExceptions(TestCase):
+    """Test exception classes."""
+
+    def test_non_fatal_error_message(self) -> None:
+        """TaskNonFatalError preserves message."""
+        err = TaskNonFatalError("test message")
+        self.assertEqual(str(err), "test message")
+
+    def test_fatal_error_message(self) -> None:
+        """TaskFatalError preserves message."""
+        err = TaskFatalError("fatal message")
+        self.assertEqual(str(err), "fatal message")
+
+
+class TestSchedulerMakeCoroutineFactory(TestCase):
+    """Tests for _make_coroutine_factory."""
+
+    def test_factory_accepts_callable(self) -> None:
+        """Factory accepts callable functions."""
+        scheduler = Scheduler.instance()
+
+        def sync_fn() -> int:
+            return 42
+
+        factory = scheduler._make_coroutine_factory(sync_fn)
+        self.assertTrue(callable(factory))
+
+    def test_factory_accepts_async_function(self) -> None:
+        """Factory accepts async functions."""
+        scheduler = Scheduler.instance()
+
+        async def async_fn() -> str:
+            return "async"
+
+        factory = scheduler._make_coroutine_factory(async_fn)
+        self.assertTrue(callable(factory))
 
 
 # Entry point for running tests

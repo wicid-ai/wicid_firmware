@@ -16,6 +16,7 @@ ruff = "*"
 mypy = "*"
 pre-commit = "*"
 adafruit-circuitpython-typing = "*"
+coverage = "*"
 
 [requires]
 python_version = "3.14"

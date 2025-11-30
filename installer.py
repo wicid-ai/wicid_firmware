@@ -927,29 +927,11 @@ def _case_insensitive_exists(path):
             try:
                 for item in grandparent.iterdir():
                     if item.name.lower() == parent_name:
-                        # Debug: Show exactly what we're checking
-                        item_str = str(item)
-                        print(f"  DEBUG: Checking if '{item_str}' is a directory...")
-                        print(f"  DEBUG: item.name = '{item.name}'")
-                        print(f"  DEBUG: item.exists() = {item.exists()}")
-
                         # Use os.path.isdir() for more reliable directory checking on FAT32
                         # Path.is_dir() can fail on FAT32 due to caching/metadata issues
                         import os
 
-                        is_dir_result = os.path.isdir(item_str)
-                        print(f"  DEBUG: os.path.isdir('{item_str}') = {is_dir_result}")
-
-                        # Also try stat to see what type it is
-                        try:
-                            import stat
-
-                            st = os.stat(item_str)
-                            print(f"  DEBUG: stat mode = {oct(st.st_mode)}, is dir = {stat.S_ISDIR(st.st_mode)}")
-                        except Exception as e:
-                            print(f"  DEBUG: stat failed: {e}")
-
-                        if is_dir_result:
+                        if os.path.isdir(str(item)):
                             parent_found = item
                             break
                         else:
@@ -1072,9 +1054,10 @@ def _validate_boot_file(circuitpy_path):
 
 def copy_tests_incremental(circuitpy_path, tests_dir):
     """
-    Copy tests directory to CIRCUITPY using incremental semantics.
+    Copy integration and functional tests to CIRCUITPY using incremental semantics.
 
-    Only copies files that are missing or different from existing files.
+    Only copies files from tests/integration/ and tests/functional/ directories.
+    Unit tests are desktop-only and are not copied to the device.
 
     Args:
         circuitpy_path: Path to CIRCUITPY drive
@@ -1083,7 +1066,7 @@ def copy_tests_incremental(circuitpy_path, tests_dir):
     Returns:
         tuple: (added_count, updated_count, skipped_count)
     """
-    print_step("Copying tests directory (incremental)...")
+    print_step("Copying integration and functional tests (incremental)...")
 
     added_count = 0
     updated_count = 0
@@ -1097,74 +1080,104 @@ def copy_tests_incremental(circuitpy_path, tests_dir):
     # Convert tests_dir to absolute Path for proper path resolution
     tests_dir = Path(tests_dir).resolve()
 
-    # Walk through all files in the tests directory
-    for root, dirs, files in os.walk(tests_dir):
-        # Skip hidden files and directories
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        files = [f for f in files if not f.startswith(".")]
+    # Only copy from integration/ and functional/ subdirectories
+    # Unit tests are desktop-only and should not be copied to device
+    subdirs_to_copy = ["integration", "functional"]
 
-        # Skip __pycache__ directories - these are Python bytecode cache files
-        # that are platform-specific and should never be copied to CircuitPython devices
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
-        # Also skip files inside __pycache__ directories
-        if "__pycache__" in Path(root).parts:
-            continue
+    # Also copy top-level test infrastructure files (but not test_*.py files)
+    top_level_files = ["__init__.py", "unittest.py", "run_tests.py", "test_helpers.py"]
 
-        for file in files:
-            # Get relative path from tests_dir
-            rel_path = Path(root).relative_to(tests_dir) / file
-
-            # Skip __pycache__ directories and their contents
-            if "__pycache__" in rel_path.parts:
-                continue
-
-            src_path = Path(root) / file
-            dst_path = tests_dest / rel_path
-
-            # Check if file exists on CIRCUITPY (case-insensitive for FAT32)
+    # Copy top-level infrastructure files
+    for filename in top_level_files:
+        src_path = tests_dir / filename
+        if src_path.exists() and src_path.is_file():
+            dst_path = tests_dest / filename
             existing_path = _case_insensitive_exists(dst_path)
 
             if existing_path:
-                # File exists - compare content
                 try:
-                    # Use filecmp for content comparison (shallow=False does byte-by-byte)
                     if filecmp.cmp(src_path, existing_path, shallow=False):
-                        # Files are identical - skip
                         skipped_count += 1
                         continue
                     else:
-                        # Files differ - update
                         copy_file_safely(src_path, dst_path)
-                        print(f"  Updated: tests/{rel_path}")
+                        print(f"  Updated: tests/{filename}")
                         updated_count += 1
                 except OSError as e:
-                    # OSError during comparison (file handle issues, etc.)
-                    print(f"  Warning: Could not compare tests/{rel_path}: {e}")
-                    print("  Skipping update - file may be locked or corrupted")
-                    skipped_count += 1
-                except Exception as e:
-                    # Other exceptions - log but be more cautious
-                    print(f"  Warning: Unexpected error comparing tests/{rel_path}: {e}")
-                    print("  Skipping update to avoid corruption")
+                    print(f"  Warning: Could not compare tests/{filename}: {e}")
                     skipped_count += 1
             else:
-                # File doesn't exist - add it
                 copy_file_safely(src_path, dst_path)
-                print(f"  Added: tests/{rel_path}")
+                print(f"  Added: tests/{filename}")
                 added_count += 1
 
-    # Handle directories - ensure they exist on CIRCUITPY
-    for root, dirs, _files in os.walk(tests_dir):
-        # Skip hidden directories
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+    # Copy integration/ and functional/ subdirectories
+    for subdir in subdirs_to_copy:
+        subdir_path = tests_dir / subdir
+        if not subdir_path.exists() or not subdir_path.is_dir():
+            continue
 
-        for dir_name in dirs:
-            rel_dir_path = Path(root).relative_to(tests_dir) / dir_name
-            dst_dir_path = tests_dest / rel_dir_path
+        # Walk through all files in the subdirectory
+        for root, dirs, files in os.walk(subdir_path):
+            # Skip hidden files and directories
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            files = [f for f in files if not f.startswith(".")]
 
-            # Create directory if it doesn't exist
-            if not dst_dir_path.exists():
-                dst_dir_path.mkdir(parents=True, exist_ok=True)
+            # Skip __pycache__ directories
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            if "__pycache__" in Path(root).parts:
+                continue
+
+            for file in files:
+                # Get relative path from tests_dir (includes subdir prefix)
+                rel_path = Path(root).relative_to(tests_dir) / file
+
+                # Skip __pycache__ directories and their contents
+                if "__pycache__" in rel_path.parts:
+                    continue
+
+                src_path = Path(root) / file
+                dst_path = tests_dest / rel_path
+
+                # Check if file exists on CIRCUITPY (case-insensitive for FAT32)
+                existing_path = _case_insensitive_exists(dst_path)
+
+                if existing_path:
+                    # File exists - compare content
+                    try:
+                        if filecmp.cmp(src_path, existing_path, shallow=False):
+                            skipped_count += 1
+                            continue
+                        else:
+                            copy_file_safely(src_path, dst_path)
+                            print(f"  Updated: tests/{rel_path}")
+                            updated_count += 1
+                    except OSError as e:
+                        print(f"  Warning: Could not compare tests/{rel_path}: {e}")
+                        print("  Skipping update - file may be locked or corrupted")
+                        skipped_count += 1
+                    except Exception as e:
+                        print(f"  Warning: Unexpected error comparing tests/{rel_path}: {e}")
+                        print("  Skipping update to avoid corruption")
+                        skipped_count += 1
+                else:
+                    # File doesn't exist - add it
+                    copy_file_safely(src_path, dst_path)
+                    print(f"  Added: tests/{rel_path}")
+                    added_count += 1
+
+        # Handle directories - ensure they exist on CIRCUITPY
+        for root, dirs, _files in os.walk(subdir_path):
+            # Skip hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+
+            for dir_name in dirs:
+                rel_dir_path = Path(root).relative_to(tests_dir) / dir_name
+                dst_dir_path = tests_dest / rel_dir_path
+
+                # Create directory if it doesn't exist
+                if not dst_dir_path.exists():
+                    dst_dir_path.mkdir(parents=True, exist_ok=True)
 
     if added_count > 0 or updated_count > 0:
         print_success(f"Tests copied: {added_count} added, {updated_count} updated, {skipped_count} unchanged")
@@ -1176,15 +1189,16 @@ def copy_tests_incremental(circuitpy_path, tests_dir):
 
 def copy_tests_hard(circuitpy_path, tests_dir):
     """
-    Copy tests directory to CIRCUITPY using hard semantics.
+    Copy integration and functional tests to CIRCUITPY using hard semantics.
 
-    Deletes existing tests directory and copies all files fresh.
+    Deletes existing tests directory and copies integration/functional tests fresh.
+    Unit tests are desktop-only and are not copied to the device.
 
     Args:
         circuitpy_path: Path to CIRCUITPY drive
         tests_dir: Path to tests directory (relative to project root)
     """
-    print_step("Copying tests directory (hard)...")
+    print_step("Copying integration and functional tests (hard)...")
 
     tests_dest = circuitpy_path / "tests"
 
@@ -1200,13 +1214,34 @@ def copy_tests_hard(circuitpy_path, tests_dir):
             print_error(f"Could not delete existing tests directory: {e}")
             raise
 
-    # Copy entire tests directory to CIRCUITPY
-    copy_files_to_circuitpy(tests_dir, tests_dest, recursive=True)
+    # Create tests destination directory
+    tests_dest.mkdir(parents=True, exist_ok=True)
+
+    # Only copy from integration/ and functional/ subdirectories
+    subdirs_to_copy = ["integration", "functional"]
+
+    # Also copy top-level test infrastructure files (but not test_*.py files)
+    top_level_files = ["__init__.py", "unittest.py", "run_tests.py", "test_helpers.py"]
+
+    # Copy top-level infrastructure files
+    for filename in top_level_files:
+        src_path = tests_dir / filename
+        if src_path.exists() and src_path.is_file():
+            dst_path = tests_dest / filename
+            copy_file_safely(src_path, dst_path)
+            print(f"  Copied: tests/{filename}")
+
+    # Copy integration/ and functional/ subdirectories
+    for subdir in subdirs_to_copy:
+        subdir_src = tests_dir / subdir
+        subdir_dest = tests_dest / subdir
+        if subdir_src.exists() and subdir_src.is_dir():
+            copy_files_to_circuitpy(subdir_src, subdir_dest, recursive=True)
 
     # Sync filesystem after tests copied
     _sync_filesystem()
 
-    print_success("Tests directory copied")
+    print_success("Integration and functional tests copied")
 
 
 def incremental_update(circuitpy_path, zip_path, include_tests=False):
@@ -1894,15 +1929,15 @@ def main():
 
         if choice == "1":
             update_mode = "incremental"
-            # Ask if user wants to include tests
-            include_tests_response = input("Include tests? [y/N]: ").strip().lower()
+            # Ask if user wants to include integration/functional tests (unit tests are desktop-only)
+            include_tests_response = input("Include integration and functional tests? [y/N]: ").strip().lower()
             include_tests = include_tests_response in ["y", "yes"]
             update_successful = incremental_update(circuitpy_path, zip_path, include_tests=include_tests)
             break
         elif choice == "2":
             update_mode = "hard"
-            # Ask if user wants to include tests
-            include_tests_response = input("Include tests? [y/N]: ").strip().lower()
+            # Ask if user wants to include integration/functional tests (unit tests are desktop-only)
+            include_tests_response = input("Include integration and functional tests? [y/N]: ").strip().lower()
             include_tests = include_tests_response in ["y", "yes"]
             update_successful = hard_update(circuitpy_path, zip_path, include_tests=include_tests)
             break

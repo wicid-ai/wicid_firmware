@@ -9,7 +9,6 @@ import json
 import os
 import sys
 
-import board  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
 from core.app_typing import Any, Optional
@@ -69,26 +68,6 @@ def get_os_version() -> tuple:
     return sys.implementation.version
 
 
-def get_board_id() -> str:
-    """
-    Get the board identifier.
-
-    Returns:
-        str: Board ID string
-    """
-    return board.board_id
-
-
-def get_os_port_name() -> str:
-    """
-    Get the OS/Port name.
-
-    Returns:
-        str: Operating system port name
-    """
-    return os.uname().sysname
-
-
 def get_machine_type() -> str:
     """
     Get the machine type.
@@ -97,34 +76,6 @@ def get_machine_type() -> str:
         str: Machine type string
     """
     return os.uname().machine
-
-
-def get_cpu_uid() -> str:
-    """
-    Get the CPU's unique identifier.
-
-    Returns:
-        str: Hexadecimal string representation of the CPU unique ID
-    """
-    chip_uid_binary = microcontroller.cpu.uid
-    return "".join(f"{b:02x}" for b in chip_uid_binary)
-
-
-def get_mac_address() -> str | None:
-    """
-    Get the MAC address via the connection manager.
-
-    Returns:
-        str: MAC address in colon-separated hex format, or None if Wi-Fi unavailable
-    """
-    try:
-        # Lazy import to avoid circular dependency
-        from managers.connection_manager import ConnectionManager
-
-        connection_manager = ConnectionManager.instance()
-        return connection_manager.get_mac_address()
-    except Exception:
-        return None
 
 
 def get_os_version_string() -> str:
@@ -248,7 +199,6 @@ def mark_incompatible_release(version: str, reason: str = "Unknown") -> None:
     Args:
         version: Release version string to mark as incompatible
         reason: Why the release is incompatible
-        min_attempts_to_block: Minimum attempts value written to the record (defaults to immediate block)
     """
     log = logger("wicid.utils")
     try:
@@ -323,7 +273,12 @@ def is_release_incompatible(version: str, max_attempts: int = 1) -> tuple[bool, 
         return (False, None, 0)
 
 
-def check_release_compatibility(release_data: dict, current_version: str) -> tuple[bool, str | None]:
+def check_release_compatibility(
+    release_data: dict,
+    current_version: str,
+    device_machine: str | None = None,
+    device_os: str | None = None,
+) -> tuple[bool, str | None]:
     """
     DRY compatibility check used by both update_manager and boot.
 
@@ -336,12 +291,16 @@ def check_release_compatibility(release_data: dict, current_version: str) -> tup
     Args:
         release_data: Dict with target_machine_types, target_operating_systems, version
         current_version: Current installed version string
+        device_machine: Optional machine type (defaults to get_machine_type() if None)
+        device_os: Optional OS version string (defaults to get_os_version_string() if None)
 
     Returns:
         tuple: (is_compatible: bool, error_message: str or None)
     """
-    device_machine = get_machine_type()
-    device_os = get_os_version_string()
+    if device_machine is None:
+        device_machine = get_machine_type()
+    if device_os is None:
+        device_os = get_os_version_string()
 
     # Check machine type
     if device_machine not in release_data.get("target_machine_types", []):
@@ -368,24 +327,6 @@ def check_release_compatibility(release_data: dict, current_version: str) -> tup
         log.debug("Retrying compatibility check")
 
     return (True, None)
-
-
-def get_system_info() -> dict:
-    """
-    Get comprehensive system information.
-
-    Returns:
-        dict: Dictionary containing all system attributes
-    """
-    return {
-        "os_version": get_os_version(),
-        "os_version_string": get_os_version_string(),
-        "board_id": get_board_id(),
-        "os_name": get_os_name(),
-        "machine_type": get_machine_type(),
-        "cpu_uid": get_cpu_uid(),
-        "mac_address": get_mac_address(),
-    }
 
 
 def validate_config_values(config_dict: dict, required_keys: list[str]) -> tuple[bool, list[str]]:

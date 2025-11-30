@@ -227,6 +227,7 @@ class ConnectionManager(ManagerBase):
 
             # Validate required fields
             if not secrets.get("ssid") or not secrets.get("password"):
+                self._credentials = None
                 return None
 
             self._credentials = secrets

@@ -16,7 +16,7 @@ See tests.unit for instructions on running tests.
 # Import from unit package - path setup happens automatically
 from core.app_typing import Any
 from managers.input_manager import ButtonEvent, InputManager
-from tests.hardware_mocks import MockButtonController
+from tests.integration.integration_mocks import MockButtonController
 from tests.test_helpers import create_mock_button_pin
 from tests.unit import TestCase
 from utils.utils import suppress

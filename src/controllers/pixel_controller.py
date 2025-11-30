@@ -55,7 +55,7 @@ class PixelController:
     _MODE_PULSING = 1
     _MODE_FLASHING = 2
 
-    def __new__(cls) -> "PixelController":
+    def __new__(cls, *args: Any, **kwargs: Any) -> "PixelController":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -72,8 +72,9 @@ class PixelController:
             The global PixelController instance
         """
         if cls._instance is None:
-            cls._instance = cls()
-            cls._instance._init(pixel)
+            cls._instance = cls(pixel=pixel)
+        elif pixel is not None:
+            cls._instance.pixels = pixel
         return cls._instance
 
     def __init__(self, pixel: Any = None) -> None:

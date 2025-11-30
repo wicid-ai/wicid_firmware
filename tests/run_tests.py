@@ -3,15 +3,18 @@ WICID Firmware Test Runner
 
 Unified test runner for executing WICID firmware tests.
 
+Testing Philosophy:
+- Unit tests: Desktop-only, fully mocked, fast feedback (pre-commit integration)
+- Integration/Functional tests: On-device only, real hardware validation
+
 Desktop (python tests/run_tests.py):
-    Runs unit tests only. These are fully mocked and require no hardware.
+    Runs unit tests only. Uses MagicMock for CircuitPython modules.
 
 On-device (CircuitPython REPL):
     >>> import tests
-    >>> tests.run_all()       # All tests (unit, integration, functional)
-    >>> tests.run_unit()      # Unit tests only
-    >>> tests.run_integration()
-    >>> tests.run_functional()
+    >>> tests.run_all()           # Integration + functional tests
+    >>> tests.run_integration()   # Integration tests only
+    >>> tests.run_functional()    # Functional tests only
 """
 
 import os
@@ -96,16 +99,55 @@ def mock_circuitpython_modules() -> None:
 if not IS_CIRCUITPYTHON:
     mock_circuitpython_modules()
 
-import unittest  # noqa: E402
+# Import unittest - use standard library on desktop, custom shim on CircuitPython
+if IS_CIRCUITPYTHON:
+    import unittest  # noqa: E402  # Uses tests/unittest.py on device
+else:
+    # Desktop: Use standard library unittest (not tests/unittest.py)
+    # Temporarily remove tests/ from path to get real unittest
+    _tests_dir = os.path.dirname(os.path.abspath(__file__))
+    _paths_removed = []
+    while _tests_dir in sys.path:
+        sys.path.remove(_tests_dir)
+        _paths_removed.append(_tests_dir)
 
-# Import custom TestResult from our unittest implementation
-from unittest import TestResult as CustomTestResult  # noqa: E402
+    import unittest  # noqa: E402
+
+    # Restore paths
+    for _p in reversed(_paths_removed):
+        sys.path.insert(0, _p)
 
 # Import logging after path is set up
 from core.app_typing import Any, Callable  # noqa: E402
 from core.logging_helper import logger  # noqa: E402
 
+# Import suppress - use stdlib on desktop, custom implementation on CircuitPython
+if IS_CIRCUITPYTHON:
+    from utils.utils import suppress  # noqa: E402
+else:
+    from contextlib import suppress  # type: ignore[assignment]  # noqa: E402
+
 TEST_LOG = logger("wicid.tests")
+
+
+class _CircuitPythonTestResult:
+    """Test result class with CircuitPython-compatible attributes.
+
+    CircuitPython's unittest.TestResult has different attributes than the standard library.
+    This class provides a consistent interface that works on both platforms.
+    """
+
+    def __init__(self) -> None:
+        self.testsRun: int = 0
+        self.failuresNum: int = 0
+        self.errorsNum: int = 0
+        self.skippedNum: int = 0
+        self.failures: list[Any] = []
+        self.errors: list[Any] = []
+
+    def wasSuccessful(self) -> bool:
+        """Return True if all tests passed."""
+        return self.failuresNum == 0 and self.errorsNum == 0
 
 
 def _restore_hardware_input_manager() -> None:
@@ -170,6 +212,84 @@ class GroupedTestResult(unittest.TestResult):
             self.current_test_info = None
 
 
+def _format_test_results(
+    grouped_result: GroupedTestResult,
+    elapsed_time: float,
+    total_tests: int,
+    total_passed: int,
+    total_failed: int,
+    total_errors: int,
+    total_skipped: int = 0,
+) -> None:
+    """Format and display test results.
+
+    Args:
+        grouped_result: GroupedTestResult with collected test data
+        elapsed_time: Total test run time in seconds
+        total_tests: Total number of tests run
+        total_passed: Number of passed tests
+        total_failed: Number of failed tests
+        total_errors: Number of errored tests
+        total_skipped: Number of skipped tests
+    """
+    TEST_LOG.testing("")
+    TEST_LOG.testing("=" * 70)
+    TEST_LOG.testing("TEST RESULTS")
+    TEST_LOG.testing("=" * 70)
+    TEST_LOG.testing("")
+
+    for module_name in sorted(grouped_result.test_results.keys()):
+        module_data = grouped_result.test_results[module_name]
+
+        TEST_LOG.testing(f"📁 {module_name}.py")
+        TEST_LOG.testing("-" * 70)
+
+        for class_name in sorted(module_data.keys()):
+            class_tests = module_data[class_name]
+
+            TEST_LOG.testing(f"  📋 {class_name}")
+
+            for test_name, status, error_info in class_tests:
+                if status == "PASS":
+                    TEST_LOG.testing(f"    ✅ {test_name}")
+                elif status == "FAIL":
+                    TEST_LOG.testing(f"    ❌ {test_name} - FAIL")
+                    if error_info:
+                        for line in str(error_info).split("\n")[:3]:
+                            TEST_LOG.testing(f"      {line}")
+                elif status == "ERROR":
+                    TEST_LOG.testing(f"    ❌ {test_name} - ERROR")
+                    if error_info:
+                        for line in str(error_info).split("\n")[:3]:
+                            TEST_LOG.testing(f"      {line}")
+                elif status == "SKIP":
+                    TEST_LOG.testing(f"    ⊘ {test_name} - SKIP")
+
+            TEST_LOG.testing("")
+
+    # Summary
+    TEST_LOG.testing("=" * 70)
+    TEST_LOG.testing("TEST SUMMARY")
+    TEST_LOG.testing("=" * 70)
+    TEST_LOG.testing(f"Tests run: {total_tests}")
+    TEST_LOG.testing(f"Passed:    {total_passed}")
+    if total_failed > 0:
+        TEST_LOG.testing(f"Failed:    {total_failed}")
+    if total_errors > 0:
+        TEST_LOG.testing(f"Errors:    {total_errors}")
+    if total_skipped > 0:
+        TEST_LOG.testing(f"Skipped:   {total_skipped}")
+    TEST_LOG.testing(f"Time:      {elapsed_time:.3f}s")
+
+    if total_failed == 0 and total_errors == 0:
+        TEST_LOG.testing("\n✅ ALL TESTS PASSED")
+    else:
+        TEST_LOG.testing("\n❌ SOME TESTS FAILED")
+
+    TEST_LOG.testing("=" * 70)
+    TEST_LOG.testing("")
+
+
 def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None = None) -> Any:
     """Run all tests in the test suite.
 
@@ -185,8 +305,139 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
     TEST_LOG.testing("=" * 70)
     TEST_LOG.testing("")
 
-    # CircuitPython unittest doesn't have TestLoader.discover()
-    # Manually import and add test modules
+    # Desktop: Use standard unittest TextTestRunner for simplicity
+    if not IS_CIRCUITPYTHON:
+        return _run_desktop_tests(verbosity)
+
+    # CircuitPython: Use custom test discovery and execution
+    return _run_circuitpython_tests(verbosity, tick_callback)
+
+
+def _run_desktop_tests(verbosity: int = 2) -> Any:
+    """Run unit tests on desktop with formatted output."""
+    import time as time_mod
+
+    start_time = time_mod.time()
+
+    # Discover unit tests
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+    test_modules: dict[str, list[tuple[str, type]]] = {}  # module_name -> [(class_name, class)]
+
+    unit_dir = os.path.join(TEST_ROOT, "unit")
+    try:
+        files = os.listdir(unit_dir)
+    except OSError as e:
+        raise RuntimeError(f"Cannot read unit test directory: {unit_dir}") from e
+
+    for filename in sorted(files):
+        if filename == "__init__.py":
+            continue
+        if filename.startswith("test_") and filename.endswith(".py"):
+            module_name = filename[:-3]
+            full_module_name = f"tests.unit.{module_name}"
+            try:
+                module = __import__(full_module_name, None, None, ["*"])
+                test_modules[module_name] = []
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if isinstance(attr, type) and issubclass(attr, unittest.TestCase) and attr is not unittest.TestCase:
+                        test_modules[module_name].append((attr_name, attr))
+                        suite.addTests(loader.loadTestsFromTestCase(attr))
+            except Exception as e:
+                TEST_LOG.warning(f"Failed to import test module {full_module_name}: {e}")
+
+    if suite.countTestCases() == 0:
+        raise RuntimeError("No unit tests discovered.")
+
+    # Run tests and collect results
+    grouped_result = GroupedTestResult()
+    total_tests = 0
+    total_passed = 0
+    total_failed = 0
+    total_errors = 0
+
+    for module_name, classes in sorted(test_modules.items()):
+        for class_name, test_class in sorted(classes, key=lambda x: x[0]):
+            # Call setUpClass if it exists
+            if hasattr(test_class, "setUpClass"):
+                try:
+                    test_class.setUpClass()
+                except Exception as e:
+                    # Record error for the class
+                    grouped_result.start_test(module_name, class_name, "setUpClass")
+                    grouped_result.record_error(f"{type(e).__name__}: {e}")
+                    total_errors += 1
+                    total_tests += 1
+                    continue  # Skip all tests in this class
+
+            try:
+                # Get test methods
+                test_methods = loader.getTestCaseNames(test_class)
+
+                for method_name in test_methods:
+                    grouped_result.start_test(module_name, class_name, method_name)
+                    total_tests += 1
+
+                    try:
+                        test_instance = test_class(method_name)
+                        test_instance.setUp()
+                        try:
+                            getattr(test_instance, method_name)()
+                            grouped_result.record_success()
+                            total_passed += 1
+                        except AssertionError as e:
+                            error_msg = str(e) if str(e) else "Assertion failed"
+                            grouped_result.record_failure(error_msg)
+                            total_failed += 1
+                        except Exception as e:
+                            error_msg = f"{type(e).__name__}: {e}"
+                            grouped_result.record_error(error_msg)
+                            total_errors += 1
+                        finally:
+                            test_instance.tearDown()
+                    except Exception as e:
+                        error_msg = f"{type(e).__name__}: {e}"
+                        grouped_result.record_error(error_msg)
+                        total_errors += 1
+            finally:
+                # Always call tearDownClass if it exists
+                if hasattr(test_class, "tearDownClass"):
+                    with suppress(Exception):
+                        test_class.tearDownClass()
+
+    elapsed_time = time_mod.time() - start_time
+
+    # Display formatted results
+    _format_test_results(grouped_result, elapsed_time, total_tests, total_passed, total_failed, total_errors)
+
+    # Create a result object with compatible interface
+    class DesktopTestResult:
+        def __init__(self) -> None:
+            self.failures: list[Any] = []
+            self.errors: list[Any] = []
+            self.testsRun = total_tests
+            self.failuresNum = total_failed
+            self.errorsNum = total_errors
+
+        def wasSuccessful(self) -> bool:
+            return total_failed == 0 and total_errors == 0
+
+    result = DesktopTestResult()
+    # Populate failures/errors for compatibility
+    for module_name, module_data in grouped_result.test_results.items():
+        for class_name, tests in module_data.items():
+            for test_name, status, error_info in tests:
+                if status == "FAIL":
+                    result.failures.append((f"{module_name}.{class_name}.{test_name}", error_info))
+                elif status == "ERROR":
+                    result.errors.append((f"{module_name}.{class_name}.{test_name}", error_info))
+
+    return result
+
+
+def _run_circuitpython_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None = None) -> Any:
+    """Run integration/functional tests on CircuitPython."""
     suite: Any = unittest.TestSuite()
 
     # Track test modules by name for organization
@@ -224,24 +475,23 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
                     # Log import error but continue with other tests
                     TEST_LOG.warning(f"Failed to import test module {full_module_name}: {e}")
 
-    # Auto-discover tests from test directories
-    # - CircuitPython: runs all tests (unit, integration, functional)
-    # - Desktop: runs only unit tests (integration/functional require hardware)
-    if IS_CIRCUITPYTHON:
-        discover_tests_in_directory(f"{TEST_ROOT}/unit", "unit")
-        discover_tests_in_directory(f"{TEST_ROOT}/integration", "integration")
-        discover_tests_in_directory(f"{TEST_ROOT}/functional", "functional")
-    else:
-        # Desktop: unit tests only (fully mocked, no hardware required)
-        discover_tests_in_directory(os.path.join(TEST_ROOT, "unit"), "tests.unit")
+    # On-device: integration and functional tests only (NOT unit tests)
+    discover_tests_in_directory(f"{TEST_ROOT}/integration", "integration")
+    discover_tests_in_directory(f"{TEST_ROOT}/functional", "functional")
 
-    # Require at least one test to be discovered in Test Mode
+    # If no tests discovered, return early with informative message (not an error)
     if suite.countTestCases() == 0:
-        raise RuntimeError("No tests discovered in /tests directories. This is a blocking error in Test Mode.")
+        TEST_LOG.testing("No integration or functional tests found.")
+        TEST_LOG.testing("Integration tests go in: tests/integration/test_*.py")
+        TEST_LOG.testing("Functional tests go in: tests/functional/test_*.py")
+        TEST_LOG.testing("")
+        TEST_LOG.testing("Unit tests are desktop-only. Run with: python tests/run_tests.py")
+        TEST_LOG.testing("=" * 70)
+        return _CircuitPythonTestResult()  # Return empty result
 
     # Create custom result collector and output capture
     grouped_result = GroupedTestResult()
-    result: Any = CustomTestResult()
+    result = _CircuitPythonTestResult()
 
     # Run tests, grouping by module and class, suppressing default output
     def format_error(e: Exception) -> str:
@@ -377,103 +627,29 @@ def run_all_tests(verbosity: int = 2, tick_callback: Callable[[], None] | None =
             if hasattr(test_class, "tearDownClass"):
                 test_class.tearDownClass()
 
-    # Display results grouped by file and class
-    TEST_LOG.testing("")
-    TEST_LOG.testing("=" * 70)
-    TEST_LOG.testing("TEST RESULTS")
-    TEST_LOG.testing("=" * 70)
-    TEST_LOG.testing("")
+    # Calculate passed count from tracked values
+    total_passed = result.testsRun - result.failuresNum - result.errorsNum - result.skippedNum
 
-    total_tests = 0
-    total_passed = 0
-    total_failed = 0
-    total_errors = 0
-    total_skipped = 0
-
-    # Sort modules for consistent output
-    for module_name in sorted(grouped_result.test_results.keys()):
-        module_data = grouped_result.test_results[module_name]
-
-        TEST_LOG.testing(f"Test File: {module_name}")
-        TEST_LOG.testing("-" * 70)
-
-        # Sort classes for consistent output
-        for class_name in sorted(module_data.keys()):
-            class_tests = module_data[class_name]
-
-            TEST_LOG.testing(f"  Test Class: {class_name}")
-
-            # Display each test in this class
-            for test_name, status, error_info in class_tests:
-                total_tests += 1
-                status_symbol = "✓" if status == "PASS" else "✗" if status in ("FAIL", "ERROR") else "⊘"
-                status_text = status
-
-                TEST_LOG.testing(f"    {status_symbol} {test_name} - {status_text}")
-
-                if status == "PASS":
-                    total_passed += 1
-                elif status == "FAIL":
-                    total_failed += 1
-                elif status == "ERROR":
-                    total_errors += 1
-                elif status == "SKIP":
-                    total_skipped += 1
-
-                # Show error details for failures/errors
-                if status in ("FAIL", "ERROR") and error_info:
-                    # Format error message
-                    try:
-                        err_msg = str(error_info)
-                        # Truncate long error messages and limit lines
-                        lines = err_msg.split("\n")
-                        if len(lines) > 10:
-                            err_msg = "\n".join(lines[:10]) + f"\n... ({len(lines) - 10} more lines)"
-                        elif len(err_msg) > 300:
-                            err_msg = err_msg[:300] + "..."
-                        # Indent error message
-                        for line in err_msg.split("\n"):
-                            TEST_LOG.testing(f"      {line}")
-                    except Exception:
-                        pass
-
-            TEST_LOG.testing("")
-
-        TEST_LOG.testing("")
-
-    # Update result object counts (for compatibility)
-    result.testsRun = total_tests
-    result.failuresNum = total_failed
-    result.errorsNum = total_errors
-    result.skippedNum = total_skipped
-
-    # Summary
-    TEST_LOG.testing("=" * 70)
-    TEST_LOG.testing("TEST SUMMARY")
-    TEST_LOG.testing("=" * 70)
-    TEST_LOG.testing(f"Tests run: {total_tests}")
-    TEST_LOG.testing(f"Passed: {total_passed}")
-    if total_failed > 0:
-        TEST_LOG.testing(f"Failed: {total_failed}")
-    if total_errors > 0:
-        TEST_LOG.testing(f"Errors: {total_errors}")
-    if total_skipped > 0:
-        TEST_LOG.testing(f"Skipped: {total_skipped}")
-
-    if result.wasSuccessful():
-        TEST_LOG.testing("\n✓ ALL TESTS PASSED")
-    else:
-        TEST_LOG.testing("\n✗ SOME TESTS FAILED")
-
-    TEST_LOG.testing("=" * 70)
-    TEST_LOG.testing("")
+    # Display formatted results (elapsed_time not tracked in CircuitPython version)
+    _format_test_results(
+        grouped_result,
+        elapsed_time=0.0,  # CircuitPython doesn't track elapsed time
+        total_tests=result.testsRun,
+        total_passed=total_passed,
+        total_failed=result.failuresNum,
+        total_errors=result.errorsNum,
+        total_skipped=result.skippedNum,
+    )
 
     _restore_hardware_input_manager()
     return result
 
 
 def run_unit_tests(verbosity: int = 2) -> Any:
-    """Run only unit tests.
+    """Run only unit tests (desktop-only).
+
+    Unit tests are designed to run on desktop Python with full mocking.
+    They should not be run on CircuitPython devices.
 
     Args:
         verbosity: Test output verbosity (0=quiet, 1=normal, 2=verbose)
@@ -486,8 +662,12 @@ def run_unit_tests(verbosity: int = 2) -> Any:
     TEST_LOG.testing("=" * 70)
     TEST_LOG.testing("")
 
-    # For now, just call the main test runner
-    # Can be refined later to only run unit tests
+    if IS_CIRCUITPYTHON:
+        TEST_LOG.testing("Unit tests are desktop-only. Run with: python tests/run_tests.py")
+        TEST_LOG.testing("On device, use: tests.run_integration() or tests.run_functional()")
+        TEST_LOG.testing("=" * 70)
+        return unittest.TestResult()
+
     return run_all_tests(verbosity)
 
 
@@ -532,7 +712,13 @@ def main() -> None:
     result = run_all_tests(verbosity=2)
 
     # Exit with error code if tests failed
-    exit_code = 1 if (result.failuresNum > 0 or result.errorsNum > 0) else 0
+    # Handle both standard unittest (failures/errors lists) and custom (failuresNum/errorsNum counts)
+    if hasattr(result, "failuresNum"):
+        # Custom CircuitPython unittest
+        exit_code = 1 if (result.failuresNum > 0 or result.errorsNum > 0) else 0
+    else:
+        # Standard unittest
+        exit_code = 1 if (len(result.failures) > 0 or len(result.errors) > 0) else 0
     sys.exit(exit_code)
 
 
