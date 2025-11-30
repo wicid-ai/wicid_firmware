@@ -10,12 +10,12 @@ After updating any Python code, follow these verification steps:
 ## ✅ Required Actions
 
 - **Always run**: `pipenv run pre-commit run --all-files`
-  - This validates code quality, formatting, and linting
+  - Validates code quality, formatting, linting, type checking, and unit tests
   - Ensures code meets project standards before committing
 
 ## ❌ DO NOT Run
+  - Integration/functional tests require hardware and must be run on-device
 
-- **NEVER run automated tests** (pytest, unittest, etc.)
-  - Tests are only executable on-device manually
-  - Running tests in development environment will fail
-  - Testing must be performed on actual hardware
+## Reference
+- `docs/CODE_REVIEW_GUIDELINES.md` - Developer Setup section
+- `tests/README.md` - Testing documentation and workflow

@@ -13,38 +13,10 @@ alwaysApply: false
 ## Critical Rules
 
 - **No Hardware Imports**: NEVER import `board` or `microcontroller` in unit tests.
-- **Use Unit Mocks**: Import from `tests.unit.unit_mocks` for service/module mocks.
-- **Use Integration Mocks**: Import from `tests.integration.integration_mocks` for hardware simulation.
+- **Use Mocks**: Use `tests.test_helpers` factory functions for hardware simulation.
 - **Local Execution**: Unit tests run via `python tests/run_tests.py` without hardware.
 - **Pre-commit Integration**: All unit tests must pass before code can be committed.
 
-## Mock File Locations
-
-- `tests/unit/unit_mocks.py` - Desktop-only mocks (MagicMock-based, for unit tests)
-- `tests/integration/integration_mocks.py` - Hardware simulation mocks (for integration tests)
-- `tests/test_helpers.py` - Factory functions for common mocks
-
-## Test Quality Principles
-
-- Test functional correctness, not implementation details
-- Avoid pedantic tests (e.g., testing exact error message wording)
-- Write minimum tests needed for meaningful coverage
-- Tests should be robust to refactoring
-
-## Development Workflow
-
-### Test-Driven Development (TDD) for Medium/Large Tasks
-
-1. **Confirm baseline**: Run `pipenv run pre-commit run --all-files` to ensure existing tests pass
-2. **Write tests first**: Create tests that verify the intended behavior
-3. **Confirm tests fail**: Verify new tests fail in the expected way (feature doesn't exist yet)
-4. **Implement feature**: Develop changes to make tests pass
-5. **Verify everything**: Re-run `pipenv run pre-commit run --all-files` to confirm all checks pass
-6. **Commit**: Once all checks pass, commit changes
-
-### Small Changes
-
-For small changes, you may write tests after implementation, but all tests must pass before committing.
-
 ## Reference
-- `tests/README.md` (Complete testing documentation)
+- `tests/README.md` - Complete testing documentation, TDD workflow, and best practices
+- `docs/PATTERNS_COOKBOOK.md` - Testing with Mocks section with code examples

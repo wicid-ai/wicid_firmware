@@ -150,6 +150,39 @@ Each manager makes best effort to gracefully recover from all errors. Recoverabl
 - Firmware updates and unrecoverable errors trigger reboots
 - Periodic maintenance may trigger reboots for system stability
 
+## OTA Update Architecture
+
+### Atomic Staging
+
+OTA updates use a two-phase staging approach to prevent partial installations:
+
+1. **Download Phase**: Update ZIP is downloaded to `/pending_update/update.zip`
+2. **Staging Phase**: Files are extracted to `/pending_update/.staging/`
+3. **Verification Phase**: Critical files are validated against `RecoveryManager.CRITICAL_FILES`
+4. **Atomic Rename**: `.staging/` is renamed to `root/` only after verification passes
+5. **Ready Marker**: A `.ready` file is written containing the manifest hash
+
+Boot.py only processes updates when both `/pending_update/root/` exists AND the `.ready` marker is valid. This ensures incomplete downloads or extractions are never installed.
+
+### Failure Cleanup
+
+On any failure during download, verification, or extraction:
+- The entire `/pending_update/` directory is removed
+- The failed version is recorded in `incompatible_releases.json`
+- The device continues running the current firmware
+
+### Preserved Files
+
+The following files are NEVER overwritten during OTA updates:
+- `secrets.json` - WiFi credentials and API keys (user-provided)
+- `DEVELOPMENT` - Development mode flag (user-set)
+
+Other files like `settings.toml`, `wifi_retry_state.json`, and `incompatible_releases.json` are intentionally replaced during updates as new firmware versions may include schema changes that invalidate previous versions.
+
+### Recovery Backup
+
+After successful installation, critical boot files are backed up to `/recovery/`. If boot detects missing critical files, it automatically restores from this backup and marks the failed version as incompatible.
+
 ## Configuration Lifecycle
 
 1. System checks for valid configuration on boot

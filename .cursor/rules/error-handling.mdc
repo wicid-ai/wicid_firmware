@@ -3,18 +3,15 @@ description: Error handling strategy (Fatal vs Non-Fatal)
 globs: src/**/*.py
 alwaysApply: false
 ---
-# Error Handling Rules
+# Error Handling Philosophy
 
-## Distinguish Fatal vs Non-Fatal
+## General Principle
+Handle recoverable errors gracefully at the lowest possible level where the specific error can be best addressed. Only escalate unrecoverable errors.
 
-- **Non-Fatal (Recoverable)**:
-  - Use `raise TaskNonFatalError("msg")`.
-  - Use for recoverable issues like network timeouts, API errors (404/500), or temporary sensor read failures.
-
-- **Fatal (Unrecoverable)**:
-  - Use `raise TaskFatalError("msg")`.
-  - Use ONLY for hardware failure, corruption, or missing critical dependencies.
+## Scheduler Task Errors
+- **Non-Fatal (Recoverable)**: Use `raise TaskNonFatalError("msg")` for network timeouts, API errors (404/500), or temporary sensor read failures. These allow the scheduler to log and reschedule.
+- **Fatal (Unrecoverable)**: Use `raise TaskFatalError("msg")` ONLY for hardware failure, corruption, or missing critical dependencies that require system restart.
 
 ## Reference
-- `docs/PATTERNS_COOKBOOK.md` (Error Handling)
-- `docs/ARCHITECTURE.md` (Error Handling Strategy)
+- `docs/PATTERNS_COOKBOOK.md` - Error Handling section with code examples
+- `docs/ARCHITECTURE.md` - Error Handling Strategy section

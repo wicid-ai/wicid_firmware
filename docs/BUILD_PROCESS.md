@@ -61,6 +61,70 @@ Netlify deploys
 Devices poll for updates
 ```
 
+## Initial Board Setup
+
+Before flashing the application, new Adafruit Feather ESP32-S3 boards must be initialized with CircuitPython. This process updates the bootloader and installs CircuitPython:
+
+1. **Enter Bootloader Mode**:
+   - Connect the Feather to your development computer using a data-enabled USB-C cable
+   - Press and HOLD the BOOT button
+   - While holding BOOT, press and release the RESET button
+   - Release the BOOT button once the board enters bootloader mode (LED should not be flashing)
+
+2. **Update Bootloader**:
+   - Visit: https://circuitpython.org/board/adafruit_feather_esp32s3_4mbflash_2mbpsram/
+   - Click "OPEN INSTALLER"
+   - Select "Install Bootloader Only" and follow the prompts
+   - After installation completes, you should see an updated `FTHRS3BOOT` drive
+
+3. **Install CircuitPython**:
+   - While in bootloader mode (indicated by solid green LED and availability of `FTHRS3BOOT` drive)
+   - From the same CircuitPython page, download the latest `.UF2` file
+   - Drag the downloaded `.UF2` file to the `FTHRS3BOOT` drive
+   - The board will reboot automatically and you should now see a `CIRCUITPY` drive
+
+   **Note**: If installing a new OS without first updating the Bootloader, follow the steps in number 1 to get into bootloader mode.
+
+The board is now ready for library installation and application deployment.
+
+## Managing CircuitPython Libraries
+
+The `/src/lib/` directory is maintained in source control to facilitate OTA updates. Unlike the typical CircuitPython workflow where libraries are installed directly on the microcontroller, this project requires managing libraries from your development machine.
+
+**Adding or Removing Libraries:**
+
+1. **Install circup** (if not already installed with pipenv):
+   ```bash
+   pip install circup
+   ```
+
+2. **Update wicid_circuitpy_requirements.txt** to reflect the library changes you need
+
+3. **Delete the existing /src/lib/ directory** to regenerate it cleanly:
+   ```bash
+   rm -rf src/lib
+   ```
+
+4. **Create a boot_out.txt file** in the `src/` directory. Because circup needs to determine the target OS version, and we're not running directly on the device, we reference a local boot_out.txt file:
+   ```bash
+   echo "Adafruit CircuitPython 10.0.3 on 2025-10-09;" > src/boot_out.txt
+   ```
+
+   Note: This file is gitignored, so once created you can leave it in place. Update the version string if you change CircuitPython versions.
+
+5. **Install libraries** using circup from the project root:
+   ```bash
+   circup --path src install -r wicid_circuitpy_requirements.txt
+   ```
+
+   Note: To see the latest version of all libraries installed (for updating wicid_circuitpy_requirements.txt), while WICID is connected, run:
+
+   ```bash
+   circup --path src freeze
+   ```
+
+6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package
+
 ## Using the Build Tool
 
 ### Prerequisites

@@ -5,14 +5,14 @@ alwaysApply: false
 ---
 # Scheduler & Async Rules
 
-The system is cooperative. Blocking code kills the watchdog.
+The system uses cooperative multitasking. Blocking code will starve other tasks and trigger the watchdog.
 
 ## Critical Rules
 
 - **Use Scheduler.sleep**: ALWAYS use `await Scheduler.sleep(s)` instead of `time.sleep()` or `asyncio.sleep()`.
-- **Yield Control**: In `while True` or long loops, ALWAYS verify `await Scheduler.yield_control()` is present.
-- **No Blocking**: Avoid any blocking operations (e.g., long computations, synchronous network calls) without yielding.
+- **Yield Control**: In `while True` or long loops, ALWAYS include `await Scheduler.yield_control()`.
+- **No Blocking**: Avoid blocking operations (long computations, synchronous network calls) without yielding.
 
 ## Reference
-- `docs/PATTERNS_COOKBOOK.md` (Scheduler Usage)
-- `docs/SCHEDULER_ARCHITECTURE.md`
+- `docs/PATTERNS_COOKBOOK.md` - Scheduler Usage and Cooperative Yielding sections with code examples
+- `docs/SCHEDULER_ARCHITECTURE.md` - Complete scheduler design and principles

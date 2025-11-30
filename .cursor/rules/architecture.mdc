@@ -6,17 +6,15 @@ alwaysApply: false
 # Architecture Components
 
 ## Managers
-- **Pattern**: Must be Singletons.
-- **Access**: Use `Manager.instance()`.
+- **Pattern**: Must be Singletons accessed via `Manager.instance()`.
 - **Responsibility**: Encapsulate domain logic and state.
 
 ## Controllers
-- **Pattern**: Direct hardware wrappers.
-- **Constraint**: No business logic.
+- **Pattern**: Direct hardware wrappers with no business logic.
 
 ## Services
 - **Pattern**: Logic providers (often network-based).
 
 ## Reference
-- `docs/ARCHITECTURE.md` (System Patterns)
-- `docs/PATTERNS_COOKBOOK.md` (Manager Singleton Pattern)
+- `docs/ARCHITECTURE.md` - Complete architectural patterns and system design
+- `docs/PATTERNS_COOKBOOK.md` - Concrete code examples for Manager Singleton Pattern

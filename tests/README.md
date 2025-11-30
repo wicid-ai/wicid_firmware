@@ -10,6 +10,8 @@ Testing framework for CircuitPython firmware with a clear separation between des
 
 This separation allows for rapid development feedback via desktop tests while reserving hardware-dependent testing for targeted validation.
 
+> **Note**: For general project setup and prerequisites, see [`README.md`](../README.md#developer-setup).
+
 Tests are organized following Python conventions:
 - `tests/unit/` - Unit tests (desktop-only, fully mocked)
 - `tests/integration/` - Integration tests (device-only, real hardware)
@@ -50,15 +52,7 @@ To run pre-commit checks manually (including tests):
 pipenv run pre-commit run --all-files
 ```
 
-**Development Workflow:**
-1. Write or update code
-2. Create or update corresponding unit tests
-3. Run `pipenv run pre-commit run --all-files` to verify:
-   - Code formatting (ruff)
-   - Type checking (mypy)
-   - Linting (ruff, pylint)
-   - **Unit tests** (all must pass)
-4. Commit your changes
+This validates code quality, formatting, linting, type checking, and **unit tests**. All checks must pass before committing.
 
 ## How the Test Framework Works
 

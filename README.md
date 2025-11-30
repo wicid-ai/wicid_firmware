@@ -1,9 +1,12 @@
 # WICID Weather Indicator
 
+[![License](https://img.shields.io/badge/license-Proprietary-blue)](LICENSE)
+
 ## Overview
+
 WICID (Weather Indicator and Climate Information Device) is an intelligent weather indicator that provides at-a-glance weather information through colored LED feedback. The device is designed to be simple, intuitive, and visually appealing, providing weather updates without requiring a screen. It features an easy Wi-Fi setup through a captive portal for seamless network configuration.
 
-See the product website at: https://www.wicid.ai
+See the product website at: [https://www.wicid.ai](https://www.wicid.ai)
 
 ## Features
 
@@ -14,9 +17,6 @@ See the product website at: https://www.wicid.ai
 - **Setup Portal**: Easy Wi-Fi network setup through a web interface
 - **Button Control**: Simple button interface to cycle through different modes and access setup
 - **Over-the-Air (OTA) Updates**: Automatic firmware updates from a remote server
-  - Performs an initial self-check soon after startup, then follows the configured cadence
-  - Supports production and development release channels
-  - Downloads, verifies, and installs updates with automatic restart
 
 ## How It Works
 
@@ -26,66 +26,11 @@ See the product website at: https://www.wicid.ai
 - Tactile button (for mode switching and setup access)
 - Power supply
 
-### Software Architecture
-
-WICID uses a manager-based architecture with clear separation of concerns:
-
-1. **Main Orchestrator**:
-   - Coordinates system initialization and startup and delegates to specialized managers
-   - Handles fatal error recovery
-   - Delegates responsibilities to specialized managers
-
-2. **Configuration Manager**:
-   - Manages the complete configuration lifecycle
-   - Automatically enters setup mode when configuration is missing or invalid
-   - Validates WiFi credentials before committing changes
-   - Integrates firmware update checks after successful connection
-
-3. **WiFi Manager**:
-   - Centralizes all WiFi operations (station mode and access point)
-   - Manages connection retry logic with exponential backoff
-   - Provides HTTP sessions for weather and update services
-
-4. **Mode Manager**:
-   - Orchestrates user-selectable operating modes (weather display, demos)
-   - Handles button-based mode switching
-   - Provides consistent error recovery across modes
-   - Extensible design for adding new display modes
-
-5. **Update Manager**:
-   - Schedules an initial post-boot update check shortly after startup
-   - Performs recurring checks using the configured interval
-   - Downloads and verifies update packages
-   - Performs full-reset installations to ensure consistency
-
-6. **System Management**:
-   - Performs periodic health checks
-   - Coordinates scheduled maintenance operations and periodic reboots
-
-7. **Shared Resources** (singletons):
-   - **LED controller**: LED animations and visual feedback
-   - **Logging**: Structured logging with configurable verbosity
-   - **Weather data service**: Fetches data from the external weather API
-8. **Scheduler**:
-   - Cooperative task runner that wraps `asyncio` and enforces consistent timing semantics
-   - Coordinates periodic work (LED refresh, connectivity checks, OTA cadences) plus one-shot tasks
-   - Provides observability (execution counters, starvation tracking) and protects the rest of the system from low-level event-loop details
-
-The architecture emphasizes encapsulation, error resilience, and extensibility. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for broader design context and [`docs/SCHEDULER_ARCHITECTURE.md`](docs/SCHEDULER_ARCHITECTURE.md) for scheduler intent.
-
-### Weather Data
-
-The device fetches weather data including:
-- Current temperature
-- Daily high temperature
-- Precipitation probability
-
 ### Visual Feedback
-
 - **Temperature**: Displayed through LED color (blue for cold, green for moderate, red for hot)
 - **Precipitation**: Indicated through blinking patterns (number of blinks corresponds to precipitation probability)
 
-## Initial Setup
+## Quick Start
 
 ### Initial Setup
 
@@ -112,13 +57,13 @@ The device fetches weather data including:
    - The LED will flash green 3 times to confirm successful configuration
    - The device will automatically reboot and connect to your Wi-Fi network
 
-   Note: If saving fails with a read‑only filesystem error, the device is likely connected over USB. Unplug the USB cable or eject the CIRCUITPY drive before saving, then try again.
+   *Note*: If saving fails with a read‑only filesystem error, the device is likely connected over USB. Unplug the USB cable or eject the CIRCUITPY drive before saving, then try again.
 
 5. **Exit Setup (Without Changes)**:
    - To exit setup mode without saving changes, press the mode button
    - The device will reboot with previous settings
 
-## Usage
+### Usage
 
 1. **Power On**:
    - The device will attempt to connect to the configured Wi-Fi network
@@ -131,33 +76,12 @@ The device fetches weather data including:
 
 3. **Setup Mode**:
    - LED pulses white when in setup mode
-   - See the "Initial Setup" section for complete instructions
    - On successful setup, LED will flash green 3 times before rebooting
 
-## Setup Portal Notes and Troubleshooting
+### Setup Portal Troubleshooting
 
-### Captive Portal Functionality
-
-WICID includes intelligent captive portal detection that automatically redirects devices to the setup interface:
-
-- **Automatic Detection**: When you connect to "WICID-Setup", most devices will automatically detect the captive portal and show a notification or popup
-- **Cross-Platform Support**: Works with Android, iOS, Windows, macOS, and Linux devices
-- **DNS Interception**: All domain name requests are redirected to the setup portal (192.168.4.1)
-- **Fallback Mode**: If DNS interception fails, the setup portal continues to work via direct HTTP access
-
-**How It Works**:
-- Your device performs connectivity checks when joining the WICID-Setup network
-- WICID intercepts these checks and redirects them to the setup interface
-- This triggers your device's captive portal detection, showing a "Sign in to network" notification
-- Tapping the notification opens the WICID setup interface automatically
-
-### Setup Access
-
-- **Automatic (Recommended)**: Connect to "WICID-Setup" and follow the captive portal notification
-- **Direct access**: Navigate to **http://192.168.4.1/** if automatic detection doesn't work
-- **Use HTTP, not HTTPS**: Always use HTTP URLs for setup access
-
-### Troubleshooting
+#### Captive Portal
+WICID includes intelligent captive portal detection that automatically redirects devices to the setup interface. When you connect to "WICID-Setup", most devices will automatically detect the captive portal and show a notification or popup.
 
 **If captive portal doesn't appear automatically**:
 - Wait 10-15 seconds after connecting for detection to complete
@@ -168,17 +92,11 @@ WICID includes intelligent captive portal detection that automatically redirects
 **Mobile device issues**:
 - Disable mobile data or enable *Airplane Mode* (keeping WiFi on) to prevent bypassing the captive portal
 - Some devices may show "No internet connection" - this is normal, tap "Use network as is" or similar option
-- If the setup page doesn't load, try navigating directly to http://192.168.4.1/
 
 **Desktop browser issues**:
 - Browsers may default to search or HTTPS if you don't include the full URL
 - Try a different browser if one doesn't work
 - Clear browser cache if you've connected to WICID-Setup before
-
-**Connection problems**:
-- Ensure you're connected to "WICID-Setup" network (not your regular WiFi)
-- Check that WiFi is enabled and airplane mode is off (except for mobile data)
-- Restart WiFi on your device if connection fails
 
 **Saving settings**: If you see a read‑only filesystem error while saving, try plugging the WICID into a power-only USB cable (when connected to a computer with a data-enabled USB cable, the WICID may behave like a thumbdrive and prevent config updates through the setup interface)
 
@@ -191,67 +109,34 @@ The device includes robust error handling and will:
 - Handle API request failures gracefully
 - Recover from invalid data responses
 
+For detailed error handling strategy, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ## Developer Setup
 
 ### Prerequisites
 - Python version 3.13+
-- `pipenv` for managing Python dependencies. See installation instructions below.
+- `pipenv` for managing Python dependencies
 - (Optional) Mu Editor for code editing and serial console
 
-### Code Style and Linting
+### Quick Start
 
-This project uses `ruff` for code formatting/linting and `mypy` for static type checking. These tools are enforced automatically using `pre-commit` git hooks.
+1. **Install `pipenv`** (if not already installed):
+   ```bash
+   pip install --user pipenv
+   ```
 
-### Testing
+2. **Install Project Dependencies**:
+   ```bash
+   pipenv install --dev
+   pipenv sync --dev
+   ```
 
-**Unit tests** can be run locally in your development environment. They are fully mocked and require no hardware:
+3. **Install Git Hooks**:
+   ```bash
+   pipenv run pre-commit install
+   ```
 
-```bash
-python tests/run_tests.py
-```
-
-Unit tests are automatically executed as part of the pre-commit checks. When you commit code, the test suite will run and block the commit if any tests fail.
-
-**Development Workflow:**
-
-For **medium to large tasks**, we recommend a Test-Driven Development (TDD) approach:
-
-1. **Confirm baseline**: Run `pipenv run pre-commit run --all-files` to ensure existing tests pass
-2. **Write tests first**: Create tests that verify the intended behavior
-3. **Confirm tests fail**: Verify the new tests fail in the expected way (feature doesn't exist yet)
-4. **Implement the feature**: Develop the changes to make the tests pass
-5. **Verify everything**: Re-run `pipenv run pre-commit run --all-files` to confirm:
-   - Code formatting (ruff)
-   - Type checking (mypy)
-   - Linting (ruff, pylint)
-   - **Unit tests** (all must pass, including new ones)
-6. **Commit**: Once all checks pass, commit your changes
-
-For **small changes**, you may write tests after implementation, but all tests must pass before committing.
-
-See `tests/README.md` for detailed TDD guidance and testing best practices.
-
-**Note:** Integration and functional tests require hardware and must be run on-device via the CircuitPython REPL (see `tests/README.md` for details).
-
-### Environment and Tooling Setup
-
-1.  **Install `pipenv`**: If you don't have it, install `pipenv` globally.
-    ```bash
-    pip install --user pipenv
-    ```
-
-2.  **Install Project Dependencies**: From the project root, install all dependencies from the `Pipfile`. This includes `circup`, `ruff`, `mypy`, and other build tools.
-    ```bash
-    pipenv install --dev
-    pipenv sync --dev
-    ```
-
-3.  **Install Git Hooks**: This command installs the `pre-commit` hooks into your local `.git` directory. It will automatically run checks (including unit tests) before you commit code.
-    ```bash
-    pipenv run pre-commit install
-    ```
-
-Now, when you run `git commit`, your code will be automatically formatted, checked for errors, and unit tests will be executed. If the tools make any changes or tests fail, you will need to fix the issues, `git add` the modified files, and commit again.
+Now, when you run `git commit`, your code will be automatically formatted, checked for errors, and unit tests will be executed.
 
 ### Filesystem Modes
 
@@ -261,32 +146,21 @@ The boot script controls filesystem access. By default, it runs in **Production 
 - Filesystem is writable from code (setup portal can save credentials)
 - USB mass storage is disabled
 - USB serial console is enabled for monitoring and debugging
-- Used for normal operation and by customers
 
 **Safe Mode** (for development):
 - USB mass storage is enabled (CIRCUITPY drive appears on your computer)
 - Filesystem is read-only from code
-- Used for development and file updates
-- Automatically triggered by special button sequence
+- Automatically triggered by holding mode button for 10 seconds (LED flashes blue/green)
 
 **To Access Files for Development:**
+1. While the device is running, press and HOLD the mode button
+2. At 3 seconds: LED pulses white (setup mode threshold)
+3. At 10 seconds: LED changes to flashing blue/green (Safe Mode threshold)
+4. Release the button when you see blue/green flashing
+5. The device will automatically reboot into **Safe Mode**
 
-1. **While the device is running** (in any mode - weather, demo, setup, etc.):
-   - Press and HOLD the mode button
-   - At 3 seconds: LED pulses white (setup mode threshold)
-   - At 10 seconds: LED changes to flashing blue/green (Safe Mode threshold)
-   - Release the button when you see blue/green flashing
-   - The device will automatically reboot into **Safe Mode**
-   - The CIRCUITPY drive will appear and you can edit files
-
-2. **Return to Production Mode:**
-   - Simply press RESET without holding any button
-   - Or make your changes and the device returns to production mode on next normal boot
-
-**Button Hold Durations:**
-- **Short press** (< 3 seconds): Switch to next mode
-- **3 second hold**: Enter setup mode (LED pulses white at 3s)
-- **10 second hold**: Enter Safe Mode (LED flashes blue/green at 10s)
+**Return to Production Mode:**
+- Simply press RESET without holding any button
 
 **Alternative: Force Safe Mode via Serial Console**
 
@@ -303,242 +177,66 @@ If needed, you can also trigger Safe Mode from the REPL:
 
 WICID uses two configuration files:
 
-#### `settings.toml` - System Configuration
-System-level settings deployed with firmware updates:
-```toml
-VERSION = "0.5.0"
-SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-SYSTEM_UPDATE_CHECK_INTERVAL = 4  # hours
-PERIODIC_REBOOT_INTERVAL = 24  # hours (0 to disable)
-WEATHER_UPDATE_INTERVAL = 1200  # seconds
-```
+- **`settings.toml`**: System-level settings deployed with firmware updates (version, update URLs, intervals). Read via `os.getenv()` in device code. Managed by build system.
 
-Read via `os.getenv()` in device code. Managed by build system.
+- **`secrets.json`**: User-specific credentials (WiFi SSID/password, location), preserved across firmware updates. Created by Setup Mode.
 
-#### `secrets.json` - User Data
-User-specific credentials, preserved across firmware updates:
-```json
-{
-  "ssid": "your_wifi_ssid",
-  "password": "your_wifi_password",
-  "weather_zip": "12345"
-}
-```
+### Testing
 
-**Note**: `secrets.json` is created by Setup Mode and preserved during OTA updates.
-
-### Flashing and Building
-
-#### Initial Board Setup (for new Adafruit Feather ESP32-S3 boards)
-
-Before flashing the application, new boards must be initialized with CircuitPython. This process updates the bootloader and installs CircuitPython:
-
-1. **Enter Bootloader Mode**:
-   - Connect the Feather to your development computer using a data-enabled USB-C cable
-   - Press and HOLD the BOOT button
-   - While holding BOOT, press and release the RESET button
-   - Release the BOOT button once the board enters bootloader mode (LED should not be flashing)
-
-2. **Update Bootloader**:
-   - Visit: https://circuitpython.org/board/adafruit_feather_esp32s3_4mbflash_2mbpsram/
-   - Click "OPEN INSTALLER"
-   - Select "Install Bootloader Only" and follow the prompts
-   - After installation completes, you should see an updated `FTHRS3BOOT` drive
-
-3. **Install CircuitPython**:
-   - While in bootloader mode (indicated by solid green LED and availability of `FTHRS3BOOT` drive)
-   - From the same CircuitPython page, download the latest `.UF2` file
-   - Drag the downloaded `.UF2` file to the `FTHRS3BOOT` drive
-   - The board will reboot automatically and you should now see a `CIRCUITPY` drive
-
-   **Note**: If installing a new OS without first updating the Bootloader, follow the steps in number 1 to get into bootloader mode.
-
-The board is now ready for library installation and application deployment.
-
-#### Managing CircuitPython Libraries in /src/lib/
-
-The `/src/lib/` directory is maintained in source control to facilitate OTA updates. Unlike the typical CircuitPython workflow where libraries are installed directly on the microcontroller, this project requires managing libraries from your development machine.
-
-**Adding or Removing Libraries:**
-
-1. **Install circup** (if not already installed with pipenv):
-   ```bash
-   pip install circup
-   ```
-
-2. **Update wicid_circuitpy_requirements.txt** to reflect the library changes you need
-
-3. **Delete the existing /src/lib/ directory** to regenerate it cleanly:
-   ```bash
-   rm -rf src/lib
-   ```
-
-4. **Create a boot_out.txt file** in the `src/` directory. Because circup needs to determine the target OS version, and we're not running directly on the device, we reference a local boot_out.txt file:
-   ```bash
-   echo "Adafruit CircuitPython 10.0.3 on 2025-10-09;" > src/boot_out.txt
-   ```
-
-   Note: This file is gitignored, so once created you can leave it in place. Update the version string if you change CircuitPython versions.
-
-5. **Install libraries** using circup from the project root:
-   ```bash
-   circup --path src install -r wicid_circuitpy_requirements.txt
-   ```
-
-   Note: To see the latest version of all libraries installed (for updating wicid_circuitpy_requirements.txt), while WICID is connected, run:
-
-   ```bash
-   circup --path src freeze
-   ```
-
-
-6. **Deploy to device**: Copy all files from `src/` to your device's CIRCUITPY drive, or use the build process to create a release package
-
-### Installing Firmware with the Installer Script (Optional)
-
-After building a release package, you can use the `installer.py` script for guided firmware installation:
+**Unit tests** can be run locally in your development environment. They are fully mocked and require no hardware:
 
 ```bash
-python installer.py
+python tests/run_tests.py
 ```
 
-The installer provides three installation modes:
+Unit tests are automatically executed as part of the pre-commit checks.
 
-**SOFT Update (OTA-like)**
-- Safer installation method
-- Files are staged in `/pending_update/` on the device
-- Installation completes automatically on next reboot
-- Recommended for most users
+For complete testing documentation, including TDD workflow, integration tests, and best practices, see [`tests/README.md`](tests/README.md).
 
-**HARD Update (Full Replacement)**
-- Immediate installation
-- Deletes all files on CIRCUITPY drive (except `secrets.json`)
-- Useful for clean installations or troubleshooting
-- Requires explicit confirmation
+### Code Quality
 
-**Simulated OTA Update (Local Development)**
-- Starts local WICID Web application server
-- Points device to local server for OTA updates
-- Tests complete OTA update flow in development environment
-- Requires WICID Web repository at `../wicid_web` (configurable via `.env` file)
+This project uses `ruff` for code formatting/linting and `mypy` for static type checking. These tools are enforced automatically using `pre-commit` git hooks.
 
-The installer will:
-1. Auto-detect your CIRCUITPY device
-2. Verify the `releases/wicid_install.zip` package exists
-3. Guide you through the installation process
-4. Clean up temporary files and system artifacts
-5. Provide next steps for completing the update
+For detailed style guidelines, see [`docs/STYLE_GUIDE.md`](docs/STYLE_GUIDE.md). For code review guidelines, see [`docs/CODE_REVIEW_GUIDELINES.md`](docs/CODE_REVIEW_GUIDELINES.md).
 
-This is particularly useful for:
-- Initial device setup and flashing
-- Manual firmware updates during development
-- Testing OTA update mechanisms locally
-- Troubleshooting device issues with clean installations
+### Building and Deployment
+
+For information on:
+- Building firmware releases
+- Installing firmware manually
+- OTA update architecture
+- Release process
+
+See [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md).
+
+### Initial Board Setup
+
+For new Adafruit Feather ESP32-S3 boards, you must initialize with CircuitPython before flashing the application. This process updates the bootloader and installs CircuitPython. See [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md) for build and deployment information.
+
+### Managing CircuitPython Libraries
+
+The `/src/lib/` directory is maintained in source control to facilitate OTA updates. For instructions on adding or removing libraries, see the build process documentation.
 
 ## Over-the-Air (OTA) Updates
 
-WICID devices support automatic firmware updates with a full-reset strategy for guaranteed consistency.
+WICID devices support automatic firmware updates with a full-reset strategy for guaranteed consistency. The system:
+- Checks for updates on boot and at configured intervals
+- Self-identifies hardware type and OS version at runtime
+- Downloads and verifies update packages with checksum validation
+- Performs full-reset installations (preserves user data)
+- Supports production and development release channels
 
-### How It Works
+For complete OTA update documentation, including architecture, configuration, and troubleshooting, see [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md).
 
-1. **Automatic Checking**: Device checks for updates on every boot and daily at 2am (configurable)
-2. **Device Identification**: Device determines its own hardware type and OS version at runtime
-3. **Compatibility Check**: Compares available releases against device capabilities using semantic versioning
-4. **Download**: If compatible newer version found, downloads complete firmware package
-5. **Verification**: On next boot, bootloader verifies compatibility before installation, marks incompatible releases to prevent retry loops
-6. **Full Reset Installation**: If verification passes, device replaces all firmware files (preserves user data) and reboots
+## Documentation
 
-### Update Strategy
-
-WICID uses **full reset** updates:
-- Every update completely replaces all firmware files
-- User data (`secrets.json`) is always preserved
-- No partial updates or migrations needed
-- Guarantees consistent device state
-
-### Release Channels
-
-- **Production** (default): Stable releases
-- **Development**: Beta/experimental releases
-
-To switch to development channel, create an empty `/DEVELOPMENT` file on the device:
-```python
-with open("/DEVELOPMENT", "w") as f:
-    f.write("")
-```
-
-### Configuration
-
-Update behavior is configured in `settings.toml`:
-- `SYSTEM_UPDATE_MANIFEST_URL`: URL of update manifest (default: `https://www.wicid.ai/releases.json`)
-- `SYSTEM_UPDATE_CHECK_INTERVAL`: Hours between update checks (default: 24)
-- `VERSION`: Current firmware version
-
-Devices self-identify their hardware type and OS version at runtime - no hardcoded platform IDs needed.
-
-### Server Setup
-
-To host firmware updates, you need:
-1. A JSON manifest listing available versions
-2. ZIP files containing firmware releases
-3. HTTPS hosting (GitHub Releases, static hosting, etc.)
-
-
-### Creating Update Packages
-
-Use the automated build tool:
-
-```bash
-# Interactive build - prompts for all options
-./builder.py
-
-# Non-interactive build (for GitHub Actions)
-python builder.py --build
-```
-
-The build tool:
-- Compiles Python to bytecode (`.mpy`) for faster loading
-- Generates `manifest.json` with version and installation instructions
-- Updates `releases.json` for device discovery
-- Creates GitHub tag for automated deployment
-- Packages everything into a ZIP file
-
-See [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md) for complete build guide.
-
-### Monitoring Updates
-
-Device logs show update activity:
-```
-Checking for firmware updates...
-Update available: 1.2.3
-Release notes: Stability improvements
-Downloading update...
-Update downloaded successfully
-Restarting to install update...
-```
-
-After restart:
-```
-FIRMWARE UPDATE DETECTED
-Installing update from: firmware-1.2.3.zip
-Update installation complete
-```
-
-### Current Implementation Status
-
-The OTA update system is **fully functional**:
-- ✅ Device self-identification (hardware type and OS version)
-- ✅ Multi-platform release support
-- ✅ Compatibility verification before installation
-- ✅ Full reset installation strategy
-- ✅ Incompatible release tracking
-- ✅ Checking for updates on boot and scheduled times
-- ✅ ZIP extraction and installation (custom implementation using `zlib`)
-- ✅ Automatic cleanup after installation
-- ✅ GitHub Actions automated build and deployment
-- ✅ Cross-repository manifest synchronization
-
-
+- **Architecture**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - System design, manager patterns, error handling
+- **Patterns Cookbook**: [`docs/PATTERNS_COOKBOOK.md`](docs/PATTERNS_COOKBOOK.md) - Concrete code examples and patterns
+- **Style Guide**: [`docs/STYLE_GUIDE.md`](docs/STYLE_GUIDE.md) - Coding conventions and standards
+- **Scheduler Architecture**: [`docs/SCHEDULER_ARCHITECTURE.md`](docs/SCHEDULER_ARCHITECTURE.md) - Cooperative scheduler design
+- **Code Review Guidelines**: [`docs/CODE_REVIEW_GUIDELINES.md`](docs/CODE_REVIEW_GUIDELINES.md) - Review checklist and standards
+- **Build Process**: [`docs/BUILD_PROCESS.md`](docs/BUILD_PROCESS.md) - Release process, OTA updates, deployment
+- **Testing**: [`tests/README.md`](tests/README.md) - Testing strategy, TDD workflow, best practices
 
 ## License
 

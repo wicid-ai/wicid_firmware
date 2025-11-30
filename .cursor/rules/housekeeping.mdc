@@ -1,9 +1,0 @@
----
-description: Maintenance reminders for documentation
-globs: *
-alwaysApply: false
----
-# Housekeeping
-
-- If you modify code patterns, check if `docs/PATTERNS_COOKBOOK.md` needs an update.
-- If you change system behavior, verify `docs/ARCHITECTURE.md` is still accurate.
