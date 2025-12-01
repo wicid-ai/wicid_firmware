@@ -162,14 +162,6 @@ class TestWeatherServiceAPI(TestCase):
 
         self.assertEqual(result, 85.0)
 
-    def test_get_daily_precip_chance(self) -> None:
-        """Returns precipitation chance from API response."""
-        self.session.add_response({"daily": {"precipitation_probability_max": [45]}})
-
-        result = run_async(self.service.get_daily_precip_chance())
-
-        self.assertEqual(result, 45)
-
 
 class TestWeatherServicePrecipWindow(TestCase):
     """Test precipitation window calculation."""

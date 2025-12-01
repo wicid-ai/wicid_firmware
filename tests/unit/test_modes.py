@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from modes.modes import temperature_color
 from tests.unit import TestCase
+from tests.unit.unit_mocks import MockConnectionManager, MockScheduler, reset_all_mocks
 
 
 class TestTemperatureColor(TestCase):
@@ -172,46 +173,210 @@ class TestSetupPortalModeClass(TestCase):
 class TestWeatherModeInit(TestCase):
     """Test WeatherMode initialization."""
 
+    def setUp(self) -> None:
+        """Reset mocks."""
+        reset_all_mocks()
+        MockConnectionManager.set_test_instance(MockConnectionManager(connected=True))
+        MockScheduler.set_test_instance(MockScheduler())
+
+    def tearDown(self) -> None:
+        """Clean up."""
+        reset_all_mocks()
+
     def test_init_sets_defaults(self) -> None:
         """Verify __init__ sets default values."""
+        mock_wm_instance = MagicMock()
+        mock_wm_instance.get_current_temperature.return_value = None
+        mock_wm_instance.get_precip_chance_in_window = AsyncMock(return_value=None)
+        mock_wm_class = MagicMock()
+        mock_wm_class.instance.return_value = mock_wm_instance
+
         with (
             patch("modes.mode_interface.ConnectionManager"),
             patch("modes.mode_interface.InputManager"),
             patch("modes.mode_interface.PixelController"),
+            patch("modes.modes.SystemManager") as mock_sm,
+            patch("modes.modes.WeatherManager", mock_wm_class),
         ):
+            mock_sm.instance.return_value = MagicMock()
             from modes.modes import WeatherMode
 
             mode = WeatherMode()
 
-            self.assertIsNone(mode.weather)
-            self.assertIsNone(mode.system_manager)
-            self.assertIsNone(mode.current_temp)
-            self.assertIsNone(mode.precip_chance)
-            self.assertIsNone(mode._weather_refresh_handle)
+            # After refactor: should not have weather service, should have weather_manager
+            self.assertIsNone(mode.system_manager)  # Set in initialize()
+            # Should not have these anymore after refactor
+            self.assertFalse(hasattr(mode, "weather"))
+            self.assertFalse(hasattr(mode, "current_temp"))
+            self.assertFalse(hasattr(mode, "precip_chance"))
+            self.assertFalse(hasattr(mode, "_weather_refresh_handle"))
 
 
 class TestWeatherModeCleanup(TestCase):
     """Test WeatherMode cleanup."""
 
+    def setUp(self) -> None:
+        """Reset mocks."""
+        reset_all_mocks()
+        MockConnectionManager.set_test_instance(MockConnectionManager(connected=True))
+        MockScheduler.set_test_instance(MockScheduler())
+
+    def tearDown(self) -> None:
+        """Clean up."""
+        reset_all_mocks()
+
     def test_cleanup_clears_references(self) -> None:
-        """Verify cleanup clears weather and system_manager references."""
+        """Verify cleanup clears system_manager reference."""
+        mock_wm_instance = MagicMock()
+        mock_wm_class = MagicMock()
+        mock_wm_class.instance.return_value = mock_wm_instance
+
         with (
             patch("modes.mode_interface.ConnectionManager"),
             patch("modes.mode_interface.InputManager"),
             patch("modes.mode_interface.PixelController"),
-            patch("modes.modes.Scheduler"),
+            patch("modes.modes.SystemManager") as mock_sm,
+            patch("modes.modes.WeatherManager", mock_wm_class),
         ):
+            mock_sm.instance.return_value = MagicMock()
             from modes.modes import WeatherMode
 
             mode = WeatherMode()
-            mode.weather = MagicMock()
             mode.system_manager = MagicMock()
-            mode._weather_refresh_handle = MagicMock()
 
             mode.cleanup()
 
-            self.assertIsNone(mode.weather)
             self.assertIsNone(mode.system_manager)
+
+
+class TestWeatherModeUsesWeatherManager(TestCase):
+    """Test WeatherMode uses WeatherManager instead of WeatherService."""
+
+    def setUp(self) -> None:
+        """Reset mocks and set up WeatherManager mock."""
+        reset_all_mocks()
+        MockConnectionManager.set_test_instance(MockConnectionManager(connected=True))
+        MockScheduler.set_test_instance(MockScheduler())
+
+        # Set up WeatherManager mock
+        self.mock_wm_instance = MagicMock()
+        self.mock_wm_instance.get_current_temperature.return_value = 72.5
+        self.mock_wm_instance.get_precip_chance_in_window = AsyncMock(return_value=25)
+        self.mock_wm_class = MagicMock()
+        self.mock_wm_class.instance.return_value = self.mock_wm_instance
+
+    def tearDown(self) -> None:
+        """Clean up."""
+        reset_all_mocks()
+
+    def test_initialize_uses_weather_manager(self) -> None:
+        """Verify initialize uses WeatherManager.instance() instead of creating WeatherService."""
+        with (
+            patch("modes.mode_interface.ConnectionManager") as mock_cm,
+            patch("modes.mode_interface.InputManager"),
+            patch("modes.mode_interface.PixelController"),
+            patch("modes.modes.SystemManager") as mock_sm,
+            patch("modes.modes.WeatherManager", self.mock_wm_class),
+        ):
+            mock_cm.instance.return_value.get_credentials.return_value = {"weather_zip": "10001"}
+            mock_sm.instance.return_value = MagicMock()
+
+            from modes.modes import WeatherMode
+
+            mode = WeatherMode()
+            result = mode.initialize()
+
+            self.assertTrue(result)
+            # Should call WeatherManager.instance(), not create WeatherService
+            self.mock_wm_class.instance.assert_called_once()
+
+    def test_initialize_fails_without_weather_zip(self) -> None:
+        """Verify initialize returns False when weather_zip not configured."""
+        with (
+            patch("modes.mode_interface.ConnectionManager") as mock_cm,
+            patch("modes.mode_interface.InputManager"),
+            patch("modes.mode_interface.PixelController"),
+        ):
+            mock_cm.instance.return_value.get_credentials.return_value = {}
+
+            from modes.modes import WeatherMode
+
+            mode = WeatherMode()
+            result = mode.initialize()
+
+            self.assertFalse(result)
+
+    def test_run_reads_from_weather_manager_cache(self) -> None:
+        """Verify run() reads cached data from WeatherManager."""
+        call_count = {"count": 0}
+
+        def make_button_press_after_iteration() -> bool:
+            """Return True (button pressed) after first iteration to exit loop."""
+            call_count["count"] += 1
+            return call_count["count"] > 1
+
+        with (
+            patch("modes.mode_interface.ConnectionManager") as mock_cm,
+            patch("modes.mode_interface.InputManager") as mock_im,
+            patch("modes.mode_interface.PixelController"),
+            patch("modes.modes.SystemManager") as mock_sm,
+            patch("modes.modes.WeatherManager", self.mock_wm_class),
+            patch("modes.modes.Scheduler.sleep", new=AsyncMock(return_value=None)),
+            patch("modes.modes.blink_for_precip", new=AsyncMock(return_value=True)),
+            patch("modes.modes.Mode.wait_for_button_release", new=AsyncMock(return_value=None)),
+        ):
+            mock_cm.instance.return_value.get_credentials.return_value = {"weather_zip": "10001"}
+            mock_im.instance.return_value.is_pressed.side_effect = make_button_press_after_iteration
+            mock_sm.instance.return_value.tick = AsyncMock(return_value=None)
+
+            from modes.modes import WeatherMode
+
+            mode = WeatherMode()
+            mode.initialize()
+
+            # Run - will exit when button is pressed after first iteration
+            asyncio.run(mode.run())
+
+            # Should have called WeatherManager getters
+            self.mock_wm_instance.get_current_temperature.assert_called()
+            self.mock_wm_instance.get_precip_chance_in_window.assert_called()
+
+    def test_run_does_not_schedule_own_refresh_task(self) -> None:
+        """Verify run() does not schedule its own weather refresh task."""
+        call_count = {"count": 0}
+
+        def make_button_press_after_iteration() -> bool:
+            """Return True (button pressed) after first iteration to exit loop."""
+            call_count["count"] += 1
+            return call_count["count"] > 1
+
+        with (
+            patch("modes.mode_interface.ConnectionManager") as mock_cm,
+            patch("modes.mode_interface.InputManager") as mock_im,
+            patch("modes.mode_interface.PixelController"),
+            patch("modes.modes.SystemManager") as mock_sm,
+            patch("modes.modes.WeatherManager", self.mock_wm_class),
+            patch("modes.modes.Scheduler.sleep", new=AsyncMock(return_value=None)),
+            patch("modes.modes.blink_for_precip", new=AsyncMock(return_value=True)),
+            patch("modes.modes.Mode.wait_for_button_release", new=AsyncMock(return_value=None)),
+        ):
+            mock_cm.instance.return_value.get_credentials.return_value = {"weather_zip": "10001"}
+            mock_im.instance.return_value.is_pressed.side_effect = make_button_press_after_iteration
+            mock_sm.instance.return_value.tick = AsyncMock(return_value=None)
+
+            scheduler = MockScheduler.instance()
+
+            from modes.modes import WeatherMode
+
+            mode = WeatherMode()
+            mode.initialize()
+
+            # Run - will exit when button is pressed after first iteration
+            asyncio.run(mode.run())
+
+            # Should NOT have scheduled a "Weather Data Refresh" task
+            weather_tasks = scheduler.get_tasks_by_name("Weather Data Refresh")
+            self.assertEqual(len(weather_tasks), 0, "WeatherMode should not schedule its own refresh task")
 
 
 class TestSetupPortalModeInit(TestCase):

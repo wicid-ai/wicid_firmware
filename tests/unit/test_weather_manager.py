@@ -48,7 +48,6 @@ class TestWeatherManagerCachedData(TestCase):
 
         self.assertIsNone(manager.get_current_temperature())
         self.assertIsNone(manager.get_daily_high())
-        self.assertIsNone(manager.get_daily_precip_chance())
 
     def test_cached_getters_return_stored_values(self) -> None:
         """Getters return values set during update."""
@@ -57,11 +56,9 @@ class TestWeatherManagerCachedData(TestCase):
         # Manually set cached values (simulating successful update)
         manager._current_temp = 72.5
         manager._daily_high = 85.0
-        manager._daily_precip_chance = 30
 
         self.assertEqual(manager.get_current_temperature(), 72.5)
         self.assertEqual(manager.get_daily_high(), 85.0)
-        self.assertEqual(manager.get_daily_precip_chance(), 30)
 
 
 class TestWeatherManagerSingleton(TestCase):
@@ -166,7 +163,6 @@ class TestWeatherManagerUpdate(TestCase):
         mock_weather = MockWeatherService(
             current_temp=75.0,
             daily_high=88.0,
-            daily_precip=15,
         )
         manager._weather = mock_weather
 
@@ -174,7 +170,6 @@ class TestWeatherManagerUpdate(TestCase):
 
         self.assertEqual(manager._current_temp, 75.0)
         self.assertEqual(manager._daily_high, 88.0)
-        self.assertEqual(manager._daily_precip_chance, 15)
 
     def test_update_handles_api_error(self) -> None:
         """Update wraps API errors in TaskNonFatalError."""

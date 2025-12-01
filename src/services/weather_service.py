@@ -116,25 +116,6 @@ class WeatherService:
 
         return data["daily"]["temperature_2m_max"][0]
 
-    async def get_daily_precip_chance(self) -> int | None:
-        """
-        Returns the daily probability of precipitation (in %) for the current day.
-
-        Returns:
-            int: Precipitation probability 0-100%, or None if location data unavailable
-        """
-        if not await self._ensure_location():
-            return None
-
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={self.lat}&longitude={self.lon}&daily=precipitation_probability_max&forecast_days=1&timezone={self.timezone}&models=dmi_seamless"
-        session = self._get_session()
-        response = session.get(url)
-        await Scheduler.yield_control()
-
-        data = response.json()
-        response.close()
-        return data["daily"]["precipitation_probability_max"][0]
-
     async def get_precip_chance_in_window(
         self, start_time_offset: float, forecast_window_duration: float
     ) -> int | None:

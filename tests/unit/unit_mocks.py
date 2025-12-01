@@ -592,7 +592,6 @@ class MockWeatherService:
         self,
         current_temp: float | None = 72.0,
         daily_high: float | None = 80.0,
-        daily_precip: int | None = 20,
         window_precip: int | None = 30,
         should_raise: Exception | None = None,
     ) -> None:
@@ -602,13 +601,11 @@ class MockWeatherService:
         Args:
             current_temp: Value to return for get_current_temperature()
             daily_high: Value to return for get_daily_high()
-            daily_precip: Value to return for get_daily_precip_chance()
             window_precip: Value to return for get_precip_chance_in_window()
             should_raise: Exception to raise on any method call
         """
         self.current_temp = current_temp
         self.daily_high = daily_high
-        self.daily_precip = daily_precip
         self.window_precip = window_precip
         self.should_raise = should_raise
 
@@ -623,12 +620,6 @@ class MockWeatherService:
         if self.should_raise:
             raise self.should_raise
         return self.daily_high
-
-    async def get_daily_precip_chance(self) -> int | None:
-        """Return configured precipitation chance or raise error."""
-        if self.should_raise:
-            raise self.should_raise
-        return self.daily_precip
 
     async def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
         """Return configured window precipitation or raise error."""

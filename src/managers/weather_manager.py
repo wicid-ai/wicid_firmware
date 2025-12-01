@@ -25,8 +25,7 @@ class WeatherManager(ManagerBase):
 
     _instance = None
 
-    # Update interval: 20 minutes (1200 seconds)
-    UPDATE_INTERVAL = 1200.0
+    UPDATE_INTERVAL = 600.0  # 10 minutes
 
     @classmethod
     def instance(cls, session: Optional[Any] = None, weather_zip: Optional[str] = None) -> "WeatherManager":
@@ -86,7 +85,6 @@ class WeatherManager(ManagerBase):
         # Cached weather data
         self._current_temp: Optional[float] = None
         self._daily_high: Optional[float] = None
-        self._daily_precip_chance: Optional[int] = None
 
         # Weather service instance (lazy-initialized)
         self._weather: Optional[Any] = None
@@ -159,7 +157,7 @@ class WeatherManager(ManagerBase):
 
     async def _update_weather(self) -> None:
         """
-        Fetch weather data from API (called by scheduler every 20 minutes).
+        Fetch weather data from API (called by scheduler every UPDATE_INTERVAL).
 
         This task runs periodically to update cached weather data.
         Explicitly yields after each network call to ensure scheduler responsiveness.
@@ -177,19 +175,16 @@ class WeatherManager(ManagerBase):
             try:
                 temp = await self._weather.get_current_temperature()
                 high = await self._weather.get_daily_high()
-                precip = await self._weather.get_daily_precip_chance()
             except Exception as fetch_error:
                 raise TaskNonFatalError(f"Weather API error: {fetch_error}") from fetch_error
 
             # Update cached data
             self._current_temp = temp
             self._daily_high = high
-            self._daily_precip_chance = precip
 
             temp_msg = f"{temp}°F" if temp is not None else "n/a"
             high_msg = f"{high}°F" if high is not None else "n/a"
-            precip_msg = f"{precip}%" if precip is not None else "n/a"
-            self.logger.info(f"Weather updated: {temp_msg} (high: {high_msg}, precip: {precip_msg})")
+            self.logger.info(f"Weather updated: {temp_msg} (high: {high_msg})")
 
         except TaskNonFatalError:
             # Re-raise to let scheduler handle retry
@@ -221,15 +216,6 @@ class WeatherManager(ManagerBase):
             float: High temperature in °F, or None if no data available
         """
         return self._daily_high
-
-    def get_daily_precip_chance(self) -> int | None:
-        """
-        Get cached precipitation chance (synchronous).
-
-        Returns:
-            int: Precipitation probability 0-100%, or None if no data available
-        """
-        return self._daily_precip_chance
 
     async def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
         """
@@ -273,7 +259,6 @@ class WeatherManager(ManagerBase):
         self._init_weather_zip = None
         self._current_temp = None
         self._daily_high = None
-        self._daily_precip_chance = None
         self._updates_scheduled = False
 
         self.logger.debug("WeatherManager shut down")

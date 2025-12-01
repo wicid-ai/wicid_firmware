@@ -1,12 +1,10 @@
-import os
-
 from core.app_typing import Any
 from core.scheduler import Scheduler
 from managers.configuration_manager import ConfigurationManager
 from managers.system_manager import SystemManager
+from managers.weather_manager import WeatherManager
 from modes.mode_interface import Mode
 from services.button_action_router_service import ButtonActionRouterService
-from services.weather_service import WeatherService
 
 
 def temperature_color(temp_f: float | None) -> tuple[int, int, int]:
@@ -134,6 +132,9 @@ class WeatherMode(Mode):
     Displays:
     - LED color based on current temperature
     - Blinks to indicate precipitation probability (0-100%, rounded to nearest 10%)
+
+    Uses WeatherManager for cached weather data. WeatherManager handles periodic
+    updates automatically via the scheduler.
     """
 
     name = "Weather"
@@ -142,15 +143,11 @@ class WeatherMode(Mode):
 
     def __init__(self) -> None:
         super().__init__()
-        self.weather: Any = None  # WeatherService instance
+        self.weather_manager: Any = None  # WeatherManager instance
         self.system_manager: Any = None  # Set in initialize()
-        self.update_interval = int(os.getenv("WEATHER_UPDATE_INTERVAL", "600"))
-        self.current_temp = None
-        self.precip_chance = None
-        self._weather_refresh_handle: Any = None  # TaskHandle from scheduler
 
     def initialize(self) -> bool:
-        """Initialize weather service."""
+        """Initialize weather manager."""
         if not super().initialize():
             return False
 
@@ -163,8 +160,8 @@ class WeatherMode(Mode):
 
             zip_code = credentials["weather_zip"]
 
-            # Create weather service
-            self.weather = WeatherService(zip_code)
+            # Get WeatherManager singleton (handles weather updates and caching)
+            self.weather_manager = WeatherManager.instance(weather_zip=zip_code)
 
             # Get system manager singleton (periodic system checks)
             self.system_manager = SystemManager.instance()
@@ -184,17 +181,21 @@ class WeatherMode(Mode):
         await self.wait_for_button_release()
 
         self.logger.debug("Starting display loop")
-        self._start_weather_refresh_task()
 
         while self._running:
-            if self.current_temp is None or self.precip_chance is None:
+            # Read cached data from WeatherManager
+            current_temp = self.weather_manager.get_current_temperature()
+            precip_chance = await self.weather_manager.get_precip_chance_in_window(0, 4)
+
+            # Wait for data if not available yet
+            if current_temp is None or precip_chance is None:
                 await Scheduler.sleep(0.1)
                 continue
 
             # Display temperature color with precipitation blinks
-            current_color = temperature_color(self.current_temp)
+            current_color = temperature_color(current_temp)
 
-            if not await blink_for_precip(self.pixel, current_color, self.precip_chance, self.is_button_pressed):
+            if not await blink_for_precip(self.pixel, current_color, precip_chance, self.is_button_pressed):
                 # Button pressed during blink
                 break
 
@@ -208,65 +209,13 @@ class WeatherMode(Mode):
 
             await Scheduler.sleep(0.05)
 
-        self._stop_weather_refresh_task()
         self.logger.debug("WeatherMode: Exiting")
 
     def cleanup(self) -> None:
         """Clean up weather mode resources."""
         super().cleanup()
-        # WeatherService doesn't own socket resources - ConnectionManager handles cleanup
-        self.weather = None
+        self.weather_manager = None
         self.system_manager = None
-        self._stop_weather_refresh_task()
-
-    def _start_weather_refresh_task(self) -> None:
-        """Schedule recurring weather refresh task via scheduler."""
-        if self._weather_refresh_handle is not None:
-            return
-
-        scheduler = Scheduler.instance()
-        self._weather_refresh_handle = scheduler.schedule_recurring(
-            coroutine=self._weather_refresh_job,
-            interval=self.update_interval,
-            priority=40,
-            name="Weather Data Refresh",
-        )
-
-    def _stop_weather_refresh_task(self) -> None:
-        """Cancel scheduled weather refresh task if running."""
-        if self._weather_refresh_handle is None:
-            return
-
-        try:
-            scheduler = Scheduler.instance()
-            scheduler.cancel(self._weather_refresh_handle)
-        except Exception:
-            pass
-        finally:
-            self._weather_refresh_handle = None
-
-    async def _weather_refresh_job(self) -> None:
-        """Fetch latest weather data without blocking the display loop."""
-        if not self._running or self.weather is None:
-            return
-
-        try:
-            # Network calls are blocking but yield control internally after each request
-            # See docs/STYLE_GUIDE.md (CircuitPython Compatibility) for details
-            temp = await self.weather.get_current_temperature()
-
-            precip = await self.weather.get_precip_chance_in_window(0, 4)
-
-            if temp is not None:
-                self.current_temp = temp
-            if precip is not None:
-                self.precip_chance = precip
-            temp_msg = f"{temp}°F" if temp is not None else "n/a"
-            precip_msg = f"{precip}%" if precip is not None else "n/a"
-            self.logger.info(f"Weather update: {temp_msg}, {precip_msg} precip chance")
-        except Exception as err:
-            self.logger.error(f"Weather refresh failed: {err}")
-            await Scheduler.sleep(0.5)
 
 
 class TempDemoMode(Mode):
