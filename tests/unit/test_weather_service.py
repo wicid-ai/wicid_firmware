@@ -64,18 +64,24 @@ class TestWeatherServiceGeocoding(TestCase):
     """Test location geocoding functionality."""
 
     def test_ensure_location_success(self) -> None:
-        """Geocoding extracts coordinates from response."""
+        """Geocoding extracts coordinates from Nominatim response."""
         session = MockSession()
         session.add_response(
-            {
-                "results": [
-                    {
-                        "latitude": 40.7128,
-                        "longitude": -74.006,
-                        "timezone": "America/New_York",
-                    }
-                ]
-            }
+            [
+                {
+                    "place_id": 353662727,
+                    "lat": "40.7128",
+                    "lon": "-74.006",
+                    "display_name": "10001, New York, NY, United States",
+                    "address": {
+                        "postcode": "10001",
+                        "city": "New York",
+                        "state": "New York",
+                        "country": "United States",
+                        "country_code": "us",
+                    },
+                }
+            ]
         )
         service = WeatherService("10001", session=session)
 
@@ -88,7 +94,7 @@ class TestWeatherServiceGeocoding(TestCase):
     def test_ensure_location_caches_result(self) -> None:
         """Second call returns True without HTTP request."""
         session = MockSession()
-        session.add_response({"results": [{"latitude": 40.0, "longitude": -74.0}]})
+        session.add_response([{"lat": "40.0", "lon": "-74.0"}])
         service = WeatherService("10001", session=session)
 
         run_async(service._ensure_location())
@@ -100,7 +106,7 @@ class TestWeatherServiceGeocoding(TestCase):
     def test_ensure_location_no_results(self) -> None:
         """Returns False when no geocoding results."""
         session = MockSession()
-        session.add_response({"results": []})
+        session.add_response([])
         service = WeatherService("10001", session=session)
 
         result = run_async(service._ensure_location())
@@ -142,7 +148,7 @@ class TestWeatherServiceAPI(TestCase):
         """Returns None when location unavailable."""
         self.service.lat = None
         self.service.lon = None
-        self.session.add_response({"results": []})  # Geocoding fails
+        self.session.add_response([])  # Geocoding fails
 
         result = run_async(self.service.get_current_temperature())
 

@@ -55,7 +55,7 @@ class WeatherService:
             # NOTE: session.get() is blocking (CircuitPython limitation)
             # We yield control immediately after to allow scheduler to run other tasks
             # See docs/STYLE_GUIDE.md (CircuitPython Compatibility) for details
-            url = f"https://geocoding-api.open-meteo.com/v1/search?name={self.zip_code}&count=1&language=en&format=json"
+            url = f"https://nominatim.openstreetmap.org/search?postalcode={self.zip_code}&country=US&format=json&limit=1&addressdetails=1"
             session = self._get_session()
             response = session.get(url)
             await Scheduler.yield_control()
@@ -63,12 +63,10 @@ class WeatherService:
             data = response.json()
             response.close()
 
-            if "results" in data and data["results"]:
-                result = data["results"][0]
-                self.lat = result["latitude"]
-                self.lon = result["longitude"]
-                if "timezone" in result:
-                    self.timezone = result["timezone"].replace("/", "%2F")
+            if data and len(data) > 0:
+                result = data[0]
+                self.lat = float(result["lat"])
+                self.lon = float(result["lon"])
                 return True
             else:
                 self.logger.warning(f"No location found for ZIP {self.zip_code}")
