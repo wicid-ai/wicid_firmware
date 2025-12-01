@@ -68,17 +68,18 @@ class WicidLogger:
             else:
                 level_name = _LEVEL_NAMES.get(level, "UNKNOWN")
                 print(f"[{level_name}: {self.module}] {msg}")
-        if exc_info:
-            try:
-                import sys
-                import traceback
+            # Only print traceback if the log level would be displayed
+            if exc_info:
+                try:
+                    import sys
+                    import traceback
 
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                if exc_type is not None:
-                    traceback.print_exception(exc_type, exc_value, exc_tb)
-                    sys.stdout.flush()
-            except Exception:
-                pass
+                    exc_type, exc_value, exc_tb = sys.exc_info()
+                    if exc_type is not None:
+                        traceback.print_exception(exc_type, exc_value, exc_tb)
+                        sys.stdout.flush()
+                except Exception:
+                    pass
 
     def debug(self, msg: str, exc_info: bool = False) -> None:
         """Log a debug message."""

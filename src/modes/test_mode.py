@@ -160,12 +160,14 @@ def _get_user_choice() -> str:
         TEST_LOG.testing("(Button unavailable after tests, use serial input)")
 
     while time.monotonic() - start_time < timeout:
-        # Check for serial input
+        # Check for serial input - read entire line to avoid leftover newlines
         if select.select([sys.stdin], [], [], 0.1)[0]:
-            choice = sys.stdin.read(1).strip()
-            if choice in ["1", "2", "3"]:
+            line = sys.stdin.readline().strip()
+            if line in ["1", "2", "3"]:
+                choice = line
                 break
-            TEST_LOG.testing(f"Invalid choice '{choice}', try again...")
+            if line:  # Only show error for non-empty input
+                TEST_LOG.testing(f"Invalid choice '{line}', try again...")
             continue
 
         # Check button (if available)

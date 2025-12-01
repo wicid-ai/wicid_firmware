@@ -62,6 +62,8 @@ class UpdateManager(ManagerBase):
 
     PENDING_UPDATE_DIR = "/pending_update"
     PENDING_ROOT_DIR = "/pending_update/root"
+    PENDING_STAGING_DIR = "/pending_update/.staging"
+    READY_MARKER_FILE = "/pending_update/.ready"
     MIN_FREE_SPACE_BYTES = 200000  # ~200KB buffer for operations
 
     def _init(
@@ -123,6 +125,30 @@ class UpdateManager(ManagerBase):
         except Exception as e:
             return (False, f"Could not check disk space: {e}")
 
+    def _remove_directory_recursive(self, path: str) -> None:
+        """
+        Recursively remove a directory and all its contents.
+
+        Args:
+            path: Directory path to remove
+        """
+        try:
+            items = os.listdir(path)
+        except OSError:
+            return
+
+        for item in items:
+            item_path = f"{path}/{item}"
+            try:
+                os.remove(item_path)
+            except OSError:
+                self._remove_directory_recursive(item_path)
+                with suppress(OSError):
+                    os.rmdir(item_path)
+
+        with suppress(OSError):
+            os.rmdir(path)
+
     def _cleanup_pending_root(self) -> None:
         """
         Remove pending_update/root directory or file and all its contents.
@@ -139,38 +165,60 @@ class UpdateManager(ManagerBase):
             except OSError:
                 pass  # Not a file, try as directory
 
-            # Try to remove as a directory
-            try:
-                items = os.listdir(self.PENDING_ROOT_DIR)
-            except OSError:
-                # Directory doesn't exist or isn't accessible
-                return
-
-            # Recursively remove directory contents
-            for item in items:
-                item_path = f"{self.PENDING_ROOT_DIR}/{item}"
-                try:
-                    os.remove(item_path)
-                except OSError:
-                    # Might be a directory, try recursive removal
-                    try:
-                        sub_items = os.listdir(item_path)
-                        for sub_item in sub_items:
-                            sub_item_path = f"{item_path}/{sub_item}"
-                            with suppress(OSError):
-                                os.remove(sub_item_path)
-                        os.rmdir(item_path)
-                    except OSError:
-                        pass
-
-            # Remove the now-empty directory
-            try:
-                os.rmdir(self.PENDING_ROOT_DIR)
-                self.logger.debug("Removed pending_update/root directory")
-            except OSError:
-                pass
+            self._remove_directory_recursive(self.PENDING_ROOT_DIR)
+            self.logger.debug("Removed pending_update/root directory")
         except Exception as e:
             self.logger.warning(f"Error cleaning up pending_update/root: {e}")
+
+    def _cleanup_pending_update(self) -> None:
+        """
+        Remove the entire /pending_update directory tree.
+
+        Cleans up all staging artifacts including .staging, root, .ready marker,
+        and any leftover ZIP files. Called on failures to ensure clean state
+        for next update attempt.
+        """
+        try:
+            self._remove_directory_recursive(self.PENDING_UPDATE_DIR)
+            self.logger.debug("Removed pending_update directory")
+        except Exception as e:
+            self.logger.warning(f"Error cleaning up pending_update: {e}")
+
+    def _write_ready_marker(self, manifest_hash: str) -> None:
+        """
+        Write the .ready marker file with manifest hash.
+
+        The .ready marker signals to boot.py that staging is complete and
+        the update is ready for installation. Contains the manifest hash
+        for integrity verification.
+
+        Args:
+            manifest_hash: SHA-256 hash of manifest.json for verification
+        """
+        try:
+            with open(self.READY_MARKER_FILE, "w") as f:
+                f.write(manifest_hash)
+            os.sync()
+            self.logger.debug(f"Wrote ready marker with hash: {manifest_hash[:16]}...")
+        except Exception as e:
+            self.logger.warning(f"Failed to write ready marker: {e}")
+
+    def _validate_ready_marker(self, expected_hash: str) -> bool:
+        """
+        Validate the .ready marker contains the expected manifest hash.
+
+        Args:
+            expected_hash: Expected SHA-256 hash of manifest.json
+
+        Returns:
+            bool: True if marker exists and hash matches, False otherwise
+        """
+        try:
+            with open(self.READY_MARKER_FILE) as f:
+                actual_hash = f.read().strip()
+            return actual_hash == expected_hash
+        except OSError:
+            return False
 
     def _record_failed_update(self, reason: str, version: str | None = None) -> None:
         """
@@ -189,20 +237,20 @@ class UpdateManager(ManagerBase):
     async def calculate_sha256(
         self,
         file_path: str,
-        chunk_size: int = 256,
+        chunk_size: int = 2048,
         progress_callback: Callable[[str, str, float | None], None] | None = None,
         service_callback: Callable[[], None] | None = None,
     ) -> str | None:
         """
         Calculate SHA-256 checksum of a file using adafruit_hashlib.
 
-        Uses ~256B chunks which provide a responsive balance between LED feedback
-        and hashing throughput while yielding to the scheduler so background tasks
-        stay responsive.
+        Uses 2KB chunks to balance verification speed with LED animation responsiveness.
+        This size ensures yielding occurs frequently enough (~10-20ms) to keep the
+        scheduler's 25Hz LED animation task from being starved.
 
         Args:
             file_path: Path to file to checksum
-            chunk_size: Bytes to read per iteration (default: 256B for frequent updates)
+            chunk_size: Bytes to read per iteration (default: 2KB for speed/responsiveness balance)
             progress_callback: Optional callback for progress reporting
             service_callback: Optional callback to service background tasks
 
@@ -227,8 +275,7 @@ class UpdateManager(ManagerBase):
                     bytes_processed += len(chunk)
                     tick_count += 1
 
-                    # Update LED and yield so scheduler tasks can run
-                    self._update_download_led()
+                    # Yield control to scheduler so other tasks can run
                     if service_callback:
                         try:
                             service_callback()
@@ -534,23 +581,6 @@ class UpdateManager(ManagerBase):
             headers["User-Agent"] = user_agent
         return headers
 
-    def _update_download_led(self, force: bool = False) -> None:
-        """
-        Update LED during download operations (flashes blue/green).
-
-        Uses time-based throttling to flash frequently without impacting performance.
-        Just calls tick() which handles time-based animation internally.
-
-        Args:
-            force: If True, update LED regardless of throttle (default: False)
-        """
-        if not self.pixel_controller or self._download_flash_start is None:
-            return
-
-        # LED animation is now handled automatically by the scheduler at 25Hz
-        # This method is kept for backward compatibility but does nothing
-        pass
-
     async def download_update(
         self,
         zip_url: str | None = None,
@@ -604,24 +634,24 @@ class UpdateManager(ManagerBase):
                 if not space_ok:
                     self.logger.error("Insufficient disk space for update")
                     self.logger.error("Please free up space and try again")
-                    self._cleanup_pending_root()
+                    self._cleanup_pending_update()
                     self._record_failed_update("Insufficient disk space")
                     return False, "Insufficient disk space for update"
 
-                self._update_download_led()
-
                 # Clean up any previous failed update artifacts before starting
-                self._cleanup_pending_root()
+                # Use full cleanup to remove staging, root, and any leftover files
+                self._cleanup_pending_update()
 
-                for directory in (self.PENDING_UPDATE_DIR, self.PENDING_ROOT_DIR):
-                    with suppress(OSError):
-                        os.mkdir(directory)
+                # Create staging directory structure
+                with suppress(OSError):
+                    os.mkdir(self.PENDING_UPDATE_DIR)
+                with suppress(OSError):
+                    os.mkdir(self.PENDING_STAGING_DIR)
 
                 zip_path = f"{self.PENDING_UPDATE_DIR}/update.zip"
                 self.logger.info(f"Downloading update: {zip_url}")
                 self.logger.debug(f"Saving to: {zip_path}")
 
-                self._update_download_led()
                 notify("downloading", "Starting download...", 0)
 
                 def _get_content_length(headers: Any) -> int | None:
@@ -675,7 +705,6 @@ class UpdateManager(ManagerBase):
                         if not chunk:
                             continue
                         f.write(chunk)
-                        self._update_download_led()
                         bytes_downloaded += len(chunk)
 
                         progress_pct: float | None = None
@@ -690,12 +719,10 @@ class UpdateManager(ManagerBase):
                 await Scheduler.yield_control()
 
                 self.logger.info("Download complete")
-                self._update_download_led()
                 notify("downloading", "Download complete", 100)
 
                 if expected_checksum:
                     self.logger.info("Verifying download integrity")
-                    self._update_download_led()
                     notify("verifying", "Verifying download integrity...", None)
 
                     async def _run_verification() -> tuple[bool, str]:
@@ -717,14 +744,12 @@ class UpdateManager(ManagerBase):
                         notify("error", f"Verification failed: {checksum_msg}", None)
                         if "mismatch" in checksum_msg.lower():
                             self.logger.critical("SECURITY WARNING: Downloaded file may be corrupted or tampered with")
-                        with suppress(OSError):
-                            os.remove(zip_path)
-                        self._cleanup_pending_root()
+                        # Full cleanup on checksum failure
+                        self._cleanup_pending_update()
                         self._record_failed_update(checksum_msg)
                         return False, checksum_msg
 
                     self.logger.info(checksum_msg)
-                    self._update_download_led()
                     notify("verifying", "Verification complete", 100)
                 else:
                     self.logger.warning("No checksum in manifest - update may be from older release")
@@ -733,7 +758,6 @@ class UpdateManager(ManagerBase):
                     from utils.zipfile_lite import ZipFile
 
                     self.logger.info("Extracting update files")
-                    self._update_download_led()
                     notify("unpacking", "Extracting update files...", 0)
                     await Scheduler.yield_control()
 
@@ -750,10 +774,10 @@ class UpdateManager(ManagerBase):
                         file_count = 0
                         total_files = len(files_to_extract)
                         for file_count, filename in enumerate(files_to_extract, start=1):
-                            zf.extract(filename, self.PENDING_ROOT_DIR)
+                            # Extract to staging directory first (atomic staging)
+                            zf.extract(filename, self.PENDING_STAGING_DIR)
 
                             if file_count % 3 == 0 or file_count == total_files:
-                                self._update_download_led()
                                 progress_pct = (file_count / total_files) * 100 if total_files else None
                                 notify("unpacking", f"Extracting files... ({file_count}/{total_files})", progress_pct)
                             await Scheduler.yield_control()
@@ -762,28 +786,25 @@ class UpdateManager(ManagerBase):
                     await Scheduler.yield_control()
 
                     self.logger.info("Extraction complete")
-                    self._update_download_led()
                     notify("unpacking", "Extraction complete", 100)
 
-                    manifest_path = f"{self.PENDING_ROOT_DIR}/manifest.json"
+                    manifest_path = f"{self.PENDING_STAGING_DIR}/manifest.json"
                     try:
                         with open(manifest_path) as f:  # type: ignore[assignment]
                             manifest = json.load(f)
                         self.logger.info(f"Manifest validated (version: {manifest.get('version', 'unknown')})")
-                        self._update_download_led()
                     except (OSError, ValueError, KeyError) as e:
                         self.logger.error(f"Extracted manifest.json is corrupted or invalid: {e}")
                         with suppress(OSError):
                             os.remove(zip_path)
-                        self._cleanup_pending_root()
+                        self._cleanup_pending_update()
                         error_msg = f"Invalid manifest: {e}"
                         self._record_failed_update(error_msg)
                         return False, error_msg
 
                     self.logger.debug("Validating extracted update contains all critical files")
-                    self._update_download_led()
                     notify("unpacking", "Validating update package...", None)
-                    all_present, missing_files = RecoveryManager.validate_extracted_update(self.PENDING_ROOT_DIR)
+                    all_present, missing_files = RecoveryManager.validate_extracted_update(self.PENDING_STAGING_DIR)
 
                     if not all_present:
                         self.logger.error("Update package is incomplete")
@@ -796,13 +817,34 @@ class UpdateManager(ManagerBase):
                         notify("error", "Update package incomplete", None)
                         with suppress(OSError):
                             os.remove(zip_path)
-                        self._cleanup_pending_root()
+                        self._cleanup_pending_update()
                         error_msg = "Update package incomplete"
                         self._record_failed_update(error_msg, version=manifest.get("version"))
                         return False, error_msg
 
                     self.logger.info("All critical files present in update")
-                    os.remove(zip_path)
+
+                    # Remove ZIP file before atomic rename to free space
+                    with suppress(OSError):
+                        os.remove(zip_path)
+                    os.sync()
+
+                    # Atomic staging: rename .staging to root
+                    # This ensures boot.py only sees a complete update
+                    self.logger.debug("Performing atomic rename: .staging -> root")
+                    try:
+                        os.rename(self.PENDING_STAGING_DIR, self.PENDING_ROOT_DIR)
+                    except OSError as e:
+                        self.logger.error(f"Failed to rename staging to root: {e}")
+                        self._cleanup_pending_update()
+                        error_msg = f"Staging rename failed: {e}"
+                        self._record_failed_update(error_msg, version=manifest.get("version"))
+                        return False, error_msg
+
+                    # Write ready marker with manifest hash for boot verification
+                    manifest_hash = expected_checksum or "no-checksum"
+                    self._write_ready_marker(manifest_hash)
+
                     os.sync()
                     await Scheduler.yield_control()
 
@@ -814,9 +856,8 @@ class UpdateManager(ManagerBase):
                     self.logger.error(f"Error extracting update: {e}")
                     traceback.print_exception(e)
                     notify("error", f"Extraction failed: {e}", None)
-                    with suppress(OSError):
-                        os.remove(zip_path)
-                    self._cleanup_pending_root()
+                    # Full cleanup on extraction failure
+                    self._cleanup_pending_update()
                     error_msg = f"Extraction error: {e}"
                     self._record_failed_update(error_msg)
                     return False, error_msg
@@ -825,15 +866,15 @@ class UpdateManager(ManagerBase):
                 self.logger.critical(f"Programming error in download_update: {e}")
                 traceback.print_exception(e)
                 notify("error", f"Download failed: {e}", None)
+                self._cleanup_pending_update()
                 self._record_failed_update(f"Programming error: {e}")
                 raise RuntimeError(f"Unrecoverable error in update download: {e}") from e
             except Exception as e:
                 self.logger.error(f"Error downloading update: {e}")
                 traceback.print_exception(e)
                 notify("error", f"Download failed: {e}", None)
-                with suppress(OSError):
-                    os.remove(f"{self.PENDING_UPDATE_DIR}/update.zip")
-                self._cleanup_pending_root()
+                # Full cleanup on any failure
+                self._cleanup_pending_update()
                 error_msg = str(e)
                 self._record_failed_update(error_msg)
                 return False, error_msg

@@ -7,7 +7,6 @@ to allow system checks without knowing implementation details.
 
 import os
 import time
-import traceback
 
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
@@ -123,8 +122,7 @@ class SystemManager(ManagerBase):
                 await self._check_for_updates()
 
         except Exception as e:
-            self.logger.error(f"Error in SystemManager.tick(): {e}")
-            traceback.print_exception(e)
+            self.logger.error(f"Error in SystemManager.tick(): {e}", exc_info=True)
 
     async def _check_for_reboot(self) -> None:
         """
@@ -179,7 +177,6 @@ class SystemManager(ManagerBase):
             self.update_manager.next_update_check = self.update_manager.schedule_next_update_check()
 
         except Exception as e:
-            self.logger.error(f"Error during scheduled update check: {e}")
-            traceback.print_exception(e)
+            self.logger.error(f"Error during scheduled update check: {e}", exc_info=True)
             # Reschedule to retry later
             self.update_manager.next_update_check = self.update_manager.schedule_next_update_check()

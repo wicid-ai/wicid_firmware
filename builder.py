@@ -13,6 +13,8 @@ Note: releases.json is generated but not committed (gitignored, deployed separat
 import hashlib
 import json
 import os
+
+os.environ["COPYFILE_DISABLE"] = "1"  # Prevent macOS ._ resource fork files in ZIP archives
 import re
 import shutil
 import subprocess
@@ -758,9 +760,13 @@ def build_package(manifest, version):
     # Copy non-Python files (special-case www)
     for item in src_path.iterdir():
         if item.is_file() and not item.name.endswith(".py"):
+            if item.name.startswith("."):
+                continue  # Skip hidden files (.DS_Store, etc.)
             shutil.copy2(item, build_dir / item.name)
             print(f"  Copied: {item.name}")
         elif item.is_dir() and item.name not in ["__pycache__"]:
+            if item.name.startswith("."):
+                continue  # Skip hidden directories
             if item.name == "www":
                 # Build minified/combined web UI into build/www
                 www_mode = os.environ.get("WICID_WWW_MODE", "single").lower()
@@ -769,7 +775,13 @@ def build_package(manifest, version):
                 print_success(f"Building www assets (mode={www_mode})...")
                 build_www_assets(item, build_dir, mode=www_mode)
             else:
-                shutil.copytree(item, build_dir / item.name, dirs_exist_ok=True)
+                # Filter out __pycache__ and hidden files/directories
+                shutil.copytree(
+                    item,
+                    build_dir / item.name,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", ".*"),
+                )
                 print(f"  Copied: {item.name}/")
 
     # Copy manifest.json to build directory
@@ -782,6 +794,10 @@ def build_package(manifest, version):
         for file in build_dir.rglob("*"):
             if file.is_file():
                 arcname = file.relative_to(build_dir)
+
+                # Skip hidden files and __pycache__ (should already be filtered, but belt-and-suspenders)
+                if any(part.startswith(".") or part == "__pycache__" for part in arcname.parts):
+                    continue
 
                 # Skip .py source files if a corresponding .mpy exists
                 # Exception: boot.py and code.py must remain as source

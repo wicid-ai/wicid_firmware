@@ -26,6 +26,9 @@ IS_CIRCUITPYTHON = hasattr(sys, "implementation") and sys.implementation.name ==
 
 if IS_CIRCUITPYTHON:
     sys.path.insert(0, "/")
+    # Add /tests to path so "integration.test_foo" imports work
+    # (looks for /tests/integration/test_foo.py)
+    sys.path.insert(0, "/tests")
     TEST_ROOT = "/tests"
 else:
     # Desktop execution - add src and project root to path
@@ -119,7 +122,10 @@ else:
 
 # Import logging after path is set up
 from core.app_typing import Any, Callable  # noqa: E402
-from core.logging_helper import logger  # noqa: E402
+from core.logging_helper import configure_logging, logger  # noqa: E402
+
+# Configure logging to TESTING level to suppress all log output except test output
+configure_logging("TESTING")
 
 # Import suppress - use stdlib on desktop, custom implementation on CircuitPython
 if IS_CIRCUITPYTHON:
@@ -449,7 +455,16 @@ def _run_circuitpython_tests(verbosity: int = 2, tick_callback: Callable[[], Non
         test_modules[module_name] = (dir_path, filename)
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
-            if isinstance(attr, type) and issubclass(attr, unittest.TestCase) and attr is not unittest.TestCase:
+            # Check if it's a TestCase-like class by duck typing
+            # This avoids issues with different TestCase imports (tests.unittest vs unittest)
+            # Exclude "TestCase" itself - only include subclasses
+            if (
+                isinstance(attr, type)
+                and attr_name.startswith("Test")
+                and attr_name != "TestCase"
+                and hasattr(attr, "run")
+                and hasattr(attr, "setUp")
+            ):
                 suite.addTest(attr)
 
     # Automatically discover all test_*.py files in test directories
@@ -461,13 +476,13 @@ def _run_circuitpython_tests(verbosity: int = 2, tick_callback: Callable[[], Non
             # Directory doesn't exist or can't be read - skip silently
             return
         for filename in sorted(files):
-            # Look for test_*.py files (but not __init__.py)
-            if filename == "__init__.py":
+            # Look for test_*.py files (but not __init__.py or hidden files)
+            if filename.startswith(".") or filename == "__init__.py":
                 continue
             if filename.startswith("test_") and filename.endswith(".py"):
                 # Convert filename to module name (remove .py)
                 module_name = filename[:-3]
-                # Import as package.module (e.g., 'unit.test_smoke')
+                # Import as package.module (e.g., 'integration.test_recovery')
                 full_module_name = f"{package_prefix}.{module_name}"
                 try:
                     add_tests_from_module(full_module_name, dir_path, filename)

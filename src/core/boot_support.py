@@ -63,6 +63,8 @@ except ImportError as e:
 # Check for pending firmware update
 PENDING_UPDATE_DIR = "/pending_update"
 PENDING_ROOT_DIR = "/pending_update/root"
+PENDING_STAGING_DIR = "/pending_update/.staging"
+READY_MARKER_FILE = "/pending_update/.ready"
 BOOT_LOG_FILE = "/boot_log.txt"
 _LOGGED_BOOT_ERROR = False
 
@@ -351,12 +353,49 @@ def configure_storage() -> None:
         log_boot_message("=" * 50)
 
 
+def _validate_ready_marker() -> bool:
+    """
+    Validate the .ready marker exists and is not empty.
+
+    The .ready marker signals that staging completed successfully.
+    If missing or empty, the update was incomplete and should not be installed.
+
+    Returns:
+        bool: True if marker is valid, False otherwise
+    """
+    try:
+        with open(READY_MARKER_FILE) as f:
+            content = f.read().strip()
+        return len(content) > 0
+    except OSError:
+        return False
+
+
+def _cleanup_incomplete_staging() -> None:
+    """
+    Clean up incomplete staging directory if present.
+
+    Called when .staging exists but .ready marker is missing,
+    indicating an interrupted download/extraction.
+    """
+    try:
+        items = os.listdir(PENDING_STAGING_DIR)
+        if items:
+            log_boot_message("Found incomplete staging directory - cleaning up")
+            remove_directory_recursive(PENDING_STAGING_DIR)
+    except OSError:
+        pass  # No staging directory
+
+
 def process_pending_update() -> None:
     """
     Check for and process pending firmware updates.
     """
     log_boot_message("\n=== BOOT: Checking for pending firmware updates ===")
     log_boot_message(f"Looking for: {PENDING_ROOT_DIR}")
+
+    # Clean up any incomplete staging first
+    _cleanup_incomplete_staging()
 
     # Check for pending update installation
     try:
@@ -374,6 +413,14 @@ def process_pending_update() -> None:
             cleanup_pending_update()
             return
 
+        # Verify the .ready marker exists (atomic staging verification)
+        if not _validate_ready_marker():
+            log_boot_message("WARNING: Pending update missing .ready marker")
+            log_boot_message("Update staging was incomplete - cleaning up")
+            cleanup_pending_update()
+            return
+
+        log_boot_message("✓ Ready marker validated")
         log_boot_message(f"Found {len(files)} files in pending update")
 
         log_boot_message("=" * 50)

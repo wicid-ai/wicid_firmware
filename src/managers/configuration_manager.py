@@ -558,6 +558,10 @@ class ConfigurationManager(ManagerBase):
                 json.dump(secrets, f)
             os.sync()
 
+            # Clear ConnectionManager's credentials cache to force reload on next access
+            if self.connection_manager:
+                self.connection_manager.clear_credentials_cache()
+
             # Store credentials for later testing before activation
             self.credentials.set(ssid, password)
 
@@ -1056,13 +1060,6 @@ class ConfigurationManager(ManagerBase):
 
             # Stop DNS interceptor
             self._stop_dns_interceptor()
-
-            # Reset Update Manager session
-            if self._update_manager:
-                try:
-                    self._update_manager.reset_session()
-                except Exception as e:
-                    self.logger.warning(f"Error resetting update manager session: {e}")
 
             # Stop access point with automatic connection restoration
             # ConnectionManager will reconnect if we were connected before entering AP mode

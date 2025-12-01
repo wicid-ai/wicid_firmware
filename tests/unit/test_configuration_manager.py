@@ -582,6 +582,43 @@ class TestSaveCredentials(TestCase):
         self.assertFalse(success)
         self.assertIn("disk full", error or "")
 
+    def test_save_credentials_clears_connection_manager_cache(self) -> None:
+        """
+        save_credentials should clear ConnectionManager's credentials cache.
+
+        This ensures that when credentials are updated (e.g., zip code changed),
+        ConnectionManager will reload from secrets.json instead of using stale cached values.
+        Without this fix, WeatherMode would use the old zip code after setup mode exits.
+        """
+        # Set up mock ConnectionManager with cached credentials
+        mock_cm = MagicMock()
+        mock_cm._credentials = {"ssid": "OldNetwork", "password": "oldpass", "weather_zip": "11111"}
+        self.config_mgr.connection_manager = mock_cm
+
+        # Save new credentials with different zip code
+        m = mock_open()
+        with patch("builtins.open", m), patch("json.dump"), patch("os.sync"):
+            success, error = self.config_mgr.save_credentials("NewNetwork", "newpass123", "99999")
+
+        # Verify save succeeded
+        self.assertTrue(success)
+        self.assertIsNone(error)
+
+        # Verify ConnectionManager's cache was cleared
+        mock_cm.clear_credentials_cache.assert_called_once()
+
+    def test_save_credentials_handles_missing_connection_manager(self) -> None:
+        """save_credentials should handle None connection_manager gracefully."""
+        self.config_mgr.connection_manager = None
+
+        m = mock_open()
+        with patch("builtins.open", m), patch("json.dump"), patch("os.sync"):
+            success, error = self.config_mgr.save_credentials("ssid", "password123", "12345")
+
+        # Should still succeed even without ConnectionManager
+        self.assertTrue(success)
+        self.assertIsNone(error)
+
 
 class TestProgressHelpers(TestCase):
     """Test progress normalization and delta logic."""

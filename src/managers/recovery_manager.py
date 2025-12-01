@@ -36,34 +36,54 @@ class RecoveryManager:
     """Static utility class for managing recovery backups of critical system files."""
 
     RECOVERY_DIR = "/recovery"
+    RECOVERY_INTEGRITY_FILE = "/recovery/.integrity"
 
-    # Critical files that MUST exist for device to boot and function
-    # Missing any of these will brick the device or prevent updates
+    # Files that should NEVER be overwritten during OTA updates
+    # Only user-provided data that cannot be regenerated
+    PRESERVED_FILES = {
+        "secrets.json",  # WiFi credentials and API keys (user-provided)
+        "DEVELOPMENT",  # Development mode flag (user-set)
+    }
+
+    # BOOT_CRITICAL_FILES: Minimal set for boot.py emergency recovery
+    # These are the files that boot.py needs to successfully import boot_support.
+    # If ANY of these are missing, boot.py halts before recovery can run.
+    # boot.py includes inline emergency recovery for these 4 files only.
+    BOOT_CRITICAL_FILES = {
+        "/core/boot_support.mpy",  # Imported by boot.py
+        "/core/logging_helper.mpy",  # Imported by boot_support (CRITICAL - halts if missing)
+        "/core/app_typing.mpy",  # Imported by logging_helper
+        "/utils/utils.mpy",  # Imported by boot_support (CRITICAL - halts if missing)
+    }
+
+    # CRITICAL_FILES: Full set for boot + OTA self-healing capability
+    # Missing any of these prevents the device from downloading/installing updates.
+    # This is the MINIMAL set required for boot + OTA recovery (21 files total).
     CRITICAL_FILES = {
-        # Boot-critical: Required for boot.py to succeed
+        # === BOOT CHAIN (device won't start without these) ===
         "/boot.py",  # CircuitPython requires source .py file
         "/core/boot_support.mpy",  # Imported by boot.py
-        # Runtime-critical: Required for code.py to succeed
+        "/core/app_typing.mpy",  # Required by many modules
+        "/core/logging_helper.mpy",  # CRITICAL: boot_support halts without it
+        "/utils/utils.mpy",  # CRITICAL: boot_support halts without it
         "/code.py",  # CircuitPython requires source .py file
         "/core/code_support.mpy",  # Imported by code.py
-        # System-critical: Required for device configuration and updates
-        "/settings.toml",  # System configuration, loaded at boot
-        "/manifest.json",  # Update metadata, validated during installation
-        "/utils/utils.mpy",  # Compatibility checks, device identification
-        "/controllers/pixel_controller.mpy",  # LED feedback during boot and updates
-        "/managers/system_manager.mpy",  # Periodic system checks (update checks, reboots)
-        # Network-critical: Required to download updates
-        "/managers/connection_manager.mpy",  # WiFi connection for OTA downloads
-        "/controllers/wifi_radio_controller.mpy",  # Hardware abstraction required by connection_manager
-        # Update-critical: Required for OTA updates to function
-        "/utils/zipfile_lite.mpy",  # Required to extract update ZIPs
-        "/managers/update_manager.mpy",  # Required for update checks and downloads
-        "/managers/recovery_manager.mpy",  # Required for backup/restore operations
-        # Library dependencies: Required by critical modules
-        "/lib/neopixel.mpy",  # Required by pixel_controller.mpy
-        "/lib/adafruit_requests.mpy",  # Required by connection_manager.mpy for HTTP
-        "/lib/adafruit_connection_manager.mpy",  # Required by adafruit_requests
-        "/lib/adafruit_hashlib/__init__.mpy",  # Required by update_manager.mpy for checksum verification
+        "/core/scheduler.mpy",  # Required by managers
+        # === OTA CHAIN (can't self-heal without these) ===
+        "/managers/manager_base.mpy",  # Required by all managers
+        "/managers/system_manager.mpy",  # Triggers periodic update checks
+        "/managers/update_manager.mpy",  # Downloads and stages updates
+        "/managers/recovery_manager.mpy",  # Validates critical files
+        "/managers/connection_manager.mpy",  # WiFi + HTTP
+        "/controllers/wifi_radio_controller.mpy",  # WiFi hardware
+        "/utils/zipfile_lite.mpy",  # Extracts ZIP files
+        # === LIBRARIES (OTA dependencies) ===
+        "/lib/adafruit_requests.mpy",  # HTTP client
+        "/lib/adafruit_connection_manager.mpy",  # Socket pooling (required by adafruit_requests)
+        "/lib/adafruit_hashlib/__init__.mpy",  # Checksum verification
+        # === CONFIG ===
+        "/settings.toml",  # WiFi credentials, API URLs
+        "/manifest.json",  # Current version info
     }
 
     @staticmethod
@@ -308,3 +328,44 @@ class RecoveryManager:
                 missing_files.append(file_path)
 
         return (len(missing_files) == 0, missing_files)
+
+    @staticmethod
+    def validate_backup_integrity() -> tuple[bool, str]:
+        """
+        Validate that recovery backup is intact and not corrupted.
+
+        Checks that the recovery directory exists and contains expected files.
+        Future enhancement: verify file hashes against stored integrity data.
+
+        Returns:
+            tuple: (bool, str) - (valid, message)
+        """
+        log = logger("wicid.recovery")
+        try:
+            if not RecoveryManager.recovery_exists():
+                return (False, "No recovery backup found")
+
+            # Count files in recovery
+            file_count = 0
+            for file_path in RecoveryManager.CRITICAL_FILES:
+                recovery_path = RecoveryManager.RECOVERY_DIR + file_path
+                try:
+                    os.stat(recovery_path)
+                    file_count += 1
+                except OSError:
+                    pass
+
+            if file_count == 0:
+                return (False, "Recovery backup is empty")
+
+            # Check integrity file if it exists
+            try:
+                os.stat(RecoveryManager.RECOVERY_INTEGRITY_FILE)
+                log.debug("Integrity file found")
+            except OSError:
+                log.debug("No integrity file (legacy backup)")
+
+            return (True, f"Recovery backup valid: {file_count} files")
+
+        except Exception as e:
+            return (False, f"Backup validation failed: {e}")
