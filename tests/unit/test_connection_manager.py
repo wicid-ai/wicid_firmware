@@ -23,7 +23,6 @@ to typed fields in ConnectionManager. This is standard practice for unit tests.
 """
 
 import types
-from contextlib import ExitStack
 from unittest.mock import mock_open, patch
 
 from core.app_typing import Any, cast
@@ -404,37 +403,6 @@ class TestConnectionManagerRetryState(TestCase):
     def tearDown(self) -> None:
         ConnectionManager._instance = None
 
-    def test_load_retry_count_reads_value(self) -> None:
-        """Returns persisted retry_count when file is valid."""
-        mock_file = mock_open(read_data='{"retry_count": 3}')
-        with patch("builtins.open", mock_file):
-            self.assertEqual(self.manager.load_retry_count(), 3)
-
-    def test_load_retry_count_handles_errors(self) -> None:
-        """Gracefully handles missing or corrupt file."""
-        scenarios = [
-            ("missing_file", "open", OSError("missing")),
-            ("bad_json", "json", ValueError("bad json")),
-        ]
-        for name, failure_target, exc in scenarios:
-            with self.subTest(name=name), ExitStack() as stack:
-                if failure_target == "open":
-                    stack.enter_context(patch("builtins.open", side_effect=exc))
-                    stack.enter_context(patch("json.load", return_value={}))
-                else:
-                    stack.enter_context(patch("builtins.open", mock_open(read_data="{}")))
-                    stack.enter_context(patch("json.load", side_effect=exc))
-                self.assertEqual(self.manager.load_retry_count(), 0)
-
-    def test_increment_retry_count_calls_save(self) -> None:
-        """increment_retry_count uses saved value + 1."""
-        with patch.object(self.manager, "load_retry_count", return_value=4), patch.object(
-            self.manager, "_save_retry_count"
-        ) as mock_save:
-            result = self.manager.increment_retry_count()
-            self.assertEqual(result, 5)
-            mock_save.assert_called_once_with(5)
-
     def test_clear_retry_count_sets_zero(self) -> None:
         """clear_retry_count persists zero."""
         with patch.object(self.manager, "_save_retry_count") as mock_save:
@@ -552,10 +520,6 @@ class TestConnectionManagerConnectionState(TestCase):
         self.assertTrue(self.manager.is_connected())
         self.manager._radio.connected = False
         self.assertFalse(self.manager.is_connected())
-
-    def test_get_mac_address_formats_bytes(self) -> None:
-        """get_mac_address returns colon hex string."""
-        self.assertEqual(self.manager.get_mac_address(), "aa:bb:cc:dd:ee:ff")
 
 
 class TestConnectionManagerSessionAccess(TestCase):
@@ -680,20 +644,6 @@ class TestConnectionManagerState(TestCase):
         manager._radio.connected = False
 
         self.assertFalse(manager.is_connected())
-
-    def test_is_ap_active_true(self) -> None:
-        """is_ap_active returns True when AP mode active."""
-        manager = ConnectionManager.__new__(ConnectionManager)
-        manager._ap_active = True
-
-        self.assertTrue(manager.is_ap_active())
-
-    def test_is_ap_active_false(self) -> None:
-        """is_ap_active returns False when AP mode not active."""
-        manager = ConnectionManager.__new__(ConnectionManager)
-        manager._ap_active = False
-
-        self.assertFalse(manager.is_ap_active())
 
 
 class TestCredentialsManagement(TestCase):

@@ -220,19 +220,6 @@ class TestSchedulerTaskScheduling(TestCase):
         # Clean up
         self.scheduler.cancel(handle)
 
-    def test_schedule_once_returns_handle(self) -> None:
-        """Verify schedule_once returns TaskHandle."""
-
-        async def task() -> None:
-            await Scheduler.sleep(0.01)
-
-        handle = self.scheduler.schedule_once(coroutine=task, delay=1.0, priority=50, name="Test Once")
-
-        self.assertIsInstance(handle, TaskHandle)
-
-        # Clean up
-        self.scheduler.cancel(handle)
-
     def test_schedule_recurring_returns_handle(self) -> None:
         """Verify schedule_recurring returns TaskHandle."""
 
@@ -265,9 +252,9 @@ class TestSchedulerTaskScheduling(TestCase):
         async def task() -> None:
             await Scheduler.sleep(0.01)
 
-        handle = self.scheduler.schedule_once(
+        handle = self.scheduler.schedule_periodic(
             coroutine=task,
-            delay=10.0,  # Far in future
+            period=10.0,
             priority=50,
             name="Test Cancel",
         )

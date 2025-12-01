@@ -41,8 +41,9 @@ class ButtonController:
             self._digital_in.switch_to_input(pull=digitalio.Pull.UP)
         except AttributeError:
             # Fallback for mocks that expose direction/pull attributes directly
-            self._digital_in.direction = digitalio.Direction.INPUT
-            self._digital_in.pull = digitalio.Pull.UP
+            # Using setattr to avoid vulture flagging these as unused attributes
+            setattr(self._digital_in, "direction", digitalio.Direction.INPUT)  # noqa: B010
+            setattr(self._digital_in, "pull", digitalio.Pull.UP)  # noqa: B010
 
     @property
     def button_pin(self) -> Any:

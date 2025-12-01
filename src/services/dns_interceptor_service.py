@@ -43,7 +43,6 @@ class DNSInterceptorService:
     DNS_FLAG_RECURSION_DESIRED = 0x0100  # Recursion desired (from query)
 
     # Response codes
-    DNS_RCODE_NO_ERROR = 0  # No error
     DNS_RCODE_NAME_ERROR = 3  # Name does not exist
 
     def __init__(self, local_ip: str = "192.168.4.1", socket_pool: Any = None) -> None:

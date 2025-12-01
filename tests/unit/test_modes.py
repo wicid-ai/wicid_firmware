@@ -185,7 +185,6 @@ class TestWeatherModeInit(TestCase):
 
             self.assertIsNone(mode.weather)
             self.assertIsNone(mode.system_manager)
-            self.assertIsNone(mode.last_update)
             self.assertIsNone(mode.current_temp)
             self.assertIsNone(mode.precip_chance)
             self.assertIsNone(mode._weather_refresh_handle)

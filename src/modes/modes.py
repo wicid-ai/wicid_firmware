@@ -1,5 +1,4 @@
 import os
-import time
 
 from core.app_typing import Any
 from core.scheduler import Scheduler
@@ -146,7 +145,6 @@ class WeatherMode(Mode):
         self.weather: Any = None  # WeatherService instance
         self.system_manager: Any = None  # Set in initialize()
         self.update_interval = int(os.getenv("WEATHER_UPDATE_INTERVAL", "600"))
-        self.last_update: float | None = None
         self.current_temp = None
         self.precip_chance = None
         self._weather_refresh_handle: Any = None  # TaskHandle from scheduler
@@ -263,7 +261,6 @@ class WeatherMode(Mode):
                 self.current_temp = temp
             if precip is not None:
                 self.precip_chance = precip
-            self.last_update = time.monotonic()
             temp_msg = f"{temp}°F" if temp is not None else "n/a"
             precip_msg = f"{precip}%" if precip is not None else "n/a"
             self.logger.info(f"Weather update: {temp_msg}, {precip_msg} precip chance")

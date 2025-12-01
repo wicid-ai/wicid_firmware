@@ -3,7 +3,7 @@ import time
 import board  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 import neopixel  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
-from core.app_typing import Any, Dict, List, Optional
+from core.app_typing import Any, Dict, Optional
 from core.logging_helper import logger
 from core.scheduler import Scheduler
 
@@ -24,7 +24,7 @@ class _OperationContext:
             self.operation_method()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+    async def __aexit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> bool:
         # Restore previous state
         self.pixel_controller._restore_state(self.saved_state)
         return False
@@ -119,9 +119,6 @@ class PixelController:
         self._flash_frame_duration = 12  # Frames per color change at 25Hz (0.5s per color)
         self._manual_tick_interval = 0.04  # seconds between manual animation ticks
         self._last_manual_tick = 0.0
-
-        # Operation stack for state management
-        self._state_stack: List[Dict[str, Any]] = []
 
         # Register LED animation task with scheduler (25Hz = 40ms period)
         animation_period = 0.04
@@ -272,15 +269,6 @@ class PixelController:
         """
         self._indicate_updating()
 
-    def restore_previous(self) -> None:
-        """Restore the previous LED state from the state stack."""
-        if self._state_stack:
-            state = self._state_stack.pop()
-            self._restore_state(state)
-        else:
-            # No saved state, turn off
-            self.clear()
-
     def clear(self) -> None:
         """Turn off LED and reset to solid mode."""
         self._mode = self._MODE_SOLID
@@ -398,27 +386,6 @@ class PixelController:
                 self._restore_state(saved_state)
         except Exception as e:
             self.logger.warning(f"blink_error error: {e}")
-
-    def flash_blue_green(self, start_time: float) -> None:
-        """
-        Flash blue and green alternately.
-        Used for Safe Mode indicator and update installation.
-
-        DEPRECATED: Use indicate_installing() or indicate_safe_mode() for new code.
-        This method is kept for backward compatibility.
-
-        Args:
-            start_time: Monotonic timestamp when flashing started (for compatibility, ignored)
-
-        Note: Animation is now scheduler-driven. No manual updates needed.
-        """
-        try:
-            # If not already in flashing mode, start it
-            if self._mode != self._MODE_FLASHING:
-                self._indicate_updating()
-            # Scheduler automatically updates animation at 25Hz
-        except Exception as e:
-            self.logger.warning(f"flash_blue_green error: {e}")
 
     def manual_tick(self) -> None:
         """

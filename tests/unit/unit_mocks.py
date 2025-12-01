@@ -55,7 +55,6 @@ class MockRTCInstance:
 
     Attributes:
         datetime: The current datetime value (read/write)
-        datetime_history: List of all datetime values that were set
         should_raise_on_set: Exception to raise when datetime is set (for error testing)
     """
 
@@ -72,7 +71,6 @@ class MockRTCInstance:
             should_raise_on_set: Exception to raise when datetime is set
         """
         self._datetime = initial_datetime
-        self._datetime_history: list[Any] = []
         self.should_raise_on_set = should_raise_on_set
 
     @property
@@ -86,17 +84,10 @@ class MockRTCInstance:
         if self.should_raise_on_set is not None:
             raise self.should_raise_on_set
         self._datetime = value
-        self._datetime_history.append(value)
-
-    @property
-    def datetime_history(self) -> list[Any]:
-        """Get history of all datetime values that were set."""
-        return self._datetime_history.copy()
 
     def reset(self) -> None:
         """Reset instance state for test isolation."""
         self._datetime = None
-        self._datetime_history.clear()
         self.should_raise_on_set = None
 
 
@@ -171,7 +162,6 @@ class MockNTP:
     Tracks constructor calls and can simulate errors.
 
     Class Attributes:
-        last_socket_pool: Socket pool from most recent instantiation
         last_tz_offset: Timezone offset from most recent instantiation
         call_count: Number of times NTP was instantiated
         should_raise: Exception to raise on instantiation
@@ -190,7 +180,6 @@ class MockNTP:
     """
 
     # Class-level tracking
-    last_socket_pool: Any = None
     last_tz_offset: int = 0
     call_count: int = 0
     should_raise: Exception | None = None
@@ -221,7 +210,6 @@ class MockNTP:
 
         # Track call
         MockNTP.call_count += 1
-        MockNTP.last_socket_pool = socket_pool
         MockNTP.last_tz_offset = tz_offset
 
         # Store instance data
@@ -237,7 +225,6 @@ class MockNTP:
     @classmethod
     def reset(cls) -> None:
         """Reset class-level state for test isolation."""
-        cls.last_socket_pool = None
         cls.last_tz_offset = 0
         cls.call_count = 0
         cls.should_raise = None
@@ -323,7 +310,6 @@ class MockConnectionManager:
         # Call tracking
         self.is_connected_call_count = 0
         self.get_socket_pool_call_count = 0
-        self.get_session_call_count = 0
 
     def is_connected(self) -> bool:
         """Check if connected (mocked)."""
@@ -337,7 +323,6 @@ class MockConnectionManager:
 
     def get_session(self) -> Any:
         """Get HTTP session (mocked)."""
-        self.get_session_call_count += 1
         return self._session
 
     def set_connected(self, connected: bool) -> None:
@@ -447,31 +432,6 @@ class MockScheduler:
         )
         return handle
 
-    def schedule_once(
-        self,
-        coroutine: Any,
-        delay: float,
-        priority: int = 50,
-        name: str = "Unnamed Task",
-        **kwargs: Any,
-    ) -> "MockTaskHandle":
-        """Schedule a one-shot delayed task (mocked)."""
-        handle = MockTaskHandle(self._next_handle_id)
-        self._next_handle_id += 1
-
-        self.scheduled_tasks.append(
-            {
-                "type": "once",
-                "coroutine": coroutine,
-                "delay": delay,
-                "priority": priority,
-                "name": name,
-                "handle": handle,
-                **kwargs,
-            }
-        )
-        return handle
-
     def schedule_now(
         self,
         coroutine: Any,
@@ -503,10 +463,6 @@ class MockScheduler:
     def get_tasks_by_name(self, name: str) -> list[dict[str, Any]]:
         """Get all scheduled tasks with the given name."""
         return [t for t in self.scheduled_tasks if t["name"] == name]
-
-    def get_tasks_by_type(self, task_type: str) -> list[dict[str, Any]]:
-        """Get all scheduled tasks of the given type."""
-        return [t for t in self.scheduled_tasks if t["type"] == task_type]
 
     @classmethod
     def instance(cls) -> "MockScheduler":
@@ -598,17 +554,12 @@ class MockSession:
         """Initialize mock session."""
         self._responses: list[MockResponse] = []
         self._response_index = 0
-        self._default_response: dict[str, Any] = {}
         self.get_call_count = 0
         self.get_urls: list[str] = []
 
     def add_response(self, json_data: Any = None, should_raise: Exception | None = None) -> None:
         """Add a response to the queue (FIFO order)."""
         self._responses.append(MockResponse(json_data, should_raise))
-
-    def set_default_response(self, json_data: dict[str, Any]) -> None:
-        """Set a default response when queue is empty."""
-        self._default_response = json_data
 
     def get(self, url: str, **kwargs: Any) -> MockResponse:
         """Mock GET request."""
@@ -620,13 +571,12 @@ class MockSession:
             self._response_index += 1
             return response
 
-        return MockResponse(self._default_response)
+        return MockResponse({})
 
     def reset(self) -> None:
         """Reset session state for test isolation."""
         self._responses.clear()
         self._response_index = 0
-        self._default_response = {}
         self.get_call_count = 0
         self.get_urls.clear()
 
@@ -662,93 +612,29 @@ class MockWeatherService:
         self.window_precip = window_precip
         self.should_raise = should_raise
 
-        # Call tracking
-        self.get_current_temperature_count = 0
-        self.get_daily_high_count = 0
-        self.get_daily_precip_chance_count = 0
-        self.get_precip_chance_in_window_count = 0
-
     async def get_current_temperature(self) -> float | None:
         """Return configured temperature or raise error."""
-        self.get_current_temperature_count += 1
         if self.should_raise:
             raise self.should_raise
         return self.current_temp
 
     async def get_daily_high(self) -> float | None:
         """Return configured high temperature or raise error."""
-        self.get_daily_high_count += 1
         if self.should_raise:
             raise self.should_raise
         return self.daily_high
 
     async def get_daily_precip_chance(self) -> int | None:
         """Return configured precipitation chance or raise error."""
-        self.get_daily_precip_chance_count += 1
         if self.should_raise:
             raise self.should_raise
         return self.daily_precip
 
     async def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
         """Return configured window precipitation or raise error."""
-        self.get_precip_chance_in_window_count += 1
         if self.should_raise:
             raise self.should_raise
         return self.window_precip
-
-
-# =============================================================================
-# Module Installation Helper
-# =============================================================================
-
-
-def install_mocks() -> dict[str, Any]:
-    """
-    Install mock modules into sys.modules for CircuitPython-only imports.
-
-    Returns a dict of original modules for restoration.
-
-    Example:
-        originals = install_mocks()
-        try:
-            from services.ntp_rtc_service import NTPRTCService
-            # ... run tests ...
-        finally:
-            restore_mocks(originals)
-    """
-    import sys
-
-    originals: dict[str, Any] = {}
-
-    # RTC module
-    if "rtc" in sys.modules:
-        originals["rtc"] = sys.modules["rtc"]
-    sys.modules["rtc"] = MockRTCModule  # type: ignore[assignment]
-
-    # NTP module
-    if "adafruit_ntp" in sys.modules:
-        originals["adafruit_ntp"] = sys.modules["adafruit_ntp"]
-    sys.modules["adafruit_ntp"] = MockNTPModule  # type: ignore[assignment]
-
-    return originals
-
-
-def restore_mocks(originals: dict[str, Any]) -> None:
-    """
-    Restore original modules after testing.
-
-    Args:
-        originals: Dict returned by install_mocks()
-    """
-    import sys
-
-    for name, module in originals.items():
-        sys.modules[name] = module
-
-    # Remove mocks that weren't originally present
-    for name in ["rtc", "adafruit_ntp"]:
-        if name not in originals and name in sys.modules:
-            del sys.modules[name]
 
 
 def reset_all_mocks() -> None:

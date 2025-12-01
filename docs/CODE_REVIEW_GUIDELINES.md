@@ -12,20 +12,37 @@ Code reviews ensure the long-term health, reliability, and maintainability of th
 
 Before inspecting logic, ensure the code passes all automated static analysis and tests.
 
-Run the pre-commit hooks on all files. This includes:
-- Code formatting (ruff)
-- Type checking (mypy)
-- Linting (ruff, pylint)
-- **Unit tests** (all must pass)
+### Required Check (Must Pass)
+
+This must pass or the review fails:
 
 ```bash
 pipenv run pre-commit run --all-files
 ```
 
+This includes:
+- Code formatting (ruff)
+- Type checking (mypy)
+- Linting (ruff, pylint)
+- **Unit tests** (all must pass)
+- **Dead code detection (vulture)** (must be clean)
+
 **Action:**
 - If these commands fail, the review **fails immediately**.
-- Report the specific linting, formatting, typing, or test failures found.
+- Report the specific linting, formatting, typing, test, or dead code detection failures found.
 - Do not proceed to logic review until these are resolved.
+
+### Additional Quality Checks
+
+Additionally, these should help inform the quality of the code:
+
+```bash
+pipenv run coverage run tests/run_tests.py
+pipenv run vulture tests
+pipenv run pylint src
+```
+
+These provide additional insights but are not blocking for the review.
 
 ---
 

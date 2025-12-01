@@ -5,18 +5,11 @@ Tests verify:
 - suppress context manager
 - Version comparison
 - OS version matching
-- Configuration validation
 - Release compatibility checking
 """
 
 from tests.unit import TestCase
-from utils.utils import (
-    check_release_compatibility,
-    compare_versions,
-    os_matches_target,
-    suppress,
-    validate_config_values,
-)
+from utils.utils import check_release_compatibility, compare_versions, os_matches_target, suppress
 
 
 class TestSuppress(TestCase):
@@ -139,59 +132,6 @@ class TestOsMatchesTarget(TestCase):
         """Empty target array returns False."""
         result = os_matches_target("circuitpython_10_1_0", [])
         self.assertFalse(result)
-
-
-class TestValidateConfigValues(TestCase):
-    """Test configuration validation."""
-
-    def test_all_keys_present_and_valid(self) -> None:
-        """Returns True when all required keys have values."""
-        config = {"key1": "value1", "key2": "value2"}
-        is_valid, missing = validate_config_values(config, ["key1", "key2"])
-        self.assertTrue(is_valid)
-        self.assertEqual(missing, [])
-
-    def test_missing_key(self) -> None:
-        """Returns False and lists missing keys."""
-        config = {"key1": "value1"}
-        is_valid, missing = validate_config_values(config, ["key1", "key2"])
-        self.assertFalse(is_valid)
-        self.assertIn("key2", missing)
-
-    def test_empty_value_treated_as_missing(self) -> None:
-        """Empty string values are treated as missing."""
-        config = {"key1": "", "key2": "valid"}
-        is_valid, missing = validate_config_values(config, ["key1", "key2"])
-        self.assertFalse(is_valid)
-        self.assertIn("key1", missing)
-
-    def test_whitespace_only_treated_as_missing(self) -> None:
-        """Whitespace-only values are treated as missing."""
-        config = {"key1": "   ", "key2": "valid"}
-        is_valid, missing = validate_config_values(config, ["key1", "key2"])
-        self.assertFalse(is_valid)
-        self.assertIn("key1", missing)
-
-    def test_none_value_treated_as_missing(self) -> None:
-        """None values are treated as missing."""
-        config = {"key1": None, "key2": "valid"}
-        is_valid, missing = validate_config_values(config, ["key1", "key2"])
-        self.assertFalse(is_valid)
-        self.assertIn("key1", missing)
-
-    def test_empty_required_keys(self) -> None:
-        """Empty required keys list always returns True."""
-        config: dict[str, str] = {}
-        is_valid, missing = validate_config_values(config, [])
-        self.assertTrue(is_valid)
-        self.assertEqual(missing, [])
-
-    def test_extra_keys_ignored(self) -> None:
-        """Extra keys in config are ignored."""
-        config = {"key1": "value1", "extra": "extra_value"}
-        is_valid, missing = validate_config_values(config, ["key1"])
-        self.assertTrue(is_valid)
-        self.assertEqual(missing, [])
 
 
 class TestCheckReleaseCompatibility(TestCase):

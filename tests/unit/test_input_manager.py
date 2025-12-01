@@ -6,7 +6,7 @@ These tests use MOCK hardware to avoid resource conflicts and enable determinist
 
 Tests verify:
 - InputManager singleton pattern
-- Callback registration/unregistration
+- Callback registration
 - Event firing
 - Button state tracking
 
@@ -104,11 +104,11 @@ class TestInputManagerBasic(TestCase):
         ]:
             # Should not raise - proves callback registry is initialized
             mgr.register_callback(event_type, test_callback)
-            mgr.unregister_callback(event_type, test_callback)
 
-        # Verify button state methods work
+        # Verify button state method works
         self.assertIsInstance(mgr.is_pressed(), bool, "is_pressed() returns bool")
-        self.assertIsInstance(mgr.get_raw_value(), bool, "get_raw_value() returns bool")
+
+        mgr.shutdown()
 
 
 class TestInputManagerCallbacks(TestCase):
@@ -149,10 +149,9 @@ class TestInputManagerCallbacks(TestCase):
         self.callback_event = None
 
     def tearDown(self) -> None:
-        """Clean up any registered callbacks."""
-        # Note: In real device testing, callbacks persist across tests
-        # Tests should be independent
-        pass
+        """Reset InputManager between tests."""
+        if getattr(self.mgr, "_initialized", False):
+            self.mgr.shutdown()
 
     def test_register_callback(self) -> None:
         """Verify callback registration."""
@@ -166,34 +165,6 @@ class TestInputManagerCallbacks(TestCase):
 
         # Should have one more callback
         self.assertEqual(len(self.mgr._callbacks[ButtonEvent.PRESS]), initial_count + 1, "Callback added to registry")
-
-        # Clean up
-        self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
-
-    def test_unregister_callback(self) -> None:
-        """Verify callback unregistration."""
-
-        def my_callback(event: Any) -> None:
-            pass
-
-        # Register then unregister
-        self.mgr.register_callback(ButtonEvent.PRESS, my_callback)
-        result = self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
-
-        self.assertTrue(result, "Unregister returns True")
-
-        # Unregistering again should fail
-        result = self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
-        self.assertFalse(result, "Second unregister returns False")
-
-    def test_unregister_nonexistent_callback(self) -> None:
-        """Verify unregistering non-existent callback fails gracefully."""
-
-        def my_callback(event: Any) -> None:
-            pass
-
-        result = self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
-        self.assertFalse(result, "Unregister of non-existent callback returns False")
 
     def test_register_unknown_event_type(self) -> None:
         """Verify registering unknown event type fails gracefully."""
@@ -251,6 +222,11 @@ class TestInputManagerEventFiring(TestCase):
         self.callback_invoked = False
         self.callback_event = None
 
+    def tearDown(self) -> None:
+        """Reset InputManager between tests."""
+        if getattr(self.mgr, "_initialized", False):
+            self.mgr.shutdown()
+
     def test_fire_event_invokes_callback(self) -> None:
         """Verify _fire_event invokes registered callbacks."""
 
@@ -267,9 +243,6 @@ class TestInputManagerEventFiring(TestCase):
         # Callback should have been invoked
         self.assertTrue(self.callback_invoked, "Callback was invoked")
         self.assertEqual(self.callback_event, ButtonEvent.PRESS, "Correct event passed")
-
-        # Clean up
-        self.mgr.unregister_callback(ButtonEvent.PRESS, my_callback)
 
     def test_fire_event_multiple_callbacks(self) -> None:
         """Verify _fire_event invokes all registered callbacks."""
@@ -295,11 +268,6 @@ class TestInputManagerEventFiring(TestCase):
         # All callbacks should have been invoked
         self.assertEqual(invocation_count[0], 3, "All 3 callbacks invoked")
 
-        # Clean up
-        self.mgr.unregister_callback(ButtonEvent.RELEASE, callback1)
-        self.mgr.unregister_callback(ButtonEvent.RELEASE, callback2)
-        self.mgr.unregister_callback(ButtonEvent.RELEASE, callback3)
-
     def test_fire_event_exception_handling(self) -> None:
         """Verify exceptions in callbacks don't break event firing."""
         invocation_count = [0]
@@ -323,10 +291,6 @@ class TestInputManagerEventFiring(TestCase):
 
         # Both callbacks should have been invoked (error logged, not propagated)
         self.assertEqual(invocation_count[0], 2, "Both callbacks invoked despite error")
-
-        # Clean up
-        self.mgr.unregister_callback(ButtonEvent.SINGLE_CLICK, bad_callback)
-        self.mgr.unregister_callback(ButtonEvent.SINGLE_CLICK, good_callback)
 
 
 class TestInputManagerState(TestCase):
@@ -367,16 +331,6 @@ class TestInputManagerState(TestCase):
         result = mgr.is_pressed()
         self.assertIsInstance(result, bool, "is_pressed returns bool")
 
-    def test_get_raw_value_returns_bool(self) -> None:
-        """Verify get_raw_value returns boolean."""
-        mgr = InputManager.instance(
-            button_pin=self.test_button_pin,
-            controller_factory=self.controller_factory,
-        )
-
-        result = mgr.get_raw_value()
-        self.assertIsInstance(result, bool, "get_raw_value returns bool")
-
     def test_initial_state_not_pressed(self) -> None:
         """Verify button starts in not-pressed state."""
         mgr = InputManager.instance(
@@ -387,11 +341,9 @@ class TestInputManagerState(TestCase):
         # Button should not be pressed at test start
         # Note: This assumes button is not being held during test
         is_pressed = mgr.is_pressed()
-        raw_value = mgr.get_raw_value()
 
         # Both methods should return False when button is not pressed
         self.assertFalse(is_pressed, "Button not pressed initially")
-        self.assertFalse(raw_value, "get_raw_value returns False (not pressed)")
 
 
 class TestInputManagerHoldDetection(TestCase):
@@ -446,8 +398,6 @@ class TestInputManagerHoldDetection(TestCase):
         self._run_monitor_with_time(3.4)
         self.assertEqual(len(events), 1, "Release should not fire a second setup event")
 
-        self.mgr.unregister_callback(ButtonEvent.SETUP_MODE, on_setup)
-
     def test_safe_hold_overrides_setup(self) -> None:
         """Safe hold upgrades setup hold and does not duplicate on release."""
         events = []
@@ -471,9 +421,6 @@ class TestInputManagerHoldDetection(TestCase):
         self.controller.simulate_release()
         self._run_monitor_with_time(11.0)
         self.assertEqual(len(events), 2, "Release should not emit additional hold events")
-
-        self.mgr.unregister_callback(ButtonEvent.SETUP_MODE, on_setup)
-        self.mgr.unregister_callback(ButtonEvent.SAFE_MODE, on_safe)
 
 
 # Entry point for running tests

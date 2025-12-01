@@ -105,64 +105,6 @@ class TestNameList(unittest.TestCase):
             self.assertEqual(zf.namelist(), [])
 
 
-class TestExtractAll(unittest.TestCase):
-    """Test extractall() method."""
-
-    def test_extractall_extracts_non_directory_files(self) -> None:
-        """Verify extractall() extracts non-directory files."""
-        with (
-            patch("utils.zipfile_lite.ZipFile._find_central_directory"),
-            patch("utils.zipfile_lite.ZipFile.extract") as mock_extract,
-        ):
-            from utils.zipfile_lite import ZipFile
-
-            zf = ZipFile("/test.zip")
-            file1 = {"filename": "file1.txt", "local_header_offset": 0}
-            file2 = {"filename": "file2.txt", "local_header_offset": 100}
-            zf.file_list = [file1, file2]
-
-            zf.extractall("/output")
-
-            self.assertEqual(mock_extract.call_count, 2)
-            # extractall passes the file_info dict, not just the filename
-            mock_extract.assert_any_call(file1, "/output")
-            mock_extract.assert_any_call(file2, "/output")
-
-    def test_extractall_skips_directories(self) -> None:
-        """Verify extractall() skips directory entries."""
-        with (
-            patch("utils.zipfile_lite.ZipFile._find_central_directory"),
-            patch("utils.zipfile_lite.ZipFile.extract") as mock_extract,
-        ):
-            from utils.zipfile_lite import ZipFile
-
-            zf = ZipFile("/test.zip")
-            zf.file_list = [
-                {"filename": "somedir/", "local_header_offset": 0},
-                {"filename": "file.txt", "local_header_offset": 50},
-            ]
-
-            zf.extractall("/output")
-
-            # Only the file should be extracted, not the directory
-            self.assertEqual(mock_extract.call_count, 1)
-
-    def test_extractall_empty_zip(self) -> None:
-        """Verify extractall() handles empty ZIP."""
-        with (
-            patch("utils.zipfile_lite.ZipFile._find_central_directory"),
-            patch("utils.zipfile_lite.ZipFile.extract") as mock_extract,
-        ):
-            from utils.zipfile_lite import ZipFile
-
-            zf = ZipFile("/test.zip")
-            zf.file_list = []
-
-            zf.extractall("/output")
-
-            mock_extract.assert_not_called()
-
-
 class TestRead(unittest.TestCase):
     """Test read() method."""
 

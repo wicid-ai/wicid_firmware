@@ -154,8 +154,9 @@ def _get_user_choice() -> str:
         import digitalio
 
         button_pin = digitalio.DigitalInOut(board.BUTTON)
-        button_pin.direction = digitalio.Direction.INPUT
-        button_pin.pull = digitalio.Pull.UP
+        # Using setattr to avoid vulture flagging these as unused attributes
+        setattr(button_pin, "direction", digitalio.Direction.INPUT)  # noqa: B010
+        setattr(button_pin, "pull", digitalio.Pull.UP)  # noqa: B010
     except Exception:
         TEST_LOG.testing("(Button unavailable after tests, use serial input)")
 

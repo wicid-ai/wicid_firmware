@@ -86,6 +86,24 @@ class RecoveryManager:
         "/manifest.json",  # Current version info
     }
 
+    @classmethod
+    def _critical_backup_order(cls) -> List[str]:
+        """Return boot-critical files first, followed by remaining critical files."""
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        for path in cls.BOOT_CRITICAL_FILES:
+            if path not in seen:
+                ordered.append(path)
+                seen.add(path)
+
+        for path in cls.CRITICAL_FILES:
+            if path not in seen:
+                ordered.append(path)
+                seen.add(path)
+
+        return ordered
+
     @staticmethod
     def validate_critical_files() -> tuple[bool, List[str]]:
         """
@@ -147,7 +165,7 @@ class RecoveryManager:
             backed_up_count = 0
             failed_files = []
 
-            for file_path in RecoveryManager.CRITICAL_FILES:
+            for file_path in RecoveryManager._critical_backup_order():
                 try:
                     # Determine if it's a file or directory
                     is_dir = False
@@ -201,6 +219,11 @@ class RecoveryManager:
             else:
                 message = f"Recovery backup complete: {backed_up_count} critical files backed up"
                 log.info(message)
+                valid, integrity_msg = RecoveryManager.validate_backup_integrity()
+                if not valid:
+                    log.warning(f"Integrity check after backup failed: {integrity_msg}")
+                else:
+                    log.debug(f"Integrity check passed: {integrity_msg}")
                 return (True, message)
 
         except Exception as e:
@@ -232,7 +255,7 @@ class RecoveryManager:
             restored_count = 0
             failed_files = []
 
-            for file_path in RecoveryManager.CRITICAL_FILES:
+            for file_path in RecoveryManager._critical_backup_order():
                 recovery_path = RecoveryManager.RECOVERY_DIR + file_path
 
                 try:

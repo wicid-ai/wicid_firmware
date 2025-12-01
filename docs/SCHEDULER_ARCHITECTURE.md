@@ -23,7 +23,7 @@ The scheduler provides a single cooperative multitasking layer for the firmware.
 - Periodic tasks target fixed cadences (good for LED animation or button sampling). Recurring tasks reschedule after completion (useful for operations whose duration may vary). One-shot tasks execute once and then retire themselves.
 
 ### 4.2 Scheduler Lifecycle
-1. **Registration** – Managers call helper methods such as `schedule_periodic`, `schedule_recurring`, or `schedule_once`. No direct event-loop usage is allowed outside the scheduler.
+1. **Registration** – Managers call helper methods such as `schedule_periodic` or `schedule_recurring`. No direct event-loop usage is allowed outside the scheduler.
 2. **Dispatch** – The scheduler continually evaluates ready tasks, orders them by their intent (priority and due time), and runs them by awaiting their coroutine.
 3. **Cooperation** – Tasks use `Scheduler.sleep()` or `Scheduler.yield_control()` inside long loops so that other work can make progress. The scheduler never forcefully interrupts a coroutine.
 4. **Rescheduling** – Once a task completes, the scheduler updates the next-run timestamp using the policy associated with that task type and re-queues it automatically (unless it was one-shot or cancelled).

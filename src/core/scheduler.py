@@ -275,7 +275,6 @@ class Scheduler:
         self.total_tasks_failed = 0
 
         # Event loop (set after run_forever starts)
-        self.loop: Any = None
         self._active_asyncio_tasks: set[Any] = set()
         self._fatal_error: Any = None
         self._initialized: bool = True
@@ -334,34 +333,6 @@ class Scheduler:
         task = Task(name, priority, factory, TaskType.PERIODIC, period)
         task.next_run_time = time.monotonic()  # Run immediately
         task.last_scheduled_time = task.next_run_time
-
-        self._register_task(task)
-        return TaskHandle(task.task_id)
-
-    def schedule_once(self, coroutine: Any, delay: float, priority: int = 50, name: str = "Unnamed Task") -> TaskHandle:
-        """Schedule a task to run once after N seconds delay.
-
-        Args:
-            coroutine: Async callable to execute (pass the async function without calling it)
-            delay: Seconds to wait before execution
-            priority: Task priority (0-90, lower = higher priority)
-            name: Human-readable task identifier
-
-        Returns:
-            TaskHandle for cancellation
-
-        Example:
-            # Initial update check 60 seconds after boot
-            handle = scheduler.schedule_once(
-                coroutine=check_for_updates,
-                delay=60.0,
-                priority=50,
-                name="Initial Update Check"
-            )
-        """
-        factory = self._make_coroutine_factory(coroutine)
-        task = Task(name, priority, factory, TaskType.ONE_SHOT, delay)
-        task.next_run_time = time.monotonic() + delay
 
         self._register_task(task)
         return TaskHandle(task.task_id)
@@ -633,7 +604,6 @@ class Scheduler:
     async def _event_loop(self) -> None:
         """Main scheduler event loop."""
         self.logger.info("Scheduler event loop started")
-        self.loop = asyncio.get_running_loop()
 
         last_starvation_check = time.monotonic()
 
@@ -728,6 +698,9 @@ class Scheduler:
                     "next_in": task.next_run_time - now,
                     "effective_priority": task.effective_priority,
                     "ready_since": task.ready_since,
+                    "execution_count": task.execution_count,
+                    "last_run": task.last_run_time,
+                    "total_runtime": task.total_runtime,
                 }
             )
 
@@ -764,3 +737,7 @@ class Scheduler:
                     )
                 )
         return "\n".join(lines)
+
+    def __str__(self) -> str:
+        """Allow printing the scheduler to show current state."""
+        return self.describe()

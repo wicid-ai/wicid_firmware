@@ -17,6 +17,7 @@ mypy = "*"
 pre-commit = "*"
 adafruit-circuitpython-typing = "*"
 coverage = "*"
+vulture = "*"
 
 [requires]
 python_version = "3.14"

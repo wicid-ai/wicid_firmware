@@ -86,7 +86,6 @@ class UpdateManager(ManagerBase):
 
         self._cached_update_info: dict[str, Any] | None = None  # Store check_for_updates() results
         self.next_update_check: float | None = None
-        self._download_flash_start: float | None = None
         self.logger = logger("wicid.update_manager")
 
         # Access singleton for LED feedback (optional, gracefully handles if unavailable)
@@ -148,27 +147,6 @@ class UpdateManager(ManagerBase):
 
         with suppress(OSError):
             os.rmdir(path)
-
-    def _cleanup_pending_root(self) -> None:
-        """
-        Remove pending_update/root directory or file and all its contents.
-
-        Handles both cases where root is a file (corrupted state) or directory.
-        Logs errors but continues to attempt cleanup.
-        """
-        try:
-            # Try to remove as a file first (handles corrupted state)
-            try:
-                os.remove(self.PENDING_ROOT_DIR)
-                self.logger.debug("Removed pending_update/root file")
-                return
-            except OSError:
-                pass  # Not a file, try as directory
-
-            self._remove_directory_recursive(self.PENDING_ROOT_DIR)
-            self.logger.debug("Removed pending_update/root directory")
-        except Exception as e:
-            self.logger.warning(f"Error cleaning up pending_update/root: {e}")
 
     def _cleanup_pending_update(self) -> None:
         """
@@ -613,7 +591,6 @@ class UpdateManager(ManagerBase):
             expected_checksum = self._cached_update_info.get("sha256")
 
         session = self._get_session()
-        self._download_flash_start = time.monotonic()
 
         def notify(state: str, msg: str, pct: float | None = None) -> None:
             if progress_callback:

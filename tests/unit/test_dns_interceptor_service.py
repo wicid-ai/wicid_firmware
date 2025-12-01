@@ -306,7 +306,7 @@ class TestDNSInterceptorHealth(unittest.TestCase):
         self.assertTrue(self.service.is_healthy())
 
     @patch("time.time", return_value=100.0)
-    def test_is_healthy_false_during_backoff(self, mock_time: MagicMock) -> None:
+    def test_is_healthy_false_during_backoff(self, _mock_time: MagicMock) -> None:
         self.service.running = True
         self.service.socket = MagicMock()  # type: ignore[assignment]
         self.service.error_count = 10  # >= max_errors
@@ -334,14 +334,14 @@ class TestDNSErrorHandling(unittest.TestCase):
             self.service = DNSInterceptorService("192.168.4.1")
 
     @patch("time.time", return_value=1000.0)
-    def test_handle_dns_error_increments_count(self, mock_time: MagicMock) -> None:
+    def test_handle_dns_error_increments_count(self, _mock_time: MagicMock) -> None:
         self.service.error_count = 0
         self.service._handle_dns_error("test error")
         self.assertEqual(self.service.error_count, 1)
         self.assertEqual(self.service.last_error_time, 1000.0)
 
     @patch("time.time", return_value=1000.0)
-    def test_handle_dns_error_exponential_backoff(self, mock_time: MagicMock) -> None:
+    def test_handle_dns_error_exponential_backoff(self, _mock_time: MagicMock) -> None:
         self.service.error_count = 9  # One below max
         self.service.error_backoff = 1.0
         self.service._handle_dns_error("test error")
@@ -349,7 +349,7 @@ class TestDNSErrorHandling(unittest.TestCase):
         self.assertEqual(self.service.error_backoff, 2.0)
 
     @patch("time.time", return_value=1000.0)
-    def test_handle_dns_error_backoff_capped_at_30s(self, mock_time: MagicMock) -> None:
+    def test_handle_dns_error_backoff_capped_at_30s(self, _mock_time: MagicMock) -> None:
         self.service.error_count = 9
         self.service.error_backoff = 20.0
         self.service._handle_dns_error("test error")

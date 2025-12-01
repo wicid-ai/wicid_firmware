@@ -293,44 +293,6 @@ class TestCheckForUpdates(TestCase):
         self.assertEqual(headers.get("Connection"), "close")
 
 
-class TestCleanupPendingRoot(TestCase):
-    """Test _cleanup_pending_root method."""
-
-    def setUp(self) -> None:
-        UpdateManager._instance = None
-
-    def tearDown(self) -> None:
-        UpdateManager._instance = None
-
-    def test_removes_file_if_exists(self) -> None:
-        """Removes pending_update/root if it's a file."""
-        manager = cast(UpdateManager, UpdateManager.instance())
-
-        with patch("os.remove") as mock_remove:
-            mock_remove.return_value = None  # Success
-            manager._cleanup_pending_root()
-            mock_remove.assert_called_once()
-
-    def test_handles_directory_case(self) -> None:
-        """Handles case where pending_update/root is a directory."""
-        manager = cast(UpdateManager, UpdateManager.instance())
-
-        # os.remove fails (it's a directory), listdir succeeds
-        with patch("os.remove", side_effect=OSError("Is a directory")), patch("os.listdir", return_value=[]):
-            manager._cleanup_pending_root()
-            # Should not raise
-
-    def test_handles_missing_directory(self) -> None:
-        """Handles case where directory doesn't exist."""
-        manager = cast(UpdateManager, UpdateManager.instance())
-
-        with patch("os.remove", side_effect=OSError("Not found")), patch(
-            "os.listdir", side_effect=OSError("Not found")
-        ):
-            manager._cleanup_pending_root()
-            # Should not raise
-
-
 class TestRecordFailedUpdate(TestCase):
     """Test _record_failed_update method."""
 

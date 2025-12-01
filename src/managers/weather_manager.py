@@ -87,16 +87,12 @@ class WeatherManager(ManagerBase):
         self._current_temp: Optional[float] = None
         self._daily_high: Optional[float] = None
         self._daily_precip_chance: Optional[int] = None
-        self._last_update_time: Optional[float] = None
-        self._last_error: Optional[str] = None
 
         # Weather service instance (lazy-initialized)
         self._weather: Optional[Any] = None
-        self._weather_zip = weather_zip
         self.connection_manager = ConnectionManager.instance()
-
-        # Task handle for cancellation
-        self._task_handle = None
+        self._updates_scheduled = False
+        self._schedule_weather_updates()
 
         self._initialized = True
         self.logger.info("WeatherManager initialized (weather service will be initialized on first update)")
@@ -121,38 +117,45 @@ class WeatherManager(ManagerBase):
         zip_compat = (self._init_weather_zip is None and weather_zip is None) or (self._init_weather_zip == weather_zip)
         return zip_compat
 
-    def initialize_weather_service(self, session: Any, weather_zip: str) -> None:
-        """
-        Initialize the weather service with session and ZIP code.
+    def _schedule_weather_updates(self) -> None:
+        """Register the recurring weather update task with the scheduler."""
+        if getattr(self, "_updates_scheduled", False):
+            return
 
-        Must be called before scheduling updates (typically after WiFi connects).
+        scheduler = Scheduler.instance()
+        handle = scheduler.schedule_recurring(
+            coroutine=self._update_weather,
+            interval=self.UPDATE_INTERVAL,
+            priority=40,
+            name="Weather Updates",
+        )
+        self._track_task_handle(handle)
+        self._updates_scheduled = True
 
-        Args:
-            session: Legacy placeholder (ignored; kept for compatibility)
-            weather_zip: ZIP code for weather location
-        """
-        self.logger.info(f"Initializing weather service for ZIP: {weather_zip}")
+    def _ensure_weather_service(self) -> bool:
+        """Lazy-init WeatherService when credentials include a ZIP code."""
+        if self._weather is not None:
+            return True
+
+        try:
+            credentials = self.connection_manager.get_credentials()
+        except Exception as e:
+            self.logger.warning(f"Unable to read credentials for weather service: {e}")
+            return False
+
+        weather_zip = credentials.get("weather_zip") if credentials else None
+        if not weather_zip:
+            self.logger.debug("Weather ZIP not configured; skipping weather initialization")
+            return False
 
         try:
             session = self.connection_manager.get_session()
             self._weather = WeatherService(weather_zip, session=session)
-            self._weather_zip = weather_zip
-
-            # Schedule recurring weather update task
-            if self._task_handle is None:
-                scheduler = Scheduler.instance()
-                handle = scheduler.schedule_recurring(
-                    coroutine=self._update_weather,
-                    interval=self.UPDATE_INTERVAL,
-                    priority=40,  # Background data fetching
-                    name="Weather Updates",
-                )
-                self._task_handle = self._track_task_handle(handle)
-                self.logger.info(f"Scheduled weather updates every {self.UPDATE_INTERVAL}s")
-
+            self.logger.info(f"Weather service initialized for ZIP {weather_zip}")
+            return True
         except Exception as e:
-            self.logger.error(f"Failed to initialize weather service: {e}")
-            raise
+            self.logger.error(f"Failed to initialize WeatherService: {e}")
+            return False
 
     async def _update_weather(self) -> None:
         """
@@ -161,9 +164,11 @@ class WeatherManager(ManagerBase):
         This task runs periodically to update cached weather data.
         Explicitly yields after each network call to ensure scheduler responsiveness.
         """
-        if self._weather is None:
+        if not self._ensure_weather_service():
             self.logger.warning("Weather service not initialized - skipping update")
             return
+
+        assert self._weather is not None
 
         try:
             self.logger.debug("Fetching weather data...")
@@ -181,11 +186,6 @@ class WeatherManager(ManagerBase):
             self._daily_high = high
             self._daily_precip_chance = precip
 
-            import time
-
-            self._last_update_time = time.monotonic()
-            self._last_error = None
-
             temp_msg = f"{temp}°F" if temp is not None else "n/a"
             high_msg = f"{high}°F" if high is not None else "n/a"
             precip_msg = f"{precip}%" if precip is not None else "n/a"
@@ -201,7 +201,6 @@ class WeatherManager(ManagerBase):
 
         except Exception as e:
             # Unknown exception - treat as non-fatal
-            self._last_error = str(e)
             self.logger.error(f"Unexpected error fetching weather: {e}", exc_info=True)
             raise TaskNonFatalError(f"Weather fetch failed: {e}") from e
 
@@ -255,51 +254,6 @@ class WeatherManager(ManagerBase):
             self.logger.error(f"Error fetching precip window: {e}")
             return None
 
-    def get_last_update_time(self) -> float | None:
-        """
-        Get timestamp of last successful update (monotonic time).
-
-        Returns:
-            float: Monotonic timestamp, or None if never updated
-        """
-        return self._last_update_time
-
-    def get_last_error(self) -> str | None:
-        """
-        Get last error message if update failed.
-
-        Returns:
-            str: Error message, or None if no error
-        """
-        return self._last_error
-
-    def is_data_stale(self, max_age_seconds: float = 1800) -> bool:
-        """
-        Check if cached data is stale.
-
-        Args:
-            max_age_seconds: Maximum age before data is considered stale (default: 30min)
-
-        Returns:
-            bool: True if data is stale or unavailable
-        """
-        if self._last_update_time is None:
-            return True
-
-        import time
-
-        age = time.monotonic() - self._last_update_time
-        return age > max_age_seconds
-
-    async def force_update(self) -> None:
-        """
-        Force an immediate weather update (bypasses schedule).
-
-        Returns when update completes. Use sparingly.
-        """
-        self.logger.info("Forcing weather update")
-        await self._update_weather()
-
     def shutdown(self) -> None:
         """
         Release all resources owned by WeatherManager.
@@ -314,15 +268,12 @@ class WeatherManager(ManagerBase):
             return
 
         super().shutdown()
-        self._task_handle = None
         # Clear references
         self._weather = None
-        self._weather_zip = None
         self._init_weather_zip = None
         self._current_temp = None
         self._daily_high = None
         self._daily_precip_chance = None
-        self._last_update_time = None
-        self._last_error = None
+        self._updates_scheduled = False
 
         self.logger.debug("WeatherManager shut down")

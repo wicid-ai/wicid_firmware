@@ -1008,30 +1008,6 @@ class ConfigurationManager(ManagerBase):
             self.validation.result = {"error": {"message": f"Validation error: {e}", "field": None}}
             self.validation.trigger = False
 
-    def _restart_portal_services(self, server: Any, server_ip: str) -> None:
-        """
-        Restart HTTP server and DNS interceptor after failed credential test.
-        Called when credentials fail so client can see error and retry.
-
-        Args:
-            server: The HTTP server instance to restart
-            server_ip: IP address to bind server to
-        """
-        # Restart DNS interceptor
-        dns_success = self._start_dns_interceptor(server_ip)
-        if dns_success:
-            self.logger.debug("DNS interceptor restarted")
-        else:
-            self.logger.debug("DNS interceptor restart skipped (HTTP-only mode)")
-
-        # Restart HTTP server
-        try:
-            server.start(host=server_ip, port=80)
-            self.logger.info(f"HTTP server restarted at http://{server_ip}")
-        except Exception as e:
-            self.logger.error(f"Error restarting HTTP server: {e}")
-            raise
-
     async def _cleanup_setup_portal(self) -> bool:
         """
         Comprehensive cleanup of ALL setup portal resources and state.

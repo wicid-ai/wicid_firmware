@@ -165,26 +165,3 @@ class TestPixelController(TestCase):
         self.assertEqual(self.scheduler_sleep.await_count, 2)
         controller._restore_state.assert_not_called()  # type: ignore[attr-defined]
         self.assertTrue(any(color == (255, 0, 0) for _, color in self.fake_pixel.writes))
-
-    def test_flash_blue_green_switches_mode(self) -> None:
-        controller = self._make_controller()
-        with patch.object(controller, "_indicate_updating") as updater:
-            controller._mode = controller._MODE_SOLID
-            controller.flash_blue_green(start_time=0.0)
-            controller._mode = controller._MODE_FLASHING
-            controller.flash_blue_green(start_time=1.0)
-
-        updater.assert_called_once()
-
-    def test_restore_previous_handles_stack_and_empty(self) -> None:
-        controller = self._make_controller()
-        sentinel_state = {"mode": "sentinel"}
-        controller._state_stack = [sentinel_state]  # type: ignore[assignment]
-
-        with patch.object(controller, "_restore_state") as restore:
-            controller.restore_previous()
-            restore.assert_called_once_with(sentinel_state)
-
-        with patch.object(controller, "clear") as clear:
-            controller.restore_previous()
-            clear.assert_called_once()

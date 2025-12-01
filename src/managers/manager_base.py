@@ -122,7 +122,7 @@ class ManagerBase:
         """Return the manager instance for use in a ``with`` block."""
         return self
 
-    def __exit__(self, exc_type: type, exc_val: Exception, exc_tb: Any) -> None:
+    def __exit__(self, _exc_type: type, _exc_val: Exception, _exc_tb: Any) -> None:
         """
         Ensure ``shutdown()`` is called when leaving a ``with`` block.
 

@@ -228,27 +228,6 @@ class InputManager(ManagerBase):
         self._callbacks[event_type].append(callback)
         self.logger.debug(f"Registered callback for {event_type}")
 
-    def unregister_callback(self, event_type: Any, callback: Callable[[Any], None]) -> bool:
-        """
-        Unregister a callback for button events.
-
-        Args:
-            event_type: ButtonEvent type
-            callback: Callback to remove
-
-        Returns:
-            bool: True if callback was found and removed
-        """
-        if event_type not in self._callbacks:
-            return False
-
-        try:
-            self._callbacks[event_type].remove(callback)
-            self.logger.debug(f"Unregistered callback for {event_type}")
-            return True
-        except ValueError:
-            return False
-
     def _fire_event(self, event_type: Any) -> None:
         """
         Fire callbacks for an event type.
@@ -394,15 +373,6 @@ class InputManager(ManagerBase):
 
         Returns:
             bool: True if button is pressed
-        """
-        return self._is_pressed
-
-    def get_raw_value(self) -> bool:
-        """
-        Get current button pressed state (synchronous).
-
-        Returns:
-            bool: True if button is currently pressed
         """
         return self._is_pressed
 

@@ -166,32 +166,6 @@ class ConnectionManager(ManagerBase):
 
     # --- Retry State Management ---
 
-    def load_retry_count(self) -> int:
-        """
-        Load the retry count from persistent storage.
-
-        Returns:
-            int: Current retry count (0 if file doesn't exist or is corrupt)
-        """
-        try:
-            with open(self.RETRY_STATE_FILE) as f:
-                data = json.load(f)
-                return int(data.get("retry_count", 0))
-        except (OSError, ValueError, KeyError):
-            return 0
-
-    def increment_retry_count(self) -> int:
-        """
-        Increment the retry count and save to persistent storage.
-
-        Returns:
-            int: New retry count value
-        """
-        current = self.load_retry_count()
-        new_count = current + 1
-        self._save_retry_count(new_count)
-        return new_count
-
     def clear_retry_count(self) -> None:
         """Clear the retry count (set to 0) and save to persistent storage."""
         self._save_retry_count(0)
@@ -668,34 +642,6 @@ class ConnectionManager(ManagerBase):
         """Check if currently connected to WiFi."""
         return self._connected and self._radio.connected
 
-    async def reconnect(self, ssid: str, password: str, timeout: float | None = None) -> tuple[bool, str | None]:
-        """
-        Reconnect to WiFi after setup mode or network disruption.
-        Handles all necessary cleanup and state management:
-        - Resets WiFi radio from AP mode to station mode
-        - Clears connection state
-        - Reconnects using standard backoff logic
-
-        Args:
-            ssid: WiFi network SSID
-            password: WiFi network password
-            timeout: Optional timeout in seconds
-
-        Returns:
-            tuple: (success: bool, error_message: str or None)
-        """
-        self.logger.info("Reconnecting to WiFi after setup mode exit")
-
-        # Reset radio to station mode (clears any AP mode state)
-        await self.reset_radio_to_station_mode()
-
-        # Reset connection state
-        self._connected = False
-        self.session = None
-
-        # Reconnect using standard backoff logic
-        return await self.connect_with_backoff(ssid, password, timeout)
-
     def get_session(self) -> Any:
         """
         Get the HTTP session for making requests.
@@ -721,16 +667,6 @@ class ConnectionManager(ManagerBase):
             self.logger.debug(f"Created HTTP session id={id(self.session)}")
 
         return self.session
-
-    def get_mac_address(self) -> str:
-        """
-        Get the WiFi MAC address as a hex string.
-
-        Returns:
-            str: MAC address in format "aa:bb:cc:dd:ee:ff"
-        """
-        mac_binary = self._radio.mac_address
-        return mac_binary.hex(":")
 
     async def start_access_point(self, ssid: str, password: str | None = None) -> str:
         """
@@ -1052,10 +988,6 @@ class ConnectionManager(ManagerBase):
 
         self.logger.debug("Access point shutdown complete")
 
-    def is_ap_active(self) -> bool:
-        """Check if access point mode is currently active."""
-        return self._ap_active
-
     def _close_session(self, reason: str) -> None:
         """
         Close the HTTP session and release its socket resources.
@@ -1142,39 +1074,6 @@ class ConnectionManager(ManagerBase):
                 self._radio.stop_scanning_networks()
             except Exception as e:
                 self.logger.warning(f"Error stopping network scan: {e}")
-
-    def validate_ssid_exists(self, ssid: str) -> bool:
-        """
-        Check if a given SSID exists in the available networks.
-
-        Args:
-            ssid: SSID to validate
-
-        Returns:
-            bool: True if SSID found in scan results
-        """
-        try:
-            scan_results = self._radio.start_scanning_networks()
-
-            # Handle different return types (iterator or int)
-            if isinstance(scan_results, int):
-                return False
-
-            found = False
-            for network in scan_results:
-                if network.ssid == ssid:
-                    found = True
-                    break
-
-            return found
-        except Exception as e:
-            self.logger.error(f"Error during SSID validation scan: {e}")
-            return False
-        finally:
-            try:
-                self._radio.stop_scanning_networks()
-            except Exception as e:
-                self.logger.warning(f"Error stopping scan: {e}")
 
     def shutdown(self) -> None:
         """

@@ -41,7 +41,7 @@ class ZipFile:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
         """Context manager exit."""
         # Nothing to clean up
         pass
@@ -194,17 +194,6 @@ class ZipFile:
             f.write(data)
 
         self.logger.debug(f"Extracted: {filename} ({len(data)} bytes)")
-
-    def extractall(self, path: str = "/") -> None:
-        """
-        Extract all members to the specified path.
-
-        Args:
-            path: Destination directory (default: root)
-        """
-        for file_info in self.file_list:
-            if not file_info["filename"].endswith("/"):
-                self.extract(file_info, path)
 
     def read(self, member: str) -> bytes:
         """
