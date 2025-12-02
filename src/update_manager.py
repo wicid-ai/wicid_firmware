@@ -54,6 +54,7 @@ class UpdateManager:
     
     # Critical files that MUST exist for device to boot and function
     # Missing any of these will brick the device or prevent updates
+    # Used by validate_critical_files(), validate_recovery_backup(), etc. for LOCAL device
     CRITICAL_FILES = {
         # Boot-critical: Required for boot.py to succeed
         "/boot.py",              # CircuitPython requires source .py file
@@ -82,6 +83,28 @@ class UpdateManager:
         "/lib/adafruit_requests.mpy",        # Required by wifi_manager.mpy for HTTP
         "/lib/adafruit_connection_manager.mpy",  # Required by adafruit_requests
         "/lib/adafruit_hashlib/__init__.mpy",  # Required by update_manager.mpy for checksum verification
+    }
+    
+    # Critical file paths for UPDATE PACKAGE validation (validate_extracted_update)
+    # Maps capability name to list of acceptable paths (supports both flat v0.5.x and nested v0.6.x)
+    # Validation passes if ANY path in the list exists for each capability
+    CRITICAL_FILE_PATHS = {
+        "boot_py": ["/boot.py"],
+        "boot_support": ["/boot_support.mpy", "/core/boot_support.mpy"],
+        "code_py": ["/code.py"],
+        "code_support": ["/code_support.mpy", "/core/code_support.mpy"],
+        "settings_toml": ["/settings.toml"],
+        "manifest_json": ["/manifest.json"],
+        "utils": ["/utils.mpy", "/utils/utils.mpy"],
+        "pixel_controller": ["/pixel_controller.mpy", "/controllers/pixel_controller.mpy"],
+        "system_monitor": ["/system_monitor.mpy", "/managers/system_manager.mpy"],
+        "wifi_manager": ["/wifi_manager.mpy", "/managers/connection_manager.mpy"],
+        "zipfile_lite": ["/zipfile_lite.mpy", "/utils/zipfile_lite.mpy"],
+        "update_manager": ["/update_manager.mpy", "/managers/update_manager.mpy"],
+        "neopixel": ["/lib/neopixel.mpy"],
+        "adafruit_requests": ["/lib/adafruit_requests.mpy"],
+        "adafruit_connection_manager": ["/lib/adafruit_connection_manager.mpy"],
+        "adafruit_hashlib": ["/lib/adafruit_hashlib/__init__.mpy"],
     }
     
     def __init__(self, progress_callback=None, wifi_manager=None, service_callback=None):
@@ -399,24 +422,33 @@ class UpdateManager:
         Called after extraction but before installation to ensure the update
         package is complete and won't brick the device.
         
+        Supports both flat (v0.5.x) and nested (v0.6.x+) directory structures
+        by checking if ANY acceptable path exists for each critical capability.
+        
         Args:
             extracted_dir: Directory containing extracted update files
         
         Returns:
-            tuple: (bool, list) - (all_present, missing_files)
+            tuple: (bool, list) - (all_present, missing_capabilities)
         """
-        missing_files = []
+        missing_capabilities = []
         
-        for file_path in UpdateManager.CRITICAL_FILES:
-            # Convert root path to extracted directory path
-            extracted_path = extracted_dir + file_path
+        for capability, paths in UpdateManager.CRITICAL_FILE_PATHS.items():
+            found = False
+            for file_path in paths:
+                extracted_path = extracted_dir + file_path
+                try:
+                    os.stat(extracted_path)
+                    found = True
+                    break  # Found at least one valid path
+                except OSError:
+                    continue
             
-            try:
-                os.stat(extracted_path)
-            except OSError:
-                missing_files.append(file_path)
+            if not found:
+                # Report the first path option for clarity in error messages
+                missing_capabilities.append(paths[0])
         
-        return (len(missing_files) == 0, missing_files)
+        return (len(missing_capabilities) == 0, missing_capabilities)
     
     def calculate_sha256(self, file_path, chunk_size=2048):
         """

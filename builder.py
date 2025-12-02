@@ -629,6 +629,9 @@ def build_package(manifest, version):
             shutil.copy2(py_file, build_dir / rel_path)
     
     # Copy non-Python files (special-case www)
+    # Ignore pattern for __pycache__ directories at any level
+    ignore_pycache = shutil.ignore_patterns('__pycache__', '*.pyc')
+    
     for item in src_path.iterdir():
         if item.is_file() and not item.name.endswith('.py'):
             shutil.copy2(item, build_dir / item.name)
@@ -642,7 +645,7 @@ def build_package(manifest, version):
                 print_success(f"Building www assets (mode={www_mode})...")
                 build_www_assets(item, build_dir, mode=www_mode)
             else:
-                shutil.copytree(item, build_dir / item.name, dirs_exist_ok=True)
+                shutil.copytree(item, build_dir / item.name, dirs_exist_ok=True, ignore=ignore_pycache)
                 print(f"  Copied: {item.name}/")
     
     # Copy manifest.json to build directory
