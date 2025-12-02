@@ -187,7 +187,7 @@ class TestWeatherModeInit(TestCase):
         """Verify __init__ sets default values."""
         mock_wm_instance = MagicMock()
         mock_wm_instance.get_current_temperature.return_value = None
-        mock_wm_instance.get_precip_chance_in_window = AsyncMock(return_value=None)
+        mock_wm_instance.get_precip_chance.return_value = None
         mock_wm_class = MagicMock()
         mock_wm_class.instance.return_value = mock_wm_instance
 
@@ -261,7 +261,7 @@ class TestWeatherModeUsesWeatherManager(TestCase):
         # Set up WeatherManager mock
         self.mock_wm_instance = MagicMock()
         self.mock_wm_instance.get_current_temperature.return_value = 72.5
-        self.mock_wm_instance.get_precip_chance_in_window = AsyncMock(return_value=25)
+        self.mock_wm_instance.get_precip_chance.return_value = 25
         self.mock_wm_class = MagicMock()
         self.mock_wm_class.instance.return_value = self.mock_wm_instance
 
@@ -339,7 +339,7 @@ class TestWeatherModeUsesWeatherManager(TestCase):
 
             # Should have called WeatherManager getters
             self.mock_wm_instance.get_current_temperature.assert_called()
-            self.mock_wm_instance.get_precip_chance_in_window.assert_called()
+            self.mock_wm_instance.get_precip_chance.assert_called()
 
     def test_run_does_not_schedule_own_refresh_task(self) -> None:
         """Verify run() does not schedule its own weather refresh task."""

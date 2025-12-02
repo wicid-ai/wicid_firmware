@@ -25,7 +25,8 @@ class WeatherManager(ManagerBase):
 
     _instance = None
 
-    UPDATE_INTERVAL = 600.0  # 10 minutes
+    UPDATE_INTERVAL = 300.0  # 5 minutes
+    PRECIP_FORECAST_WINDOW = 4  # hours
 
     @classmethod
     def instance(cls, session: Optional[Any] = None, weather_zip: Optional[str] = None) -> "WeatherManager":
@@ -85,6 +86,7 @@ class WeatherManager(ManagerBase):
         # Cached weather data
         self._current_temp: Optional[float] = None
         self._daily_high: Optional[float] = None
+        self._precip_chance: Optional[int] = None
 
         # Weather service instance (lazy-initialized)
         self._weather: Optional[Any] = None
@@ -175,16 +177,21 @@ class WeatherManager(ManagerBase):
             try:
                 temp = await self._weather.get_current_temperature()
                 high = await self._weather.get_daily_high()
+                precip = await self._weather.get_precip_chance_in_window(0, self.PRECIP_FORECAST_WINDOW)
             except Exception as fetch_error:
                 raise TaskNonFatalError(f"Weather API error: {fetch_error}") from fetch_error
 
             # Update cached data
             self._current_temp = temp
             self._daily_high = high
+            self._precip_chance = precip
 
             temp_msg = f"{temp}°F" if temp is not None else "n/a"
             high_msg = f"{high}°F" if high is not None else "n/a"
-            self.logger.info(f"Weather updated: {temp_msg} (high: {high_msg})")
+            precip_msg = f"{precip}%" if precip is not None else "n/a"
+            self.logger.info(
+                f"Weather updated: {temp_msg} (high: {high_msg}, precip within {self.PRECIP_FORECAST_WINDOW} hours: {precip_msg})"
+            )
 
         except TaskNonFatalError:
             # Re-raise to let scheduler handle retry
@@ -217,28 +224,14 @@ class WeatherManager(ManagerBase):
         """
         return self._daily_high
 
-    async def get_precip_chance_in_window(self, start_offset: float, duration: float) -> int | None:
+    def get_precip_chance(self) -> int | None:
         """
-        Get precipitation chance for a future time window.
-
-        Note: This makes a blocking API call but yields control to the scheduler.
-
-        Args:
-            start_offset: Hours from now to start window
-            duration: Window duration in hours
+        Get cached precipitation chance (synchronous).
 
         Returns:
-            int: Maximum precipitation probability in window, or None on error
+            int: Precipitation probability 0-100%, or None if no data available
         """
-        if self._weather is None:
-            self.logger.warning("Weather service not initialized")
-            return None
-
-        try:
-            return await self._weather.get_precip_chance_in_window(start_offset, duration)
-        except Exception as e:
-            self.logger.error(f"Error fetching precip window: {e}")
-            return None
+        return self._precip_chance
 
     def shutdown(self) -> None:
         """
@@ -259,6 +252,7 @@ class WeatherManager(ManagerBase):
         self._init_weather_zip = None
         self._current_temp = None
         self._daily_high = None
+        self._precip_chance = None
         self._updates_scheduled = False
 
         self.logger.debug("WeatherManager shut down")

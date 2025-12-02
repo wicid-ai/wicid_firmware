@@ -185,7 +185,7 @@ class WeatherMode(Mode):
         while self._running:
             # Read cached data from WeatherManager
             current_temp = self.weather_manager.get_current_temperature()
-            precip_chance = await self.weather_manager.get_precip_chance_in_window(0, 4)
+            precip_chance = self.weather_manager.get_precip_chance()
 
             # Wait for data if not available yet
             if current_temp is None or precip_chance is None:

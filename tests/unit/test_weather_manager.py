@@ -7,7 +7,7 @@ and error handling.
 
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from tests.unit import TestCase
 from tests.unit.unit_mocks import MockConnectionManager, MockWeatherService, reset_all_mocks
@@ -48,6 +48,7 @@ class TestWeatherManagerCachedData(TestCase):
 
         self.assertIsNone(manager.get_current_temperature())
         self.assertIsNone(manager.get_daily_high())
+        self.assertIsNone(manager.get_precip_chance())
 
     def test_cached_getters_return_stored_values(self) -> None:
         """Getters return values set during update."""
@@ -56,9 +57,11 @@ class TestWeatherManagerCachedData(TestCase):
         # Manually set cached values (simulating successful update)
         manager._current_temp = 72.5
         manager._daily_high = 85.0
+        manager._precip_chance = 30
 
         self.assertEqual(manager.get_current_temperature(), 72.5)
         self.assertEqual(manager.get_daily_high(), 85.0)
+        self.assertEqual(manager.get_precip_chance(), 30)
 
 
 class TestWeatherManagerSingleton(TestCase):
@@ -116,11 +119,13 @@ class TestWeatherManagerShutdown(TestCase):
 
         # Set some values
         manager._current_temp = 72.5
+        manager._precip_chance = 30
         manager._weather = MagicMock()
 
         manager.shutdown()
 
         self.assertIsNone(manager._current_temp)
+        self.assertIsNone(manager._precip_chance)
         self.assertIsNone(manager._weather)
 
     def test_shutdown_is_idempotent(self) -> None:
@@ -163,6 +168,7 @@ class TestWeatherManagerUpdate(TestCase):
         mock_weather = MockWeatherService(
             current_temp=75.0,
             daily_high=88.0,
+            window_precip=25,
         )
         manager._weather = mock_weather
 
@@ -170,6 +176,7 @@ class TestWeatherManagerUpdate(TestCase):
 
         self.assertEqual(manager._current_temp, 75.0)
         self.assertEqual(manager._daily_high, 88.0)
+        self.assertEqual(manager._precip_chance, 25)
 
     def test_update_handles_api_error(self) -> None:
         """Update wraps API errors in TaskNonFatalError."""
@@ -201,50 +208,3 @@ class TestWeatherManagerUpdate(TestCase):
             # MemoryError from service gets wrapped as TaskNonFatalError
             # (the outer MemoryError handler only catches direct MemoryErrors)
             self.assertEqual(type(e).__name__, "TaskNonFatalError")
-
-
-class TestWeatherManagerPrecipWindow(TestCase):
-    """Test precipitation window passthrough."""
-
-    def setUp(self) -> None:
-        """Reset mocks and manager."""
-        reset_all_mocks()
-        WeatherManager._instance = None
-        MockConnectionManager.set_test_instance(MockConnectionManager())
-
-    def tearDown(self) -> None:
-        """Clean up manager."""
-        if WeatherManager._instance is not None:
-            WeatherManager._instance.shutdown()
-            WeatherManager._instance = None
-        reset_all_mocks()
-
-    def test_returns_none_when_service_not_initialized(self) -> None:
-        """Returns None when weather service not set."""
-        manager = WeatherManager.instance()
-
-        result = run_async(manager.get_precip_chance_in_window(1, 2))
-
-        self.assertIsNone(result)
-
-    def test_delegates_to_weather_service(self) -> None:
-        """Passes call through to weather service."""
-        manager = WeatherManager.instance()
-        mock_weather = MockWeatherService(window_precip=45)
-        mock_weather.get_precip_chance_in_window = AsyncMock(return_value=45)  # type: ignore[assignment]
-        manager._weather = mock_weather
-
-        result = run_async(manager.get_precip_chance_in_window(2, 4))
-
-        self.assertEqual(result, 45)
-        mock_weather.get_precip_chance_in_window.assert_awaited_once_with(2, 4)  # type: ignore[attr-defined]
-
-    def test_handles_service_error(self) -> None:
-        """Returns None on weather service error."""
-        manager = WeatherManager.instance()
-        mock_weather = MockWeatherService(should_raise=OSError("Network error"))
-        manager._weather = mock_weather
-
-        result = run_async(manager.get_precip_chance_in_window(1, 2))
-
-        self.assertIsNone(result)
