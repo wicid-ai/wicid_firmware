@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -8,6 +8,6 @@
     "circuitpython_10_0"
   ],
   "release_type": "production",
-  "release_notes": "Fixes bug with initial restart delay.",
-  "release_date": "2025-11-09T15:22:54.503708+00:00"
+  "release_notes": "Fixes OTA update incompatibility between v0.5 and v0.6.",
+  "release_date": "2025-12-02T17:08:35.336271+00:00"
 }
