@@ -129,7 +129,7 @@ The `/src/lib/` directory is maintained in source control to facilitate OTA upda
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.14+
 - Git access to repository
 - `mpy-cross` compiler matching your CircuitPython version
 
