@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: ignore-errors
 """
 WICID Firmware Installer
 
@@ -36,6 +37,8 @@ SYSTEM_FOLDERS = {
 }
 PRESERVED_FILES = {"secrets.json"}
 RUNTIME_FILES = {"boot_out.txt"}
+INSTALL_SCRIPTS_DIR = "firmware_install_scripts"
+PENDING_UPDATE_DIR = "pending_update"
 
 READONLY_ERROR = """\
 CIRCUITPY drive is READ-ONLY. Device must be in Safe Mode.
@@ -60,10 +63,192 @@ def _is_hidden_or_system(name: str) -> bool:
     return name.startswith(".") or name in SYSTEM_FOLDERS or name.upper().startswith("FSEVEN~")
 
 
+def _is_os_artifact(name: str) -> bool:
+    """
+    Check if a file/directory is an OS artifact that should be removed.
+
+    OS artifacts include:
+    - Hidden files/directories (except .ready, .Trashes)
+    - __pycache__ directories
+    - System folders (.fseventsd, etc.)
+    - macOS resource fork files (._*)
+
+    Args:
+        name: File or directory name to check
+
+    Returns:
+        True if the item is an OS artifact, False otherwise
+    """
+    # Hidden files/directories (except preserved ones needed for operation)
+    if name.startswith("."):
+        preserve_hidden = {".Trashes", ".ready"}
+        return name not in preserve_hidden
+
+    # Python cache directories
+    if name == "__pycache__":
+        return True
+
+    # OS system folders
+    if name in SYSTEM_FOLDERS:
+        return True
+
+    # macOS resource fork files
+    return name.startswith("._")
+
+
+def _should_ignore_file(name: str) -> bool:
+    """
+    Check if a file/directory should be excluded from deployment.
+
+    This includes both OS artifacts AND deployment exclusions (like install scripts).
+
+    Args:
+        name: File or directory name to check
+
+    Returns:
+        True if the file/directory should be ignored during deployment, False otherwise
+    """
+    # First check if it's an OS artifact
+    if _is_os_artifact(name):
+        return True
+
+    # Deployment exclusion: firmware_install_scripts (only needed for OTA updates)
+    # This prevents install scripts from being copied during INCREMENTAL/HARD updates
+    return name == INSTALL_SCRIPTS_DIR
+
+
+def _filter_zip_members(zip_file: zipfile.ZipFile) -> list[str]:
+    """
+    Filter ZIP file members to exclude hidden files, __pycache__, and system files.
+
+    Note: firmware_install_scripts is NOT filtered here because it's needed for
+    SOFT updates (OTA simulation). The directory IS filtered during copy operations
+    for INCREMENTAL/HARD updates via _should_ignore_file in copy_files_to_circuitpy.
+
+    Args:
+        zip_file: Open ZipFile object
+
+    Returns:
+        List of member names (strings) for members that should be extracted
+    """
+    filtered = []
+    for member in zip_file.namelist():
+        # Check each part of the path
+        parts = Path(member).parts
+        should_skip = False
+
+        for part in parts:
+            # Special case: firmware_install_scripts must be extracted (needed for OTA)
+            if part == INSTALL_SCRIPTS_DIR:
+                continue
+
+            if _should_ignore_file(part):
+                should_skip = True
+                break
+
+        if not should_skip:
+            filtered.append(member)
+
+    return filtered
+
+
 def _sync_filesystem():
     """Force filesystem sync."""
     with contextlib.suppress(Exception):
         os.sync()
+
+
+def _safe_remove_directory(path: Path) -> None:
+    """
+    Safely remove a directory, handling FAT32/FAT12 filesystem quirks.
+
+    Uses ignore_errors=True to handle filesystem errors gracefully and syncs
+    the filesystem after deletion attempt.
+
+    Args:
+        path: Path to directory to remove
+    """
+    if not path.exists():
+        return
+    _force_remove_tree(path)
+    _sync_filesystem()
+
+
+def _safe_copy_directory(src: Path, dst: Path) -> None:
+    """
+    Safely copy a directory tree with aggressive cleanup of macOS artifacts.
+
+    Walks the tree and copies files individually, cleaning up ._* files
+    after each directory to prevent space exhaustion.
+
+    Args:
+        src: Source directory path
+        dst: Destination directory path
+    """
+    if dst.exists():
+        _safe_remove_directory(dst)
+
+    for root, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if not _should_ignore_file(d)]
+
+        rel_root = Path(root).relative_to(src)
+        dst_root = dst / rel_root
+        dst_root.mkdir(parents=True, exist_ok=True)
+
+        # Delete ._* file for the directory itself (if macOS created one)
+        with contextlib.suppress(OSError):
+            if dst_root.parent.exists():
+                resource_fork = dst_root.parent / f"._{dst_root.name}"
+                if resource_fork.exists():
+                    resource_fork.unlink()
+
+        # Copy files
+        for f in files:
+            if _should_ignore_file(f):
+                continue
+            _safe_copy_file(Path(root) / f, dst_root / f)
+
+        # Clean any remaining ._* files in this directory
+        for item in dst_root.iterdir():
+            if item.name.startswith("._"):
+                with contextlib.suppress(OSError):
+                    item.unlink()
+
+
+def _safe_copy_file(src: Path, dst: Path) -> None:
+    """
+    Safely copy a file and immediately clean up macOS resource forks.
+
+    macOS creates ._* files when copying to FAT filesystems despite COPYFILE_DISABLE=1.
+    These consume 4KB per file and cause "No space left" errors.
+
+    Args:
+        src: Source file path
+        dst: Destination file path
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    # Retry on transient FAT errors
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            shutil.copyfile(src, dst)
+
+            # IMMEDIATELY delete macOS resource fork file if created
+            # Suppress errors - file might be locked/protected by macOS
+            resource_fork = dst.parent / f"._{dst.name}"
+            with contextlib.suppress(OSError):
+                if resource_fork.exists():
+                    resource_fork.unlink()
+
+            return
+        except OSError as e:
+            if e.errno in (14, 22, 28) and attempt < max_retries - 1:
+                # Bad address, Invalid argument, No space - sync and retry
+                _sync_filesystem()
+                time.sleep(0.2)
+            else:
+                raise
 
 
 def print_header(text):
@@ -177,9 +362,10 @@ def delete_circuitpy_contents(circuitpy_path):
             continue
 
         item_path = circuitpy_path / item
+
         try:
             if item_path.is_dir():
-                shutil.rmtree(item_path)
+                _force_remove_tree(item_path)
                 print(f"  Deleted directory: {item}")
             else:
                 item_path.unlink()
@@ -188,12 +374,6 @@ def delete_circuitpy_contents(circuitpy_path):
         except OSError as e:
             if e.errno == 30:  # EROFS
                 raise OSError(READONLY_ERROR) from e
-            if e.errno == 66:  # ENOTEMPTY - FAT12 quirk
-                raise OSError(
-                    f"Could not delete {item}: directory not empty.\n"
-                    "This is a known FAT12 filesystem issue on macOS.\n"
-                    "Fix: Eject CIRCUITPY, unplug device, replug, and try again."
-                ) from e
             raise
 
     print_success(f"Deleted {deleted_count} items from CIRCUITPY")
@@ -207,8 +387,17 @@ def extract_zip_to_temp(zip_path):
 
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(temp_dir)
-            file_count = len(zf.namelist())
+            # Filter ZIP members to exclude hidden files and system artifacts
+            filtered_members = _filter_zip_members(zf)
+
+            # Extract only filtered members
+            for member in filtered_members:
+                zf.extract(member, temp_dir)
+
+            file_count = len(filtered_members)
+
+        # Clean up any artifacts that might have been created during extraction
+        cleanup_artifacts(temp_dir)
 
         print_success(f"Extracted {file_count} files to temporary directory")
         return temp_dir
@@ -221,21 +410,65 @@ def extract_zip_to_temp(zip_path):
 
 def get_disk_space(path):
     """Get available disk space in bytes."""
-    import shutil
-
     stat = shutil.disk_usage(path)
     return stat.free
 
 
-def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
-    """Copy files from source to destination, maintaining directory structure."""
+def _force_remove_tree(path: Path) -> None:
+    """
+    Forcefully remove a directory tree on FAT filesystems with best-effort cleanup.
+    Handles invalid entries by walking bottom-up and suppressing unlink/rmdir errors.
+    """
+    if not path.exists():
+        return
+
+    for _ in range(2):  # two passes to handle stubborn entries
+        for root, dirs, files in os.walk(path, topdown=False):
+            for f in files:
+                with contextlib.suppress(OSError):
+                    (Path(root) / f).unlink()
+            for d in dirs:
+                with contextlib.suppress(OSError):
+                    (Path(root) / d).rmdir()
+        with contextlib.suppress(OSError):
+            path.rmdir()
+        _sync_filesystem()
+
+    # Final attempt
+    shutil.rmtree(path, ignore_errors=True)
+    _sync_filesystem()
+
+
+def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True, include_install_scripts=False):
+    """
+    Copy files from source to destination with context-aware exclusions.
+
+    Args:
+        source_dir: Source directory path
+        dest_dir: Destination directory path
+        recursive: If True, copy subdirectories recursively
+        include_install_scripts: If True, include firmware_install_scripts directory
+                                (needed for SOFT updates/OTA). If False, exclude it
+                                (INCREMENTAL/HARD updates don't need it on device).
+    """
     print_step(f"Copying files to {dest_dir}...")
     copied_count = 0
 
     try:
+        cleanup_artifacts(source_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
         for item in os.listdir(source_dir):
-            if item.startswith(".") or item == "__pycache__":
+            # Special case: install_scripts handling based on update context
+            if item == INSTALL_SCRIPTS_DIR:
+                if not include_install_scripts:
+                    continue  # Skip for INCREMENTAL/HARD updates
+                # For SOFT updates, fall through to copy it
+
+            # Standard ignore rules (except install_scripts which we handled above)
+            elif _should_ignore_file(item):
                 continue
+
             if _is_preserved(item):
                 print(f"  Skipping preserved file: {item}")
                 continue
@@ -244,16 +477,13 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
             dst_path = dest_dir / item
 
             if src_path.is_dir() and recursive:
-                if dst_path.exists():
-                    shutil.rmtree(dst_path)
-                shutil.copytree(src_path, dst_path, ignore=shutil.ignore_patterns(".*", "__pycache__"))
+                _safe_copy_directory(src_path, dst_path)
                 print(f"  Copied directory: {item}/")
                 copied_count += 1
             elif src_path.is_file():
                 if _is_preserved(dst_path.name):
                     raise RuntimeError(f"BUG: Would overwrite preserved file {dst_path.name}")
-                dst_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(src_path, dst_path)
+                _safe_copy_file(src_path, dst_path)
                 print(f"  Copied file: {item}")
                 copied_count += 1
 
@@ -262,23 +492,68 @@ def copy_files_to_circuitpy(source_dir, dest_dir, recursive=True):
             raise OSError(READONLY_ERROR) from e
         raise
 
+    _sync_filesystem()
     print_success(f"Copied {copied_count} items")
-    cleanup_macos_artifacts(dest_dir)
+    cleanup_artifacts(dest_dir)
 
 
-def cleanup_macos_artifacts(circuitpy_path):
-    """Remove macOS hidden files (.DS_Store, ._ files) from CIRCUITPY."""
-    removed = 0
-    for root, _dirs, files in os.walk(circuitpy_path):
-        for f in files:
-            if f.startswith(".") and f != ".Trashes":
-                try:
-                    (Path(root) / f).unlink()
-                    removed += 1
-                except OSError:
-                    pass
-    if removed:
-        print(f"  Cleaned up {removed} hidden files")
+def cleanup_artifacts(path: Path, max_passes: int = 3):
+    """
+    Remove OS artifacts and system files (NOT deployment exclusions).
+
+    Removes:
+    - Hidden files (except preserved ones like .ready, .Trashes)
+    - macOS resource fork files (._*)
+    - __pycache__ directories
+    - System folders
+
+    Note: Does NOT remove firmware_install_scripts - that's a deployment exclusion,
+    not an artifact. Deployment filtering happens in copy_files_to_circuitpy().
+
+    Multiple cleanup passes handle macOS async resource fork creation - macOS creates
+    ._* files milliseconds AFTER file operations complete, so we sweep repeatedly
+    until no more artifacts are found.
+
+    Args:
+        path: Path to directory to clean
+        max_passes: Maximum cleanup passes (default 3)
+    """
+    total_removed = 0
+
+    for _ in range(max_passes):
+        removed_this_pass = 0
+
+        # Sync filesystem before checking (let macOS finish async operations)
+        _sync_filesystem()
+        time.sleep(0.1)  # Brief delay for macOS background processes
+
+        for root, dirs, files in os.walk(path):
+            # Process directories - only remove OS artifacts
+            for d in dirs[:]:  # Use slice copy to allow modification
+                if _is_os_artifact(d):
+                    dir_path = Path(root) / d
+                    if dir_path.is_dir():
+                        _safe_remove_directory(dir_path)
+                        removed_this_pass += 1
+                    dirs.remove(d)  # Remove from dirs to avoid walking into it
+
+            # Process files - only remove OS artifacts
+            for f in files:
+                if _is_os_artifact(f):
+                    try:
+                        (Path(root) / f).unlink()
+                        removed_this_pass += 1
+                    except OSError:
+                        pass  # File locked or other error
+
+        total_removed += removed_this_pass
+
+        # If no artifacts found this pass, we're done
+        if removed_this_pass == 0:
+            break
+
+    if total_removed:
+        print(f"  Cleaned up {total_removed} hidden files/directories")
 
 
 def validate_simulated_ota_prerequisites(web_root_dir, circuitpy_path, zip_path):
@@ -503,7 +778,7 @@ def copy_files_to_web_public(web_root_dir, local_wicid_web_url):
     src_zip = Path("releases/wicid_install.zip")
     dst_zip = public_dir / "wicid_install.zip"
 
-    shutil.copy(src_zip, dst_zip)
+    _safe_copy_file(src_zip, dst_zip)
     print(f"  Copied: wicid_install.zip -> {dst_zip}")
 
     # Read and modify releases.json
@@ -579,8 +854,7 @@ def modify_circuitpy_settings(circuitpy_path, local_wicid_web_url):
 
 def copy_file_safely(src_path, dst_path):
     """Copy a file, creating parent directories as needed."""
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src_path, dst_path)
+    _safe_copy_file(src_path, dst_path)
 
 
 def _case_insensitive_exists(path):
@@ -627,7 +901,7 @@ def copy_tests(circuitpy_path, tests_dir, hard=False):
     tests_dest = Path(circuitpy_path).resolve() / "tests"
 
     if hard and tests_dest.exists():
-        shutil.rmtree(tests_dest)
+        _safe_remove_directory(tests_dest)
         print("  Deleted existing tests directory")
 
     tests_dest.mkdir(parents=True, exist_ok=True)
@@ -649,22 +923,21 @@ def copy_tests(circuitpy_path, tests_dir, hard=False):
             continue
 
         if hard:
-            shutil.copytree(src_dir, dst_dir, ignore=shutil.ignore_patterns(".*", "__pycache__"))
+            _safe_copy_directory(src_dir, dst_dir)
             print(f"  Copied: tests/{subdir}/")
         else:
             # Incremental: copy only new/changed files
             for root, dirs, files in os.walk(src_dir):
-                dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+                dirs[:] = [d for d in dirs if not _should_ignore_file(d)]
                 for f in files:
-                    if f.startswith("."):
+                    if _should_ignore_file(f):
                         continue
                     src = Path(root) / f
                     rel = src.relative_to(tests_dir)
                     dst = tests_dest / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
                     is_new = not dst.exists()
                     if is_new or not filecmp.cmp(src, dst, shallow=False):
-                        shutil.copyfile(src, dst)
+                        _safe_copy_file(src, dst)
                         print(f"  {'Added' if is_new else 'Updated'}: tests/{rel}")
 
     _sync_filesystem()
@@ -706,9 +979,12 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
         skipped_count = 0
 
         for root, dirs, files in os.walk(temp_dir):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
-            files = [f for f in files if not f.startswith(".")]
-            if "__pycache__" in Path(root).parts:
+            # Filter directories using unified function
+            dirs[:] = [d for d in dirs if not _should_ignore_file(d)]
+            # Filter files using unified function
+            files = [f for f in files if not _should_ignore_file(f)]
+            # Skip if any part of the path should be ignored
+            if any(_should_ignore_file(part) for part in Path(root).parts):
                 continue
 
             for file in files:
@@ -726,8 +1002,8 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
                     skipped_count += 1
                     continue
 
-                # Skip __pycache__ directories and their contents
-                if "__pycache__" in rel_path.parts:
+                # Skip ignored files/directories using unified function
+                if any(_should_ignore_file(part) for part in rel_path.parts):
                     skipped_count += 1
                     continue
 
@@ -794,8 +1070,8 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
 
         # Handle directories - ensure they exist on CIRCUITPY
         for root, dirs, _files in os.walk(temp_dir):
-            # Skip hidden directories
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            # Filter directories using unified function
+            dirs[:] = [d for d in dirs if not _should_ignore_file(d)]
 
             for dir_name in dirs:
                 rel_dir_path = Path(root).relative_to(temp_dir) / dir_name
@@ -809,7 +1085,7 @@ def incremental_update(circuitpy_path, zip_path, include_tests=False):
         _sync_filesystem()
 
         # Remove macOS metadata files from CIRCUITPY
-        cleanup_macos_artifacts(circuitpy_path)
+        cleanup_artifacts(circuitpy_path)
 
         print_success(
             f"Incremental update completed: {added_count} added, {updated_count} updated, {skipped_count} unchanged"
@@ -849,7 +1125,8 @@ def soft_update(circuitpy_path, zip_path):
     print("1. Extract firmware package locally")
     print("2. Create /pending_update/root/ directory on CIRCUITPY")
     print("3. Copy firmware files to /pending_update/root/")
-    print("4. On reboot, boot.py will install the update")
+    print("4. Create .ready marker file to signal update is ready")
+    print("5. On reboot, boot.py will install the update")
     print("\nUser data (secrets.json) will be preserved.")
 
     # Extract to temporary directory
@@ -861,26 +1138,89 @@ def soft_update(circuitpy_path, zip_path):
         return False
 
     try:
-        # Create pending_update directories on CIRCUITPY
-        print_step("Creating update directories on CIRCUITPY...")
-        pending_update_dir = circuitpy_path / "pending_update"
+        # Check disk space before proceeding
+        print_step("Checking available disk space...")
+        pending_update_dir = circuitpy_path / PENDING_UPDATE_DIR
         pending_root_dir = pending_update_dir / "root"
 
-        pending_update_dir.mkdir(exist_ok=True)
-        pending_root_dir.mkdir(exist_ok=True)
+        # Delete existing pending_update (file or directory) to reclaim space
+        if pending_update_dir.exists():
+            if pending_update_dir.is_file():
+                pending_update_dir.unlink()
+            else:
+                _force_remove_tree(pending_update_dir)
+            _sync_filesystem()
 
-        print_success("Created /pending_update/root/ on CIRCUITPY")
+        # Calculate required space (simple approach with 2x buffer for FAT overhead)
+        # Buffer accounts for: FAT12 cluster waste, directory entries, and safety margin
+        temp_size = sum(f.stat().st_size for f in temp_dir.rglob("*") if f.is_file())
+        available_space = get_disk_space(circuitpy_path)
+        required = int(temp_size * 2.0)  # 2x buffer for FAT12 overhead
+
+        print(f"  Update size: {temp_size / 1024:.1f} KB")
+        print(f"  Required (with FAT12 buffer): {required / 1024:.1f} KB")
+        print(f"  Available: {available_space / 1024:.1f} KB")
+
+        if available_space < required:
+            print_error(
+                f"Insufficient disk space for SOFT update.\n"
+                f"  Required:  {required / 1024:.1f} KB\n"
+                f"  Available: {available_space / 1024:.1f} KB\n\n"
+                f"SOFT update requires space for both existing firmware AND the update.\n"
+                f"Use option 2 (HARD update) instead - it deletes existing files first."
+            )
+            return False
+
+        print_success("Sufficient disk space available")
+
+        # Create pending_update directories on CIRCUITPY
+        print_step("Creating update directories on CIRCUITPY...")
+
+        pending_update_dir.mkdir(parents=True, exist_ok=True)
+        pending_root_dir.mkdir(parents=True, exist_ok=True)
+
+        print_success(f"Created /{PENDING_UPDATE_DIR}/root/ on CIRCUITPY")
 
         # Copy extracted files to pending_update/root/
-        copy_files_to_circuitpy(temp_dir, pending_root_dir, recursive=True)
+        # Include install_scripts since SOFT updates simulate OTA and need them in pending_update
+        copy_files_to_circuitpy(temp_dir, pending_root_dir, recursive=True, include_install_scripts=True)
+
+        # Create .ready marker file to signal staging is complete
+        # The boot process requires this marker to exist and be non-empty
+        ready_marker_file = pending_update_dir / ".ready"
+        try:
+            if ready_marker_file.exists():
+                if ready_marker_file.is_dir():
+                    _force_remove_tree(ready_marker_file)
+                else:
+                    ready_marker_file.unlink()
+            ready_marker_file.write_text("ready")
+            _sync_filesystem()
+        except OSError as e:
+            raise OSError(
+                f"Cannot create .ready marker file: {e}\n"
+                "The CIRCUITPY filesystem may have corrupted entries.\n\n"
+                "Recovery steps:\n"
+                "1. Eject the CIRCUITPY drive\n"
+                "2. Unplug the device from USB\n"
+                "3. Plug it back in\n"
+                "4. Run the installer again\n\n"
+                "If the issue persists, use HARD update (option 2) instead."
+            ) from e
 
         # Remove macOS metadata files from CIRCUITPY
-        cleanup_macos_artifacts(circuitpy_path)
+        cleanup_artifacts(circuitpy_path)
 
-        _validate_boot_file(circuitpy_path)
         print_success("SOFT update prepared successfully")
         return True
 
+    except OSError as e:
+        if e.errno == 30:  # EROFS
+            print_error(READONLY_ERROR)
+        else:
+            print_error(f"SOFT update failed: {e}")
+            traceback.print_exc()
+        return False
     except Exception as e:
         print_error(f"SOFT update failed: {e}")
         traceback.print_exc()
@@ -920,7 +1260,10 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
         return False
 
     try:
-        cleanup_macos_artifacts(circuitpy_path)
+        # Clean pending_update before delete to avoid invalid entries
+        _force_remove_tree(circuitpy_path / PENDING_UPDATE_DIR)
+
+        cleanup_artifacts(circuitpy_path)
 
         secrets_path = circuitpy_path / "secrets.json"
         had_secrets = secrets_path.exists()
@@ -935,7 +1278,7 @@ def hard_update(circuitpy_path, zip_path, include_tests=False):
         if had_secrets and not secrets_path.exists():
             raise RuntimeError("BUG: secrets.json was deleted during update")
 
-        cleanup_macos_artifacts(circuitpy_path)
+        cleanup_artifacts(circuitpy_path)
 
         _validate_boot_file(circuitpy_path)
         print_success("HARD update completed successfully")

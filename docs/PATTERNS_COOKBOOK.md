@@ -123,6 +123,11 @@ with suppress(OSError):
 # Suppress multiple exception types
 with suppress(OSError, ValueError):
     risky_operation()
+
+# Combine with other context managers (file operations)
+with suppress(OSError, ValueError), open(manifest_path) as f:
+    data = json.load(f)
+    process(data)
 ```
 
 ### ❌ Don't (Incorrect)

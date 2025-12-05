@@ -1,0 +1,229 @@
+"""
+Pre-Install Script Example
+
+This script runs BEFORE the update installation process begins, after the update
+package has been extracted to /pending_update/root/ but before any files are moved.
+
+EXECUTION TIMING:
+- After .ready marker validation (update package is complete)
+- Before manifest loading and compatibility checks
+- Before any destructive operations (file deletion/replacement)
+
+ENVIRONMENT:
+- Current filesystem is at /
+- Extracted update is at /pending_update/root/
+- Can modify files in both locations
+- Available modules: os, json, sys, traceback, time, microcontroller
+- No async/await (scheduler not initialized)
+
+USE CASES:
+1. Migrate directory structures before validation runs
+2. Patch compatibility issues that would block installation
+3. Modify settings.toml or other config files before install
+4. Create/remove files that would cause validation failures
+5. Script-only releases (do work, cleanup, reboot)
+
+ERROR HANDLING:
+- If this script raises an exception, the update is marked incompatible
+- The pending update is cleaned up and device continues with current firmware
+- Errors are logged to /install.log
+
+SCRIPT-ONLY RELEASES:
+For releases that only need to run a script (e.g., config patches):
+1. Perform the required modifications
+2. Clean up /pending_update/ directory
+3. Call microcontroller.reset() to reboot
+This prevents the normal update flow from running (and failing validation).
+
+NAMING CONVENTION:
+- Save as: pre_install_v{VERSION}.py (e.g., pre_install_v0.6.0-b2.py)
+- builder.py will only include scripts matching the release version
+"""
+
+import json
+import os
+
+# These are injected by the executor
+# log_message: Callable[[str], None] - logs to boot log and install.log
+# PENDING_ROOT_DIR: str - path to extracted update (/pending_update/root)
+# PENDING_UPDATE_DIR: str - path to pending update directory (/pending_update)
+
+
+def main(log_message, pending_root_dir, pending_update_dir):
+    """
+    Main entry point for pre-install script.
+
+    Args:
+        log_message: Function to log messages (writes to boot log and install.log)
+        pending_root_dir: Path to extracted update files (/pending_update/root)
+        pending_update_dir: Path to pending update directory (/pending_update)
+
+    Returns:
+        bool: True if script completed successfully, False to abort update
+    """
+    log_message("Pre-install script starting...")
+
+    # Example: Check if we need to migrate directory structure
+    old_src_dir = "/src"  # Old structure
+    new_controllers_dir = "/controllers"  # New structure
+
+    # Example: Migrate old directory structure
+    try:
+        # Check if old structure exists and new doesn't
+        old_exists = False
+        try:
+            os.listdir(old_src_dir)
+            old_exists = True
+        except OSError:
+            pass
+
+        if old_exists:
+            log_message(f"Found old directory structure at {old_src_dir}")
+            # In a real script, you would move/rename directories here
+            # os.rename(old_src_dir + "/controllers", new_controllers_dir)
+            log_message("Directory migration would happen here")
+    except Exception as e:
+        log_message(f"Error during migration: {e}")
+        return False
+
+    # Example: Modify a config value
+    try:
+        settings_path = "/settings.toml"
+        # Read current settings if needed
+        # Modify settings in pending update if needed
+        pending_settings = f"{pending_root_dir}/settings.toml"
+        log_message(f"Settings file in update: {pending_settings}")
+    except Exception as e:
+        log_message(f"Error modifying settings: {e}")
+        # Decide if this is fatal or not
+        # return False  # Uncomment to abort on error
+
+    # Example: Create a marker file
+    try:
+        with open("/pre_install_completed", "w") as f:
+            f.write("1")
+        log_message("Created pre-install marker file")
+    except Exception as e:
+        log_message(f"Warning: Could not create marker: {e}")
+
+    log_message("Pre-install script completed successfully")
+    return True
+
+
+# For script-only releases that don't want normal update flow:
+def script_only_example(log_message, pending_root_dir, pending_update_dir):
+    """
+    Example of a script-only release that patches config and reboots.
+
+    This demonstrates how to use pre-install scripts for lightweight patches
+    without a full firmware update.
+    """
+    import microcontroller
+
+    log_message("Script-only patch starting...")
+
+    # Do the patch work
+    try:
+        # This step is critical to ensure the version is updated correctly, and the device doesn't get stuck in a loop of updates.
+        # May want to run this last, and should also consider attempting to update the incompatible_releases.json file on failure
+        # to prevent the device from trying to update to the same version.
+        _update_version(log_message, pending_root_dir)
+
+        # Example: Update a single setting
+        with open("/settings.toml", "r") as f:
+            content = f.read()
+
+        # Modify content
+        content = content.replace('OLD_VALUE = "old"', 'NEW_VALUE = "new"')
+
+        with open("/settings.toml", "w") as f:
+            f.write(content)
+
+        log_message("Settings patched successfully")
+
+        # Change the secrets.json zip code to 96714, Hanalei, HI 96714
+        with open("/secrets.json") as f:
+            secrets = json.load(f)
+        secrets["weather_zip"] = "96714"
+        with open("/secrets.json", "w") as f:
+            json.dump(secrets, f)
+
+        log_message("Secrets patched successfully")
+    except Exception as e:
+        log_message(f"Error patching: {e}")
+        # Still cleanup and reboot
+
+    # Clean up pending update (important!)
+    log_message("Cleaning up pending update...")
+    try:
+        _remove_dir_recursive(pending_update_dir)
+    except Exception as e:
+        log_message(f"Cleanup warning: {e}")
+
+    # Sync filesystem
+    os.sync()
+
+    log_message("Rebooting after script-only patch...")
+
+    # Reboot - normal update flow will not continue
+    microcontroller.reset()
+    # Never reaches here
+
+def _update_version(log_message, pending_root_dir):
+    """Helper to update the VERSION in settings.toml from manifest.json"""
+
+    log_message("Updating version...")
+
+    # Load the new version from the pending update's manifest.json
+    with open("/pending_update/root/manifest.json", "r") as f:
+        new_manifest = json.load(f)
+    new_version = new_manifest.get("version")
+
+    if not new_version:
+        log_message("No 'version' found in pending_update/root/manifest.json.")
+        return
+
+    # Read the current settings.toml
+    with open("/settings.toml", "r") as f:
+        current_settings_content = f.read()
+
+    # Find the existing version
+    try:
+        current_version = current_settings_content.split('VERSION = "')[1].split('"')[0]
+    except IndexError:
+        log_message("Could not find VERSION in /settings.toml.")
+        return
+
+    # Replace the version
+    updated_settings_content = current_settings_content.replace(
+        f'VERSION = "{current_version}"', f'VERSION = "{new_version}"'
+    )
+
+    # Write the updated settings.toml
+    with open("/settings.toml", "w") as f:
+        f.write(updated_settings_content)
+
+    log_message(f"VERSION updated from {current_version} to {new_version} in settings.toml")
+
+def _remove_dir_recursive(path):
+    """Helper to recursively remove a directory."""
+    try:
+        items = os.listdir(path)
+    except OSError:
+        return
+
+    for item in items:
+        item_path = f"{path}/{item}"
+        try:
+            os.remove(item_path)
+        except OSError:
+            _remove_dir_recursive(item_path)
+            try:
+                os.rmdir(item_path)
+            except OSError:
+                pass
+
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass

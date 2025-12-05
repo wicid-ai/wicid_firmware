@@ -569,6 +569,9 @@ def _run_circuitpython_tests(verbosity: int = 2, tick_callback: Callable[[], Non
                 # Track this test in grouped results
                 grouped_result.start_test(module_display_name, class_name, test_method_name)
 
+                # Log test start for visibility during long-running tests
+                TEST_LOG.testing(f"▶ {class_name}.{test_method_name}")
+
                 try:
                     # Run setUp
                     test_instance.setUp()

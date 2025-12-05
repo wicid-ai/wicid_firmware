@@ -347,6 +347,58 @@ class TestCase:
         """
         assert isinstance(x, y), msg
 
+    def assertGreater(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
+        """
+        Method to handle assert greater than logic
+
+        Params:
+            x: any
+            y: any
+            msg: str, optional
+        """
+        if not msg:
+            msg = f"Expected {x!r} to be greater than {y!r}"
+        assert x > y, msg
+
+    def assertLess(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
+        """
+        Method to handle assert less than logic
+
+        Params:
+            x: any
+            y: any
+            msg: str, optional
+        """
+        if not msg:
+            msg = f"Expected {x!r} to be less than {y!r}"
+        assert x < y, msg
+
+    def assertGreaterEqual(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
+        """
+        Method to handle assert greater than or equal logic
+
+        Params:
+            x: any
+            y: any
+            msg: str, optional
+        """
+        if not msg:
+            msg = f"Expected {x!r} to be greater than or equal to {y!r}"
+        assert x >= y, msg
+
+    def assertLessEqual(self, x: Any, y: Any, msg: str = "") -> None:  # noqa
+        """
+        Method to handle assert less than or equal logic
+
+        Params:
+            x: any
+            y: any
+            msg: str, optional
+        """
+        if not msg:
+            msg = f"Expected {x!r} to be less than or equal to {y!r}"
+        assert x <= y, msg
+
     @staticmethod
     def assertRaises(exc: type[Exception], func: Any = None, *args: Any, **kwargs: Any) -> Any:
         """

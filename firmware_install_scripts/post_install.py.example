@@ -1,0 +1,173 @@
+"""
+Post-Install Script Example
+
+This script runs AFTER the update installation is complete and the recovery
+backup has been created, but before cleanup and reboot.
+
+EXECUTION TIMING:
+- After all files moved to root filesystem
+- After critical file validation passed
+- After recovery backup created
+- Before pending update cleanup
+- Before reboot
+
+ENVIRONMENT:
+- All new firmware files are in place at /
+- Recovery backup exists at /recovery/
+- Available modules: os, json, sys, traceback, time
+- No async/await (scheduler not initialized)
+
+USE CASES:
+1. Migrate user data to new format
+2. Clean up obsolete files from previous versions
+3. Initialize new configuration files with defaults
+4. Modify recovery backup if needed
+5. Log installation completion details
+
+ERROR HANDLING:
+- If this script raises an exception, error is logged but update continues
+- Recovery backup is already created, so device is protected
+- Non-fatal: device will still reboot with new firmware
+
+NAMING CONVENTION:
+- Save as: post_install_v{VERSION}.py (e.g., post_install_v0.6.0-b2.py)
+- builder.py will only include scripts matching the release version
+"""
+
+import json
+import os
+
+
+def main(log_message, version):
+    """
+    Main entry point for post-install script.
+
+    Args:
+        log_message: Function to log messages (writes to boot log and install.log)
+        version: Version string of the installed firmware
+
+    Returns:
+        bool: True if script completed successfully, False on error (non-fatal)
+    """
+    log_message("Post-install script starting...")
+    log_message(f"Installed version: {version}")
+
+    # Example: Clean up obsolete files from old versions
+    obsolete_files = [
+        "/old_config.json",
+        "/deprecated_module.mpy",
+        "/legacy/",
+    ]
+
+    for path in obsolete_files:
+        try:
+            # Try as file first
+            try:
+                os.remove(path)
+                log_message(f"Removed obsolete file: {path}")
+                continue
+            except OSError:
+                pass
+
+            # Try as directory
+            _remove_dir_recursive(path)
+            log_message(f"Removed obsolete directory: {path}")
+        except Exception as e:
+            # Not finding the file is fine
+            pass
+
+    # Example: Migrate user configuration to new format
+    try:
+        secrets_path = "/secrets.json"
+        try:
+            with open(secrets_path, "r") as f:
+                secrets = json.load(f)
+
+            # Check if migration is needed
+            if "old_key" in secrets:
+                # Migrate to new key name
+                secrets["new_key"] = secrets.pop("old_key")
+
+                with open(secrets_path, "w") as f:
+                    json.dump(secrets, f)
+
+                log_message("Migrated secrets.json to new format")
+        except OSError:
+            pass  # No secrets file yet
+    except Exception as e:
+        log_message(f"Warning: Config migration error: {e}")
+        # Non-fatal, continue
+
+    # Example: Initialize new config file with defaults
+    try:
+        new_config_path = "/user_prefs.json"
+        try:
+            os.stat(new_config_path)
+            # File exists, don't overwrite
+        except OSError:
+            # File doesn't exist, create with defaults
+            defaults = {
+                "display_brightness": 100,
+                "auto_update": True,
+                "timezone": "UTC",
+            }
+            with open(new_config_path, "w") as f:
+                json.dump(defaults, f)
+            log_message(f"Created default config: {new_config_path}")
+    except Exception as e:
+        log_message(f"Warning: Could not create default config: {e}")
+
+    # Example: Remove pre-install marker if it exists
+    try:
+        os.remove("/pre_install_completed")
+        log_message("Cleaned up pre-install marker")
+    except OSError:
+        pass
+
+    # Example: Modify recovery backup if needed
+    try:
+        recovery_manifest = "/recovery/manifest.json"
+        try:
+            os.stat(recovery_manifest)
+            log_message("Recovery backup verified")
+        except OSError:
+            log_message("Warning: Recovery manifest not found")
+    except Exception as e:
+        log_message(f"Recovery check error: {e}")
+
+    # Example: Change a single phrase in the index.html file
+    try:
+        with open("/www/index.html", "r") as file:
+            content = file.read()
+        content = content.replace("WICID Simple Configuration", "Hey Hey Hey!")
+        with open("/www/index.html", "w") as file:
+            file.write(content)
+    except Exception as e:
+        log_message(f"Modify HTML error: {e}")
+
+    log_message("Post-install script completed successfully")
+    return True
+
+
+def _remove_dir_recursive(path):
+    """Helper to recursively remove a directory."""
+    try:
+        items = os.listdir(path)
+    except OSError:
+        return
+
+    for item in items:
+        item_path = f"{path}/{item}"
+        try:
+            os.remove(item_path)
+        except OSError:
+            _remove_dir_recursive(item_path)
+            try:
+                os.rmdir(item_path)
+            except OSError:
+                pass
+
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass

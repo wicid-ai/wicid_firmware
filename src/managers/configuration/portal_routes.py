@@ -60,10 +60,8 @@ class PortalRoutes:
         try:
             # Load current settings
             current_settings = {"ssid": "", "password": "", "zip_code": ""}
-            with suppress(Exception):
-                with open("/secrets.json") as f:
-                    secrets = json.load(f)
-
+            with suppress(Exception), open("/secrets.json") as f:
+                secrets = json.load(f)
                 current_settings["ssid"] = secrets.get("ssid", "")
                 current_settings["password"] = secrets.get("password", "")
                 current_settings["zip_code"] = secrets.get("weather_zip", "")
@@ -101,9 +99,8 @@ class PortalRoutes:
             wicid_version = os.getenv("VERSION", "unknown")
 
             # Load manifest for detailed machine type
-            with suppress(Exception):
-                with open("/manifest.json") as f:
-                    manifest = json.load(f)
+            with suppress(Exception), open("/manifest.json") as f:
+                manifest = json.load(f)
                 machine_types = manifest.get("target_machine_types", [])
                 if machine_types:
                     machine_type = machine_types[0]

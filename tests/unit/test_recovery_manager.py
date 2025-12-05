@@ -1,5 +1,6 @@
 """Unit tests for RecoveryManager."""
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -68,6 +69,54 @@ class TestRecoveryManagerRecoveryExists(unittest.TestCase):
             self.assertFalse(RecoveryManager.recovery_exists())
 
 
+class TestRecoveryManagerValidateFilesInDirectory(unittest.TestCase):
+    """Test _validate_files_in_directory helper method."""
+
+    def test_validates_files_in_root_directory(self) -> None:
+        """Test validation with empty base_dir (root filesystem)."""
+        test_files = {"/boot.py", "/code.py"}
+
+        with patch("os.stat") as mock_stat:
+            mock_stat.return_value = MagicMock()
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager._validate_files_in_directory("", test_files)
+            self.assertTrue(all_present)
+            self.assertEqual(missing, [])
+
+    def test_validates_files_in_subdirectory(self) -> None:
+        """Test validation with base_dir prefix."""
+        test_files = {"/boot.py", "/code.py"}
+
+        with patch("os.stat") as mock_stat:
+            mock_stat.return_value = MagicMock()
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager._validate_files_in_directory("/tmp/update", test_files)
+            self.assertTrue(all_present)
+            self.assertEqual(missing, [])
+            # Verify it checked the correct paths
+            mock_stat.assert_any_call("/tmp/update/boot.py")
+            mock_stat.assert_any_call("/tmp/update/code.py")
+
+    def test_detects_missing_files(self) -> None:
+        """Test detection of missing files."""
+        test_files = {"/boot.py", "/code.py", "/missing.py"}
+
+        def stat_side_effect(path: str) -> MagicMock:
+            if "missing.py" in path:
+                raise OSError("File not found")
+            return MagicMock()
+
+        with patch("os.stat", side_effect=stat_side_effect):
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager._validate_files_in_directory("/tmp", test_files)
+            self.assertFalse(all_present)
+            self.assertIn("/missing.py", missing)
+            self.assertNotIn("/boot.py", missing)
+
+
 class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
     """Test validate_extracted_update static method."""
 
@@ -87,6 +136,103 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             return MagicMock()
 
         with patch("os.stat", side_effect=stat_side_effect):
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            self.assertFalse(all_present)
+            self.assertIn("/boot.py", missing)
+
+    def test_script_only_release_skips_validation(self) -> None:
+        """Script-only releases don't require all critical files."""
+        manifest_content = json.dumps({"version": "1.0.0-s1", "script_only_release": True})
+
+        def mock_open_func(path: str, mode: str = "r") -> MagicMock:
+            if "manifest.json" in path:
+                mock_file = MagicMock()
+                mock_file.read.return_value = manifest_content
+                mock_file.__enter__ = MagicMock(return_value=mock_file)
+                mock_file.__exit__ = MagicMock(return_value=False)
+                return mock_file
+            raise OSError("File not found")
+
+        with patch("builtins.open", side_effect=mock_open_func):
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            self.assertTrue(all_present)
+            self.assertEqual(missing, [])
+
+    def test_script_only_release_with_invalid_manifest(self) -> None:
+        """Invalid manifest falls back to normal validation."""
+
+        def mock_open_func(path: str, mode: str = "r") -> MagicMock:
+            raise OSError("File not found")
+
+        def stat_side_effect(path: str) -> MagicMock:
+            if "/tmp/update/boot.py" in path:
+                raise OSError("File not found")
+            return MagicMock()
+
+        with (
+            patch("builtins.open", side_effect=mock_open_func),
+            patch("os.stat", side_effect=stat_side_effect),
+        ):
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            self.assertFalse(all_present)
+            self.assertIn("/boot.py", missing)
+
+    def test_script_only_release_with_malformed_json(self) -> None:
+        """Malformed JSON in manifest falls back to normal validation."""
+
+        def mock_open_func(path: str, mode: str = "r") -> MagicMock:
+            if "manifest.json" in path:
+                mock_file = MagicMock()
+                mock_file.read.return_value = "{invalid json"
+                mock_file.__enter__ = MagicMock(return_value=mock_file)
+                mock_file.__exit__ = MagicMock(return_value=False)
+                return mock_file
+            raise OSError("File not found")
+
+        def stat_side_effect(path: str) -> MagicMock:
+            if "/tmp/update/boot.py" in path:
+                raise OSError("File not found")
+            return MagicMock()
+
+        with (
+            patch("builtins.open", side_effect=mock_open_func),
+            patch("os.stat", side_effect=stat_side_effect),
+            patch("json.load", side_effect=ValueError("Invalid JSON")),
+        ):
+            from managers.recovery_manager import RecoveryManager
+
+            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            self.assertFalse(all_present)
+            self.assertIn("/boot.py", missing)
+
+    def test_normal_release_requires_all_files(self) -> None:
+        """Normal releases require all critical files even with manifest."""
+        manifest_content = json.dumps({"version": "1.0.0", "script_only_release": False})
+
+        def mock_open_func(path: str, mode: str = "r") -> MagicMock:
+            if "manifest.json" in path:
+                mock_file = MagicMock()
+                mock_file.read.return_value = manifest_content
+                mock_file.__enter__ = MagicMock(return_value=mock_file)
+                mock_file.__exit__ = MagicMock(return_value=False)
+                return mock_file
+            raise OSError("File not found")
+
+        def stat_side_effect(path: str) -> MagicMock:
+            if "/tmp/update/boot.py" in path:
+                raise OSError("File not found")
+            return MagicMock()
+
+        with (
+            patch("builtins.open", side_effect=mock_open_func),
+            patch("os.stat", side_effect=stat_side_effect),
+        ):
             from managers.recovery_manager import RecoveryManager
 
             all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")

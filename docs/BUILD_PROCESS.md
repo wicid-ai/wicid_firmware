@@ -75,7 +75,7 @@ Before flashing the application, new Adafruit Feather ESP32-S3 boards must be in
    - Visit: https://circuitpython.org/board/adafruit_feather_esp32s3_4mbflash_2mbpsram/
    - Click "OPEN INSTALLER"
    - Select "Install Bootloader Only" and follow the prompts
-   - After installation completes, you should see an updated `FTHRS3BOOT` drive
+   - After installation completes, press and release the RESET button, and you should see an updated `FTHRS3BOOT` drive
 
 3. **Install CircuitPython**:
    - While in bootloader mode (indicated by solid green LED and availability of `FTHRS3BOOT` drive)
@@ -85,7 +85,7 @@ Before flashing the application, new Adafruit Feather ESP32-S3 boards must be in
 
    **Note**: If installing a new OS without first updating the Bootloader, follow the steps in number 1 to get into bootloader mode.
 
-The board is now ready for library installation and application deployment.
+The board is now ready for application deployment using the [installer CLI](#installing-firmware-manually-optional).
 
 ## Managing CircuitPython Libraries
 
@@ -491,6 +491,194 @@ This ensures the device can always recover from:
 - Corrupted update packages
 - Filesystem corruption
 - Interrupted file operations
+
+### Install Scripts
+
+Optional Python scripts can be included in update packages to perform custom actions during installation.
+
+#### Script Naming Convention
+
+Scripts must be stored in `firmware_install_scripts/` with version-specific names:
+
+```
+firmware_install_scripts/
+├── pre_install_v0.6.0-b2.py    # Pre-install for version 0.6.0-b2
+├── post_install_v0.6.0-b2.py   # Post-install for version 0.6.0-b2
+├── pre_install.py.example      # Example (not included in builds)
+└── post_install.py.example     # Example (not included in builds)
+```
+
+The builder only includes scripts matching the exact release version.
+
+#### Pre-Install Scripts
+
+**Timing**: Runs after update package extraction, before compatibility checks and file validation.
+
+**Use Cases**:
+- Migrate old directory structures to match new validation requirements
+- Modify extracted update files before validation
+- Patch current filesystem before installation
+- Script-only releases (do work, cleanup, reboot without completing normal flow)
+
+**Arguments**: `main(log_message, pending_root_dir, pending_update_dir)`
+- `log_message`: Function to log messages to boot log and `/install.log`
+- `pending_root_dir`: Path to extracted update (`/pending_update/root`)
+- `pending_update_dir`: Path to pending directory (`/pending_update`)
+
+**Error Handling**: If script fails, update is marked incompatible and aborted.
+
+**Example**:
+```python
+def main(log_message, pending_root_dir, pending_update_dir):
+    log_message("Migrating directory structure...")
+    import os
+    # Move old directories to new locations
+    try:
+        os.rename("/old_path", "/new_path")
+        log_message("Migration complete")
+    except OSError as e:
+        log_message(f"Migration failed: {e}")
+        return False
+    return True
+```
+
+#### Post-Install Scripts
+
+**Timing**: Runs after installation complete and recovery backup created, before cleanup.
+
+**Use Cases**:
+- Migrate user configuration to new format
+- Clean up obsolete files from previous versions
+- Initialize new configuration files with defaults
+- Modify recovery backup if needed
+
+**Arguments**: `main(log_message, version)`
+- `log_message`: Function to log messages to boot log and `/install.log`
+- `version`: Version string of installed firmware
+
+**Error Handling**: If script fails, error is logged but update continues (non-fatal).
+
+**Example**:
+```python
+def main(log_message, version):
+    log_message(f"Post-install for version {version}")
+    import json
+    import os
+
+    # Clean up obsolete files
+    for path in ["/old_config.json", "/deprecated/"]:
+        try:
+            os.remove(path)
+            log_message(f"Removed: {path}")
+        except OSError:
+            pass
+
+    return True
+```
+
+#### Script-Only Releases
+
+Script-only releases are minimal packages that contain only install scripts—no firmware files. They're useful for:
+- Configuration patches
+- Data migrations
+- Quick fixes that don't require a full firmware update
+
+**Version Convention**: Use the `-s[N]` suffix to indicate a script-only release:
+- `0.7.2-s1` - First script-only release for 0.7.2
+- `0.7.2-s2` - Second script-only release for 0.7.2
+
+**Building Script-Only Releases**:
+
+1. Create the pre-install script: `firmware_install_scripts/pre_install_v0.7.2-s1.py`
+2. Run `./builder.py`
+3. Enter version with `-s` suffix (e.g., `0.7.2-s1`)
+4. The builder detects the script-only release and asks for confirmation
+5. A minimal package is created with only `manifest.json` and install scripts
+
+**Package Contents**:
+```
+wicid_install.zip
+├── manifest.json              # With script_only_release: true
+├── pre_install_v0.7.2-s1.py   # Required
+└── post_install_v0.7.2-s1.py  # Optional
+```
+
+**Script Requirements**:
+
+The pre-install script MUST:
+1. Perform the needed work
+2. Clean up the `/pending_update/` directory
+3. Call `microcontroller.reset()` to reboot
+
+If the script doesn't reboot, the normal update flow will continue and fail validation (no firmware files).
+
+**Example Script**:
+
+```python
+def main(log_message, pending_root_dir, pending_update_dir):
+    import os
+    import microcontroller
+
+    log_message("Applying config patch...")
+
+    # Do the patch work
+    with open("/settings.toml", "r") as f:
+        content = f.read()
+    content = content.replace('OLD_VALUE', 'NEW_VALUE')
+    with open("/settings.toml", "w") as f:
+        f.write(content)
+
+    # Clean up (important!)
+    _rmtree(pending_update_dir)
+    os.sync()
+
+    log_message("Rebooting...")
+    microcontroller.reset()  # Normal flow won't continue
+
+
+def _rmtree(path):
+    """Helper to recursively remove a directory."""
+    import os
+    try:
+        items = os.listdir(path)
+    except OSError:
+        return
+    for item in items:
+        item_path = f"{path}/{item}"
+        try:
+            os.remove(item_path)
+        except OSError:
+            _rmtree(item_path)
+            try:
+                os.rmdir(item_path)
+            except OSError:
+                pass
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+```
+
+#### Manifest Flags
+
+The build tool automatically adds script flags to `manifest.json`:
+
+```json
+{
+  "has_pre_install_script": true,
+  "has_post_install_script": false
+}
+```
+
+Scripts are only executed if their corresponding flag is `true`.
+
+#### Install Log
+
+Script execution is logged to `/install.log`, which is overwritten on each update attempt. The log includes:
+- Script start/end timestamps
+- Log messages from the script
+- Success/failure status
+- Any error tracebacks
 
 ## Version Guidelines
 

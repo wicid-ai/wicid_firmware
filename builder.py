@@ -13,8 +13,6 @@ Note: releases.json is generated but not committed (gitignored, deployed separat
 import hashlib
 import json
 import os
-
-os.environ["COPYFILE_DISABLE"] = "1"  # Prevent macOS ._ resource fork files in ZIP archives
 import re
 import shutil
 import subprocess
@@ -22,6 +20,11 @@ import sys
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+os.environ["COPYFILE_DISABLE"] = "1"  # Prevent macOS ._ resource fork files in ZIP archives
+
+INSTALL_SCRIPTS_DIR = "firmware_install_scripts"
 
 # Optional minifiers / HTML parser (graceful fallback if not installed)
 try:
@@ -42,8 +45,11 @@ try:
     distribution("htmlmin2")  # raises if htmlmin2 dist isn't installed
 except Exception:
     _htmlmin = None
+_BS: Any = None
 try:
-    from bs4 import BeautifulSoup as _BS
+    from bs4 import BeautifulSoup as _BeautifulSoup
+
+    _BS = _BeautifulSoup
 except Exception:
     _BS = None
 
@@ -60,28 +66,28 @@ class Colors:
     BOLD = "\033[1m"
 
 
-def print_header(text):
+def print_header(text: str) -> None:
     """Print a formatted header."""
     print(f"\n{Colors.HEADER}{Colors.BOLD}{text}{Colors.ENDC}")
     print("=" * len(text))
 
 
-def print_success(text):
+def print_success(text: str) -> None:
     """Print success message."""
     print(f"{Colors.OKGREEN}✓ {text}{Colors.ENDC}")
 
 
-def print_error(text):
+def print_error(text: str) -> None:
     """Print error message."""
     print(f"{Colors.FAIL}✗ {text}{Colors.ENDC}")
 
 
-def print_warning(text):
+def print_warning(text: str) -> None:
     """Print warning message."""
     print(f"{Colors.WARNING}⚠ {text}{Colors.ENDC}")
 
 
-def calculate_sha256(file_path, chunk_size=65536):
+def calculate_sha256(file_path: str | Path, chunk_size: int = 65536) -> str:
     """
     Calculate SHA-256 checksum of a file.
 
@@ -102,7 +108,7 @@ def calculate_sha256(file_path, chunk_size=65536):
     return sha256.hexdigest()
 
 
-def get_git_status():
+def get_git_status() -> bool:
     """Check if git working directory is clean."""
     try:
         result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
@@ -111,7 +117,7 @@ def get_git_status():
         return False
 
 
-def has_staged_files():
+def has_staged_files() -> bool:
     """Check if there are any files staged for commit."""
     try:
         result = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True, check=True)
@@ -120,7 +126,7 @@ def has_staged_files():
         return False
 
 
-def load_previous_manifest():
+def load_previous_manifest() -> dict[str, Any] | None:
     """Load previous src/manifest.json for default values."""
     manifest_file = Path("src/manifest.json")
     if manifest_file.exists():
@@ -129,7 +135,7 @@ def load_previous_manifest():
     return None
 
 
-def load_releases_json():
+def load_releases_json() -> dict[str, Any]:
     """Load existing releases.json or create empty structure."""
     releases_file = Path("releases.json")
     if releases_file.exists():
@@ -139,7 +145,7 @@ def load_releases_json():
         return {"schema_version": "1.0.0", "last_updated": "", "releases": []}
 
 
-def save_releases_json(releases_data):
+def save_releases_json(releases_data: dict[str, Any]) -> None:
     """Save releases.json with pretty formatting."""
     with open("releases.json", "w") as f:
         json.dump(releases_data, f, indent=2)
@@ -189,7 +195,7 @@ def _inline_single_file_html(html: str, css_min: str, js_min: str) -> str:
     Inline CSS and JS into provided HTML. Uses BeautifulSoup when available,
     otherwise falls back to conservative regex replacements.
     """
-    if _BS:
+    if _BS is not None:
         soup = _BS(html, "html.parser")
         # Replace <link rel="stylesheet" ...> with <style>...</style>
         link = soup.find("link", rel="stylesheet")
@@ -248,7 +254,7 @@ def build_www_assets(src_www: Path, out_root: Path, mode: str = "single") -> Non
         (out_www / "design-tokens.min.css").write_text(css_min or "", encoding="utf-8")
         (out_www / "main.min.js").write_text(js_min or "", encoding="utf-8")
         html_split = index_html
-        if _BS:
+        if _BS is not None:
             soup = _BS(html_split, "html.parser")
             link = soup.find("link", rel="stylesheet")
             if link:
@@ -295,12 +301,14 @@ def build_www_assets(src_www: Path, out_root: Path, mode: str = "single") -> Non
         print_warning("  pip install rcssmin rjsmin htmlmin2 beautifulsoup4")
 
 
-def parse_version(version_str):
+def parse_version(version_str: str | None) -> tuple[tuple[int, int, int], bool] | None:
     """
     Validate and parse semantic version string.
 
-    Pattern: INT.INT.INT[optional "-" + (a|b|rc|rtm|ga)[optional digits]]
-    Examples: "1.2.3", "1.2.3-b", "1.2.3-b2", "1.2.3-rc1"
+    Pattern: INT.INT.INT[optional "-" + (a|b|rc|rtm|ga|s)[optional digits]]
+    Examples: "1.2.3", "1.2.3-b", "1.2.3-b2", "1.2.3-rc1", "1.2.3-s1"
+
+    The "-s" suffix indicates a script-only release.
 
     Returns:
         tuple: (version_tuple, has_prerelease) or None if invalid
@@ -308,8 +316,8 @@ def parse_version(version_str):
     if not version_str:
         return None
 
-    # Validate format: ^\d+\.\d+\.\d+(?:-(?:a|b|rc|rtm|ga)(?:\d+)?)?$
-    pattern = r"^\d+\.\d+\.\d+(?:-(?:a|b|rc|rtm|ga)(?:\d+)?)?$"
+    # Validate format: ^\d+\.\d+\.\d+(?:-(?:a|b|rc|rtm|ga|s)(?:\d+)?)?$
+    pattern = r"^\d+\.\d+\.\d+(?:-(?:a|b|rc|rtm|ga|s)(?:\d+)?)?$"
     if not re.match(pattern, version_str):
         return None
 
@@ -318,14 +326,36 @@ def parse_version(version_str):
     version_parts = parts[0].split(".")
 
     try:
-        version_tuple = tuple(int(x) for x in version_parts)
+        version_tuple_list = [int(x) for x in version_parts]
+        if len(version_tuple_list) != 3:
+            return None
+        version_tuple = (version_tuple_list[0], version_tuple_list[1], version_tuple_list[2])
         has_prerelease = len(parts) > 1
         return (version_tuple, has_prerelease)
     except ValueError:
         return None
 
 
-def extract_base_version(version_str):
+def is_script_only_release(version_str: str | None) -> bool:
+    """
+    Check if a version string indicates a script-only release.
+
+    Script-only releases use the "-s" or "-s[N]" suffix.
+    Examples: "1.2.3-s1", "0.7.2-s", "0.7.2-s3"
+
+    Returns:
+        bool: True if this is a script-only release
+    """
+    if not version_str:
+        return False
+    suffix = extract_suffix(version_str)
+    if not suffix:
+        return False
+    # Match "s" optionally followed by digits
+    return bool(re.match(r"^s\d*$", suffix.lower()))
+
+
+def extract_base_version(version_str: str | None) -> str | None:
     """
     Extract base version (without suffix) from version string.
 
@@ -339,7 +369,7 @@ def extract_base_version(version_str):
     return parts[0] if parts else None
 
 
-def extract_suffix(version_str):
+def extract_suffix(version_str: str | None) -> str | None:
     """
     Extract pre-release suffix from version string.
 
@@ -354,7 +384,7 @@ def extract_suffix(version_str):
     return parts[1] if len(parts) > 1 else None
 
 
-def suggest_versions(current_version):
+def suggest_versions(current_version: str) -> list[str]:
     """Suggest patch, minor, and major version increments."""
     # Extract base version (strip suffix) for suggestions
     base_version = extract_base_version(current_version)
@@ -373,11 +403,12 @@ def suggest_versions(current_version):
             f"{major}.{minor}.{patch + 1}",  # Patch
             f"{major}.{minor + 1}.0",  # Minor
             f"{major + 1}.0.0",  # Major
+            f"{major}.{minor}.{patch}-s1",  # Script-only
         ]
     return []
 
 
-def read_current_version():
+def read_current_version() -> str:
     """Read current VERSION from src/settings.toml."""
     try:
         with open("src/settings.toml") as f:
@@ -390,7 +421,7 @@ def read_current_version():
     return "0.0.0"
 
 
-def update_version_in_settings(new_version):
+def update_version_in_settings(new_version: str) -> None:
     """Update VERSION in src/settings.toml."""
     settings_path = Path("src/settings.toml")
 
@@ -411,7 +442,7 @@ def update_version_in_settings(new_version):
         raise
 
 
-def interactive_build():
+def interactive_build() -> bool:
     """Interactive CLI for creating a firmware release."""
     print_header("🔧 WICID Firmware Build Tool")
 
@@ -482,7 +513,9 @@ def interactive_build():
         if default_base_version:
             suggestions = suggest_versions(default_base_version)
             if suggestions:
-                print(f"   Suggestions: {suggestions[0]} (patch), {suggestions[1]} (minor), {suggestions[2]} (major)")
+                print(
+                    f"   Suggestions: {suggestions[0]} (patch), {suggestions[1]} (minor), {suggestions[2]} (major), {suggestions[3]} (script-only)"
+                )
             default_version = default_base_version
         else:
             # Fallback if manifest version is invalid
@@ -507,8 +540,19 @@ def interactive_build():
     entered_suffix = extract_suffix(version)
     base_version_entered = extract_base_version(version)
 
-    # 4a. Pre-release suffix (only for Development releases)
-    if release_type == "development":
+    # Check for script-only release
+    script_only = is_script_only_release(version)
+    if script_only:
+        print_warning("\n⚠️  Script-only release detected")
+        print("   This creates a minimal package containing only install scripts.")
+        print("   The pre-install script MUST handle cleanup and reboot.")
+        confirm = input("   Continue with script-only release? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Script-only release cancelled.")
+            return False
+
+    # 4a. Pre-release suffix (only for Development releases, skip for script-only)
+    if release_type == "development" and not script_only:
         print("\n4a. Pre-release Suffix:")
         print("   Options: a, b, rc, rtm, or ga")
         print("   You can add a number after the suffix (e.g., b2, rc1)")
@@ -563,6 +607,15 @@ def interactive_build():
         # Update VERSION in settings.toml
         update_version_in_settings(version)
 
+        # Discover install scripts for this version
+        install_scripts = discover_install_scripts(version)
+
+        # For script-only releases, verify pre-install script exists
+        if script_only and not install_scripts.get("has_pre_install_script"):
+            print_error("Script-only release requires a pre-install script.")
+            print_error(f"Expected: {INSTALL_SCRIPTS_DIR}/pre_install_v{version}.py")
+            return False
+
         # Create manifest
         manifest = create_manifest(
             version=version,
@@ -570,6 +623,8 @@ def interactive_build():
             target_oses=target_oses,
             release_type=release_type,
             release_notes=release_notes,
+            install_scripts=install_scripts,
+            script_only=script_only,
         )
 
         # Save manifest to src/
@@ -579,7 +634,10 @@ def interactive_build():
             f.write("\n")
 
         # Build package (returns path and checksum)
-        package_path, checksum = build_package(manifest, version)
+        if script_only:
+            package_path, checksum = build_script_only_package(manifest, version, install_scripts)
+        else:
+            package_path, checksum = build_package(manifest, version)
 
         # Update releases.json with checksum
         print_success("Updating releases.json...")
@@ -594,10 +652,10 @@ def interactive_build():
         committed = False
         tagged = False
         pushed = False
-        commit_sha = None
-        tag_name = None
+        commit_sha: str | None = None
+        tag_name: str | None = None
 
-        artifacts = ["src/settings.toml", "src/manifest.json"]
+        artifacts: list[str] = ["src/settings.toml", "src/manifest.json"]
 
         print_header("Phase 2: Commit and Tag")
         print("\nBuild artifacts ready:")
@@ -632,8 +690,9 @@ def interactive_build():
                         if input().strip().lower() == "y":
                             tag_msg = get_tag_message(version, release_notes)
                             if tag_msg:
-                                tag_name = create_git_tag(version, tag_msg)
-                                if tag_name:
+                                created_tag = create_git_tag(version, tag_msg)
+                                if created_tag:
+                                    tag_name = created_tag
                                     tagged = True
 
                                     # Ask about pushing
@@ -654,9 +713,62 @@ def interactive_build():
         return False
 
 
-def create_manifest(version, target_machines, target_oses, release_type, release_notes):
+def discover_install_scripts(version: str) -> dict[str, Any]:
+    """
+    Discover pre-install and post-install scripts for a given version.
+
+    Scripts must be in firmware_install_scripts/ directory with naming:
+    - pre_install_v{VERSION}.py
+    - post_install_v{VERSION}.py
+
+    Args:
+        version: Version string to match (e.g., "0.6.0-b2")
+
+    Returns:
+        dict: {"has_pre_install_script": bool, "has_post_install_script": bool,
+               "pre_install_path": Path|None, "post_install_path": Path|None}
+    """
+    scripts_dir = Path(INSTALL_SCRIPTS_DIR)
+    result: dict[str, Any] = {
+        "has_pre_install_script": False,
+        "has_post_install_script": False,
+        "pre_install_path": None,
+        "post_install_path": None,
+    }
+
+    if not scripts_dir.exists():
+        return result
+
+    pre_script_name = f"pre_install_v{version}.py"
+    post_script_name = f"post_install_v{version}.py"
+
+    pre_script_path = scripts_dir / pre_script_name
+    post_script_path = scripts_dir / post_script_name
+
+    if pre_script_path.exists():
+        result["has_pre_install_script"] = True
+        result["pre_install_path"] = pre_script_path
+        print_success(f"Found pre-install script: {pre_script_name}")
+
+    if post_script_path.exists():
+        result["has_post_install_script"] = True
+        result["post_install_path"] = post_script_path
+        print_success(f"Found post-install script: {post_script_name}")
+
+    return result
+
+
+def create_manifest(
+    version: str,
+    target_machines: list[str],
+    target_oses: list[str],
+    release_type: str,
+    release_notes: str,
+    install_scripts: dict[str, Any] | None = None,
+    script_only: bool = False,
+) -> dict[str, Any]:
     """Create manifest.json structure for full reset strategy."""
-    manifest = {
+    manifest: dict[str, Any] = {
         "schema_version": "1.0.0",
         "version": version,
         "target_machine_types": target_machines,
@@ -665,10 +777,28 @@ def create_manifest(version, target_machines, target_oses, release_type, release
         "release_notes": release_notes,
         "release_date": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Add install script flags if provided
+    if install_scripts:
+        manifest["has_pre_install_script"] = install_scripts.get("has_pre_install_script", False)
+        manifest["has_post_install_script"] = install_scripts.get("has_post_install_script", False)
+
+    # Add script-only flag
+    if script_only:
+        manifest["script_only_release"] = True
+
     return manifest
 
 
-def update_releases_json(releases_data, manifest, target_machines, target_oses, release_type, version, sha256_checksum):
+def update_releases_json(
+    releases_data: dict[str, Any],
+    manifest: dict[str, Any],
+    target_machines: list[str],
+    target_oses: list[str],
+    release_type: str,
+    version: str,
+    sha256_checksum: str,
+) -> None:
     """Update releases.json with new multi-platform structure."""
     # Find existing release entry matching these machine types and OSes
     release_entry = None
@@ -697,7 +827,7 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
     }
 
     # Sort releases by most recent date
-    def get_latest_date(entry):
+    def get_latest_date(entry: dict[str, Any]) -> str:
         dates = []
         for rt in ["production", "development"]:
             if rt in entry and "release_date" in entry[rt]:
@@ -708,7 +838,70 @@ def update_releases_json(releases_data, manifest, target_machines, target_oses, 
     releases_data["last_updated"] = datetime.now(timezone.utc).isoformat()
 
 
-def build_package(manifest, version):
+def _copy_install_scripts_to_build(build_dir: Path, install_scripts: dict[str, Any]) -> None:
+    """
+    Copy install scripts to build directory in standard location.
+
+    Args:
+        build_dir: Build directory path
+        install_scripts: Dict from discover_install_scripts()
+    """
+    install_scripts_dir = build_dir / INSTALL_SCRIPTS_DIR
+    install_scripts_dir.mkdir(exist_ok=True)
+
+    if install_scripts.get("pre_install_path"):
+        src = install_scripts["pre_install_path"]
+        dest = install_scripts_dir / src.name
+        shutil.copy2(src, dest)
+        print(f"  Copied: {INSTALL_SCRIPTS_DIR}/{src.name}")
+
+    if install_scripts.get("post_install_path"):
+        src = install_scripts["post_install_path"]
+        dest = install_scripts_dir / src.name
+        shutil.copy2(src, dest)
+        print(f"  Copied: {INSTALL_SCRIPTS_DIR}/{src.name}")
+
+
+def _create_zip_package(build_dir: Path, package_path: Path, package_name: str, skip_py_with_mpy: bool = False) -> None:
+    """
+    Create ZIP package from build directory.
+
+    Args:
+        build_dir: Source directory to zip
+        package_path: Destination zip file path
+        package_name: Package name for display
+        skip_py_with_mpy: If True, skip .py files that have corresponding .mpy files
+    """
+    print_success(f"Creating package: {package_name}...")
+
+    file_count = 0
+    with zipfile.ZipFile(package_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in build_dir.rglob("*"):
+            if file.is_file():
+                arcname = file.relative_to(build_dir)
+
+                # Skip hidden files and __pycache__
+                if any(part.startswith(".") or part == "__pycache__" for part in arcname.parts):
+                    continue
+
+                # Skip macOS resource fork files
+                if file.name.startswith("._"):
+                    continue
+
+                # Skip .py source files if a corresponding .mpy exists (for full firmware builds)
+                # Exception: boot.py and code.py must remain as source
+                if skip_py_with_mpy and file.suffix == ".py" and file.name not in ("boot.py", "code.py"):
+                    mpy_file = file.with_suffix(".mpy")
+                    if mpy_file.exists():
+                        continue
+
+                zf.write(file, arcname)
+                file_count += 1
+
+    print(f"  Packaged {file_count} files")
+
+
+def build_package(manifest: dict[str, Any], version: str) -> tuple[Path, str]:
     """Build the release package with bytecode compilation and web asset build."""
     print_success("Compiling Python to bytecode...")
 
@@ -787,29 +980,13 @@ def build_package(manifest, version):
     # Copy manifest.json to build directory
     shutil.copy2("src/manifest.json", build_dir / "manifest.json")
 
+    # Copy install scripts if present (indicated in manifest)
+    if manifest.get("has_pre_install_script") or manifest.get("has_post_install_script"):
+        scripts_info = discover_install_scripts(version)
+        _copy_install_scripts_to_build(build_dir, scripts_info)
+
     # Create ZIP package
-    print_success(f"Creating package: {package_name}...")
-
-    with zipfile.ZipFile(package_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in build_dir.rglob("*"):
-            if file.is_file():
-                arcname = file.relative_to(build_dir)
-
-                # Skip hidden files and __pycache__ (should already be filtered, but belt-and-suspenders)
-                if any(part.startswith(".") or part == "__pycache__" for part in arcname.parts):
-                    continue
-
-                # Skip .py source files if a corresponding .mpy exists
-                # Exception: boot.py and code.py must remain as source
-                if file.suffix == ".py" and file.name not in ("boot.py", "code.py"):
-                    # Check if .mpy version exists
-                    mpy_file = file.with_suffix(".mpy")
-                    if mpy_file.exists():
-                        # Skip the .py file, we'll use the .mpy instead
-                        continue
-
-                zf.write(file, arcname)
-                print(f"  Added: {arcname}")
+    _create_zip_package(build_dir, package_path, package_name, skip_py_with_mpy=True)
 
     validate_build_artifacts(build_dir)
 
@@ -826,7 +1003,65 @@ def build_package(manifest, version):
     return package_path, checksum
 
 
-def validate_build_artifacts(build_dir: Path):
+def build_script_only_package(
+    manifest: dict[str, Any], version: str, install_scripts: dict[str, Any]
+) -> tuple[Path, str]:
+    """
+    Build a minimal script-only release package.
+
+    Script-only packages contain only:
+    - manifest.json (with script_only_release: true)
+    - pre_install_v{version}.py (required)
+    - post_install_v{version}.py (optional)
+
+    Args:
+        manifest: The manifest dictionary
+        version: Version string
+        install_scripts: Dict with script paths from discover_install_scripts()
+
+    Returns:
+        tuple: (package_path, checksum)
+    """
+    print_success("Building script-only package...")
+
+    # Create releases directory
+    releases_dir = Path("releases")
+    releases_dir.mkdir(exist_ok=True)
+
+    # Package is always named wicid_install.zip
+    package_name = "wicid_install.zip"
+    package_path = releases_dir / package_name
+
+    # Create build directory
+    build_dir = Path("build")
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
+    build_dir.mkdir()
+
+    # Copy manifest.json to build directory
+    shutil.copy2("src/manifest.json", build_dir / "manifest.json")
+    print("  Copied: manifest.json")
+
+    # Copy install scripts to standard location
+    _copy_install_scripts_to_build(build_dir, install_scripts)
+
+    # Create ZIP package
+    _create_zip_package(build_dir, package_path, package_name, skip_py_with_mpy=False)
+
+    # Clean up build directory
+    shutil.rmtree(build_dir)
+
+    print_success(f"Script-only package created: {package_path}")
+
+    # Calculate SHA-256 checksum
+    print_success("Calculating SHA-256 checksum...")
+    checksum = calculate_sha256(package_path)
+    print(f"  SHA-256: {checksum}")
+
+    return package_path, checksum
+
+
+def validate_build_artifacts(build_dir: Path) -> None:
     """Validate critical files exist and have expected formats after build."""
     errors = []
 
@@ -851,8 +1086,11 @@ def validate_build_artifacts(build_dir: Path):
         if not (build_dir / filename).exists():
             errors.append(f"{filename} missing")
 
+    # Check for unexpected .py files at root
+    # Allow: boot.py, code.py (install scripts are in firmware_install_scripts/)
+    allowed_root_py = {"boot.py", "code.py"}
     for py_file in build_dir.glob("*.py"):
-        if py_file.name not in ("boot.py", "code.py"):
+        if py_file.name not in allowed_root_py:
             errors.append(f"Unexpected source file at root: {py_file.name}")
 
     if errors:
@@ -860,7 +1098,7 @@ def validate_build_artifacts(build_dir: Path):
         raise Exception(f"Build validation failed:\n{detail}")
 
 
-def show_preview(manifest, package_path, old_version):
+def show_preview(manifest: dict[str, Any], package_path: Path, old_version: str) -> None:
     """Show preview of the release."""
     print_header("Release Preview")
     print(f"  Version:           {old_version} → {manifest['version']}")
@@ -872,7 +1110,7 @@ def show_preview(manifest, package_path, old_version):
     print(f"  Package Size:      {package_path.stat().st_size / 1024:.1f} KB")
 
 
-def get_commit_message(version, release_notes):
+def get_commit_message(version: str, release_notes: str) -> str | None:
     """Get commit message from user with option to customize."""
     default_msg = f"Release v{version}"
     if release_notes:
@@ -903,7 +1141,7 @@ def get_commit_message(version, release_notes):
         return default_msg
 
 
-def commit_files(commit_message):
+def commit_files(commit_message: str) -> str | None:
     """Commit staged files and return commit SHA."""
     try:
         subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True, check=True)
@@ -915,7 +1153,7 @@ def commit_files(commit_message):
         return None
 
 
-def get_tag_message(version, release_notes):
+def get_tag_message(version: str, release_notes: str) -> str | None:
     """Get tag message from user with option to customize."""
     default_msg = f"Release {version}"
     if release_notes:
@@ -946,7 +1184,7 @@ def get_tag_message(version, release_notes):
         return default_msg
 
 
-def create_git_tag(version, tag_message):
+def create_git_tag(version: str, tag_message: str) -> str | None:
     """Create git tag in v{version} format with custom message."""
     tag_name = f"v{version}"
 
@@ -959,7 +1197,7 @@ def create_git_tag(version, tag_message):
         return None
 
 
-def stage_files():
+def stage_files() -> None:
     """Stage manifest files for commit."""
     files_to_stage = ["src/settings.toml", "src/manifest.json"]
 
@@ -970,7 +1208,7 @@ def stage_files():
         raise
 
 
-def push_changes(tag_name):
+def push_changes(tag_name: str) -> bool:
     """Push commits and tags to remote."""
     try:
         # Push the branch
@@ -990,7 +1228,16 @@ def push_changes(tag_name):
         return False
 
 
-def show_build_summary(version, package_path, committed, tagged, pushed, commit_sha, tag_name, artifacts):
+def show_build_summary(
+    version: str,
+    package_path: Path,
+    committed: bool,
+    tagged: bool,
+    pushed: bool,
+    commit_sha: str | None,
+    tag_name: str | None,
+    artifacts: list[str],
+) -> None:
     """Show comprehensive summary of build process."""
     print_header("Build Summary")
 
@@ -1039,7 +1286,7 @@ def show_build_summary(version, package_path, committed, tagged, pushed, commit_
     print()
 
 
-def show_help():
+def show_help() -> None:
     """Display help information."""
     help_text = f"""
 {Colors.HEADER}{Colors.BOLD}WICID Firmware Build Tool{Colors.ENDC}
@@ -1082,7 +1329,7 @@ Override with env var:
     print(help_text)
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     if len(sys.argv) > 1:
         arg = sys.argv[1]

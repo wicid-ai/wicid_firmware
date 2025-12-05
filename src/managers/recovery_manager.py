@@ -24,6 +24,7 @@ Usage:
     success, message = RecoveryManager.restore_from_recovery()
 """
 
+import json
 import os
 import traceback
 
@@ -105,6 +106,29 @@ class RecoveryManager:
         return ordered
 
     @staticmethod
+    def _validate_files_in_directory(base_dir: str, files: set[str]) -> tuple[bool, List[str]]:
+        """
+        Validate that all specified files exist in a directory.
+
+        Args:
+            base_dir: Base directory path (empty string for root)
+            files: Set of file paths to validate
+
+        Returns:
+            tuple: (bool, list) - (all_present, missing_files)
+        """
+        missing_files = []
+
+        for file_path in files:
+            full_path = base_dir + file_path if base_dir else file_path
+            try:
+                os.stat(full_path)
+            except OSError:
+                missing_files.append(file_path)
+
+        return (len(missing_files) == 0, missing_files)
+
+    @staticmethod
     def validate_critical_files() -> tuple[bool, List[str]]:
         """
         Validate that all critical system files are present after installation.
@@ -118,15 +142,7 @@ class RecoveryManager:
                 - all_present: True if all critical files exist
                 - missing_files: List of missing file paths (empty if all present)
         """
-        missing_files = []
-
-        for file_path in RecoveryManager.CRITICAL_FILES:
-            try:
-                os.stat(file_path)
-            except OSError:
-                missing_files.append(file_path)
-
-        return (len(missing_files) == 0, missing_files)
+        return RecoveryManager._validate_files_in_directory("", RecoveryManager.CRITICAL_FILES)
 
     @staticmethod
     def recovery_exists() -> bool:
@@ -328,7 +344,10 @@ class RecoveryManager:
     @staticmethod
     def validate_extracted_update(extracted_dir: str) -> tuple[bool, List[str]]:
         """
-        Validate that extracted update contains all critical files.
+        Validate that extracted update contains all required files.
+
+        For script-only releases, only validates manifest.json exists.
+        For full releases, validates all critical files are present.
 
         Called after extraction but before installation to ensure the update
         package is complete and won't brick the device.
@@ -339,18 +358,17 @@ class RecoveryManager:
         Returns:
             tuple: (bool, list) - (all_present, missing_files)
         """
-        missing_files: List[str] = []
+        # Check if this is a script-only release
+        manifest_path = extracted_dir + "/manifest.json"
+        with suppress(OSError, ValueError), open(manifest_path) as f:
+            manifest = json.load(f)
+            if manifest.get("script_only_release", False):
+                # Script-only releases only need manifest.json
+                # Pre-install script will be validated separately
+                return (True, [])
 
-        for file_path in RecoveryManager.CRITICAL_FILES:
-            # Convert root path to extracted directory path
-            extracted_path = extracted_dir + file_path
-
-            try:
-                os.stat(extracted_path)
-            except OSError:
-                missing_files.append(file_path)
-
-        return (len(missing_files) == 0, missing_files)
+        # Normal validation for full releases
+        return RecoveryManager._validate_files_in_directory(extracted_dir, RecoveryManager.CRITICAL_FILES)
 
     @staticmethod
     def validate_backup_integrity() -> tuple[bool, str]:

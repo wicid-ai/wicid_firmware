@@ -66,7 +66,158 @@ PENDING_ROOT_DIR = "/pending_update/root"
 PENDING_STAGING_DIR = "/pending_update/.staging"
 READY_MARKER_FILE = "/pending_update/.ready"
 BOOT_LOG_FILE = "/boot_log.txt"
+INSTALL_LOG_FILE = "/install.log"
+INSTALL_SCRIPTS_DIR = "firmware_install_scripts"
 _LOGGED_BOOT_ERROR = False
+
+
+def _get_script_path(script_type: str, version: str, base_dir: str = "") -> str:
+    """
+    Get the expected path for a pre/post install script.
+
+    Args:
+        script_type: "pre_install" or "post_install"
+        version: Version string (e.g., "0.6.0-b2")
+        base_dir: Base directory path (e.g., "/pending_update/root" or "")
+
+    Returns:
+        str: Full path to the script file
+    """
+    script_name = f"{script_type}_v{version}.py"
+    if base_dir:
+        return f"{base_dir}/{INSTALL_SCRIPTS_DIR}/{script_name}"
+    return f"/{INSTALL_SCRIPTS_DIR}/{script_name}"
+
+
+def _write_install_log(message: str, overwrite: bool = False) -> None:
+    """
+    Write a message to the install log file.
+
+    Args:
+        message: Message to write
+        overwrite: If True, overwrite the file; otherwise append
+    """
+    mode = "w" if overwrite else "a"
+    try:
+        with open(INSTALL_LOG_FILE, mode) as f:
+            f.write(message + "\n")
+    except Exception:
+        pass  # Best effort logging
+
+
+def execute_install_script(
+    script_path: str,
+    script_type: str,
+    version: str,
+    installer: Any = None,
+    pending_root_dir: str = PENDING_ROOT_DIR,
+    pending_update_dir: str = PENDING_UPDATE_DIR,
+) -> tuple[bool, str]:
+    """
+    Execute a pre-install or post-install script.
+
+    The script must define a main() function that accepts appropriate arguments:
+    - Pre-install: main(log_message, pending_root_dir, pending_update_dir)
+    - Post-install: main(log_message, version)
+
+    Args:
+        script_path: Full path to the script file
+        script_type: "pre_install" or "post_install" for logging
+        version: Version string of the update
+        installer: Optional UpdateInstaller instance for LED feedback
+        pending_root_dir: Path to extracted update files
+        pending_update_dir: Path to pending update directory
+
+    Returns:
+        tuple: (success, message)
+    """
+    log_boot_message(f"Executing {script_type} script: {script_path}")
+    _write_install_log(f"\n{'=' * 50}")
+    _write_install_log(f"{script_type.upper()} SCRIPT EXECUTION")
+    _write_install_log(f"Script: {script_path}")
+    _write_install_log(f"Version: {version}")
+    _write_install_log(f"{'=' * 50}")
+
+    # Update LED
+    if installer:
+        installer.update_led()
+
+    try:
+        # Check if script exists
+        try:
+            os.stat(script_path)
+        except OSError:
+            msg = f"Script not found: {script_path}"
+            log_boot_message(msg)
+            _write_install_log(msg)
+            return (False, msg)
+
+        # Read script content
+        with open(script_path) as f:
+            script_content = f.read()
+
+        # Create log function for script to use
+        def script_log(message: str) -> None:
+            log_boot_message(f"  [{script_type}] {message}")
+            _write_install_log(f"  {message}")
+            if installer:
+                installer.update_led()
+
+        # Prepare execution environment with useful modules
+        # Import builtins module directly - works in both CPython and CircuitPython
+        import builtins
+
+        script_globals: dict[str, Any] = {
+            "__name__": "__main__",
+            "__builtins__": builtins.__dict__,
+            "os": os,
+            "json": json,
+            "sys": sys,
+            "time": time,
+            "traceback": traceback,
+            "microcontroller": microcontroller,
+        }
+
+        # Execute the script to define main()
+        exec(script_content, script_globals)
+
+        # Check if main() is defined
+        if "main" not in script_globals:
+            msg = f"Script missing main() function: {script_path}"
+            log_boot_message(f"ERROR: {msg}")
+            _write_install_log(f"ERROR: {msg}")
+            return (False, msg)
+
+        # Call main() with appropriate arguments
+        if script_type == "pre_install":
+            result = script_globals["main"](script_log, pending_root_dir, pending_update_dir)
+        else:  # post_install
+            result = script_globals["main"](script_log, version)
+
+        # Interpret result
+        if result is True or result is None:
+            msg = f"{script_type} script completed successfully"
+            log_boot_message(f"✓ {msg}")
+            _write_install_log(f"SUCCESS: {msg}")
+            return (True, msg)
+        else:
+            msg = f"{script_type} script returned failure"
+            log_boot_message(f"✗ {msg}")
+            _write_install_log(f"FAILURE: {msg}")
+            return (False, msg)
+
+    except Exception as e:
+        msg = f"{script_type} script error: {e}"
+        log_boot_message(f"ERROR: {msg}")
+        _write_install_log(f"ERROR: {msg}")
+        # Traceback logging - protect against traceback module issues in CircuitPython
+        try:
+            tb_str = traceback.format_exc()
+            log_boot_message(f"Traceback: {tb_str}")
+            _write_install_log(f"Traceback:\n{tb_str}")
+        except Exception:
+            pass  # Best effort traceback logging
+        return (False, msg)
 
 
 class UpdateInstaller:
@@ -135,6 +286,8 @@ def remove_directory_recursive(path: str, installer: Any = None) -> None:
     Recursively remove a directory and all its contents.
     CircuitPython-compatible (no os.walk).
 
+    Uses multiple passes to handle FAT filesystem quirks and hidden files.
+
     Args:
         path: Directory path to remove
         installer: Optional UpdateInstaller instance for LED feedback
@@ -145,6 +298,7 @@ def remove_directory_recursive(path: str, installer: Any = None) -> None:
         # Path doesn't exist or isn't a directory
         return
 
+    # First pass: Remove all files (including hidden files like ._*)
     for item in items:
         item_path = f"{path}/{item}" if not path.endswith("/") else f"{path}{item}"
 
@@ -152,23 +306,40 @@ def remove_directory_recursive(path: str, installer: Any = None) -> None:
         if installer:
             installer.update_led()
 
-        # Try to remove as file first
-        try:
+        # Try to remove as file
+        with suppress(OSError):
             os.remove(item_path)
-            continue
-        except OSError:
-            pass
 
-        # Must be a directory, recurse into it
+    # Second pass: Recurse into directories and remove them
+    # Re-list to handle any changes from first pass
+    try:
+        items = os.listdir(path)
+    except OSError:
+        return
+
+    for item in items:
+        item_path = f"{path}/{item}" if not path.endswith("/") else f"{path}{item}"
+
+        # Update LED
+        if installer:
+            installer.update_led()
+
+        # Recurse into subdirectories
         remove_directory_recursive(item_path, installer)
 
-        # Remove the now-empty directory
+        # Try to remove the directory
         with suppress(OSError):
             os.rmdir(item_path)
 
-    # Remove the directory itself
-    with suppress(OSError):
-        os.rmdir(path)
+    # Final pass: Remove the directory itself (with retry)
+    for _ in range(3):
+        try:
+            os.rmdir(path)
+            break  # Success
+        except OSError:
+            # Sync filesystem and retry
+            os.sync()
+            time.sleep(0.1)
 
 
 def cleanup_pending_update(installer: Any = None) -> None:
@@ -454,6 +625,50 @@ def process_pending_update() -> None:
         log_boot_message(f"Current version: {current_version}")
         log_boot_message(f"Update version: {manifest.get('version', 'unknown')}")
 
+        # Initialize install log for this update attempt
+        update_version = manifest.get("version", "unknown")
+        _write_install_log("WICID Firmware Update", overwrite=True)
+        _write_install_log(f"Update version: {update_version}")
+        _write_install_log(f"Current version: {current_version}")
+        _write_install_log(f"Timestamp: {time.monotonic()}")
+
+        # Step 2.5: Execute pre-install script if present
+        # Pre-install runs BEFORE compatibility checks and validation
+        # This allows the script to modify files before validation runs
+        if manifest.get("has_pre_install_script", False):
+            pre_script_path = _get_script_path("pre_install", update_version, PENDING_ROOT_DIR)
+            log_boot_message("Pre-install script indicated in manifest")
+
+            script_success, script_msg = execute_install_script(
+                script_path=pre_script_path,
+                script_type="pre_install",
+                version=update_version,
+                installer=installer,
+                pending_root_dir=PENDING_ROOT_DIR,
+                pending_update_dir=PENDING_UPDATE_DIR,
+            )
+
+            if not script_success:
+                log_boot_message(f"ERROR: Pre-install script failed: {script_msg}")
+
+                # Turn off LED on error
+                if installer:
+                    installer.turn_off_led()
+
+                # Mark as incompatible
+                if mark_incompatible_release is not None:
+                    mark_incompatible_release(update_version, f"Pre-install script failed: {script_msg}")
+
+                cleanup_pending_update()
+                log_boot_message("=" * 50)
+                log_boot_message("Update aborted due to pre-install script failure")
+                log_boot_message("=" * 50)
+                return
+
+            # Update LED after script
+            if installer:
+                installer.update_led()
+
         # Step 3: Verify compatibility using DRY check
         if check_release_compatibility is not None:
             is_compatible, error_msg = check_release_compatibility(manifest, current_version)
@@ -623,6 +838,34 @@ def process_pending_update() -> None:
                 # Update LED after backup
                 if installer:
                     installer.update_led()
+
+                # Step 8.5: Execute post-install script if present
+                # Post-install runs AFTER recovery backup is created
+                # This ensures device can recover if script fails
+                if manifest.get("has_post_install_script", False):
+                    post_script_path = _get_script_path("post_install", update_version, "")
+                    log_boot_message("Post-install script indicated in manifest")
+
+                    script_success, script_msg = execute_install_script(
+                        script_path=post_script_path,
+                        script_type="post_install",
+                        version=update_version,
+                        installer=installer,
+                        pending_root_dir=PENDING_ROOT_DIR,
+                        pending_update_dir=PENDING_UPDATE_DIR,
+                    )
+
+                    if not script_success:
+                        # Post-install failures are non-fatal - log and continue
+                        log_boot_message(f"WARNING: Post-install script failed: {script_msg}")
+                        log_boot_message("Continuing with update (recovery backup already created)")
+                        _write_install_log("WARNING: Post-install script failed but update continues")
+                    else:
+                        log_boot_message("✓ Post-install script completed")
+
+                    # Update LED after script
+                    if installer:
+                        installer.update_led()
 
                 # Step 9: Cleanup pending update directory
                 cleanup_pending_update(installer)
