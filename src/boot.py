@@ -16,14 +16,16 @@ module to restore these files from /recovery/ before attempting the import.
 
 import os
 
-# BOOT_CRITICAL: Files that boot_support.py needs to import successfully.
-# If any of these are missing, boot halts before recovery can run.
-# This list MUST match RecoveryManager.BOOT_CRITICAL_FILES in recovery_manager.py
+# BOOT_CRITICAL: Minimum files needed to reach RecoveryManager.
+# These files allow boot_support.py to import and load RecoveryManager,
+# which can then restore the full set of CRITICAL_FILES.
+# Dependency chain: boot.py → boot_support → {app_typing, logging_helper, utils} → recovery_manager
 _BOOT_CRITICAL = [
     "/core/boot_support.mpy",
-    "/core/logging_helper.mpy",
     "/core/app_typing.mpy",
+    "/core/logging_helper.mpy",
     "/utils/utils.mpy",
+    "/managers/recovery_manager.mpy",
 ]
 
 _RECOVERY_DIR = "/recovery"

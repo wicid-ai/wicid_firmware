@@ -240,8 +240,103 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             self.assertIn("/boot.py", missing)
 
 
+class TestRecoveryManagerClearRecoveryDirectory(unittest.TestCase):
+    """Test _clear_recovery_directory helper method."""
+
+    def test_clears_existing_files(self) -> None:
+        """Existing files in recovery directory should be removed."""
+        removed_files: list[str] = []
+        # Track which files have been "removed" so subsequent listdir calls return empty
+        listdir_calls = {"count": 0}
+
+        def mock_listdir(path: str) -> list[str]:
+            listdir_calls["count"] += 1
+            # First call returns files, subsequent calls return empty (files removed)
+            if listdir_calls["count"] == 1:
+                return ["old_file.mpy", "stale.py"]
+            return []
+
+        def mock_remove(path: str) -> None:
+            removed_files.append(path)
+
+        with (
+            patch("os.listdir", side_effect=mock_listdir),
+            patch("os.remove", side_effect=mock_remove),
+            patch("os.rmdir"),
+            patch("os.sync"),
+        ):
+            from managers.recovery_manager import RecoveryManager
+
+            RecoveryManager._clear_recovery_directory()
+            self.assertIn("/recovery/old_file.mpy", removed_files)
+            self.assertIn("/recovery/stale.py", removed_files)
+
+    def test_handles_nonexistent_directory(self) -> None:
+        """Should handle gracefully if recovery directory doesn't exist."""
+        with patch("os.listdir", side_effect=OSError("Directory not found")):
+            from managers.recovery_manager import RecoveryManager
+
+            # Should not raise
+            RecoveryManager._clear_recovery_directory()
+
+    def test_clears_subdirectories(self) -> None:
+        """Subdirectories in recovery should be recursively cleared."""
+        call_count = {"listdir": 0}
+
+        def mock_listdir(path: str) -> list[str]:
+            call_count["listdir"] += 1
+            # First call to /recovery returns subdir
+            if path == "/recovery" and call_count["listdir"] == 1:
+                return ["subdir"]
+            # First call to /recovery/subdir returns a file
+            if path == "/recovery/subdir" and call_count["listdir"] <= 3:
+                return ["file.mpy"]
+            # Subsequent calls return empty (files removed)
+            return []
+
+        with (
+            patch("os.listdir", side_effect=mock_listdir),
+            patch("os.remove"),
+            patch("os.rmdir"),
+            patch("os.sync"),
+        ):
+            from managers.recovery_manager import RecoveryManager
+
+            RecoveryManager._clear_recovery_directory()
+            # Should have listed both recovery and subdirectory
+            self.assertGreater(call_count["listdir"], 1)
+
+
 class TestRecoveryManagerCreateBackup(unittest.TestCase):
     """Test create_recovery_backup static method."""
+
+    def test_clears_directory_before_backup(self) -> None:
+        """Recovery directory should be cleared before creating fresh backup."""
+        clear_called = {"called": False}
+
+        def track_clear() -> None:
+            clear_called["called"] = True
+
+        mock_file_content = b"test content"
+        mock_open_obj = MagicMock()
+        mock_open_obj.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=mock_file_content)))
+        mock_open_obj.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("os.mkdir"),
+            patch("os.listdir", side_effect=OSError),  # Not a directory
+            patch("os.sync"),
+            patch("builtins.open", return_value=mock_open_obj),
+            patch("core.logging_helper.logger"),
+            patch(
+                "managers.recovery_manager.RecoveryManager._clear_recovery_directory", side_effect=track_clear
+            ) as mock_clear,
+        ):
+            from managers.recovery_manager import RecoveryManager
+
+            RecoveryManager.create_recovery_backup()
+            mock_clear.assert_called_once()
+            self.assertTrue(clear_called["called"])
 
     def test_creates_recovery_directory(self) -> None:
         mock_file_content = b"test content"
@@ -496,56 +591,67 @@ class TestPreservedFiles(unittest.TestCase):
         self.assertEqual(len(RecoveryManager.PRESERVED_FILES), 2)
 
 
-class TestBootCriticalFiles(unittest.TestCase):
-    """Test BOOT_CRITICAL_FILES constant for emergency recovery in boot.py."""
+class TestBootCriticalAlignment(unittest.TestCase):
+    """Test that boot.py's _BOOT_CRITICAL aligns with RecoveryManager.CRITICAL_FILES."""
 
-    def test_boot_critical_files_exists(self) -> None:
-        """BOOT_CRITICAL_FILES constant should exist for emergency recovery."""
+    def _get_boot_critical_from_source(self) -> list[str]:
+        """Parse boot.py to extract the _BOOT_CRITICAL list."""
+        import ast
+        from pathlib import Path
+
+        boot_py_path = Path(__file__).parent.parent.parent / "src" / "boot.py"
+        with open(boot_py_path) as f:
+            content = f.read()
+
+        tree = ast.parse(content)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Name)
+                        and target.id == "_BOOT_CRITICAL"
+                        and isinstance(node.value, ast.List)
+                    ):
+                        return [elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)]
+        return []
+
+    def test_boot_critical_is_subset_of_critical_files(self) -> None:
+        """boot.py's _BOOT_CRITICAL must be a subset of RecoveryManager.CRITICAL_FILES."""
         from managers.recovery_manager import RecoveryManager
 
-        self.assertTrue(hasattr(RecoveryManager, "BOOT_CRITICAL_FILES"))
+        boot_critical = self._get_boot_critical_from_source()
+        self.assertTrue(len(boot_critical) > 0, "Could not parse _BOOT_CRITICAL from boot.py")
 
-    def test_boot_critical_files_is_subset_of_critical(self) -> None:
-        """BOOT_CRITICAL_FILES should be a subset of CRITICAL_FILES."""
-        from managers.recovery_manager import RecoveryManager
-
-        for path in RecoveryManager.BOOT_CRITICAL_FILES:
+        for path in boot_critical:
             self.assertIn(
                 path,
                 RecoveryManager.CRITICAL_FILES,
-                f"BOOT_CRITICAL file {path} not in CRITICAL_FILES",
+                f"boot.py _BOOT_CRITICAL file {path} not in RecoveryManager.CRITICAL_FILES",
             )
 
-    def test_boot_critical_files_minimal_count(self) -> None:
-        """BOOT_CRITICAL_FILES should be minimal (4 files for boot chain only)."""
-        from managers.recovery_manager import RecoveryManager
+    def test_boot_critical_count(self) -> None:
+        """boot.py _BOOT_CRITICAL should have exactly 5 files for recovery chain."""
+        boot_critical = self._get_boot_critical_from_source()
+        # 5 files: boot_support, app_typing, logging_helper, utils, recovery_manager
+        self.assertEqual(len(boot_critical), 5, f"Expected 5 files, got {len(boot_critical)}: {boot_critical}")
 
-        # Only the files needed for boot.py to successfully import boot_support
-        self.assertEqual(len(RecoveryManager.BOOT_CRITICAL_FILES), 4)
+    def test_boot_critical_includes_recovery_manager(self) -> None:
+        """recovery_manager.mpy must be in _BOOT_CRITICAL for recovery to work."""
+        boot_critical = self._get_boot_critical_from_source()
+        self.assertIn(
+            "/managers/recovery_manager.mpy",
+            boot_critical,
+            "recovery_manager.mpy missing from boot.py _BOOT_CRITICAL",
+        )
 
     def test_boot_critical_includes_boot_support(self) -> None:
-        """boot_support.mpy must be in BOOT_CRITICAL for boot.py to work."""
-        from managers.recovery_manager import RecoveryManager
-
-        self.assertIn("/core/boot_support.mpy", RecoveryManager.BOOT_CRITICAL_FILES)
-
-    def test_boot_critical_includes_logging_helper(self) -> None:
-        """logging_helper.mpy must be in BOOT_CRITICAL (boot_support imports it)."""
-        from managers.recovery_manager import RecoveryManager
-
-        self.assertIn("/core/logging_helper.mpy", RecoveryManager.BOOT_CRITICAL_FILES)
-
-    def test_boot_critical_includes_app_typing(self) -> None:
-        """app_typing.mpy must be in BOOT_CRITICAL (logging_helper imports it)."""
-        from managers.recovery_manager import RecoveryManager
-
-        self.assertIn("/core/app_typing.mpy", RecoveryManager.BOOT_CRITICAL_FILES)
-
-    def test_boot_critical_includes_utils(self) -> None:
-        """utils.mpy must be in BOOT_CRITICAL (boot_support imports it)."""
-        from managers.recovery_manager import RecoveryManager
-
-        self.assertIn("/utils/utils.mpy", RecoveryManager.BOOT_CRITICAL_FILES)
+        """boot_support.mpy must be in _BOOT_CRITICAL for boot.py to work."""
+        boot_critical = self._get_boot_critical_from_source()
+        self.assertIn(
+            "/core/boot_support.mpy",
+            boot_critical,
+            "boot_support.mpy missing from boot.py _BOOT_CRITICAL",
+        )
 
 
 if __name__ == "__main__":

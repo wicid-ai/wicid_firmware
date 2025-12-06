@@ -5,13 +5,9 @@ Handles backup and restoration of critical system files to prevent device bricki
 during firmware updates. This module is separate from UpdateManager to isolate
 recovery concerns and make the recovery logic reusable.
 
-Critical Files:
-    - Boot-critical: Required for boot.py to succeed
-    - Runtime-critical: Required for code.py to succeed
-    - System-critical: Required for device configuration and updates
-    - Network-critical: Required to download updates
-    - Update-critical: Required for OTA updates to function
-    - Library dependencies: Required by critical modules
+CRITICAL_FILES is the complete set of files required for the device to boot and
+perform OTA updates. boot.py maintains its own minimal _BOOT_CRITICAL list for
+emergency recovery (the subset needed to load this module).
 
 Usage:
     # Before installing an update, create a backup
@@ -46,20 +42,10 @@ class RecoveryManager:
         "DEVELOPMENT",  # Development mode flag (user-set)
     }
 
-    # BOOT_CRITICAL_FILES: Minimal set for boot.py emergency recovery
-    # These are the files that boot.py needs to successfully import boot_support.
-    # If ANY of these are missing, boot.py halts before recovery can run.
-    # boot.py includes inline emergency recovery for these 4 files only.
-    BOOT_CRITICAL_FILES = {
-        "/core/boot_support.mpy",  # Imported by boot.py
-        "/core/logging_helper.mpy",  # Imported by boot_support (CRITICAL - halts if missing)
-        "/core/app_typing.mpy",  # Imported by logging_helper
-        "/utils/utils.mpy",  # Imported by boot_support (CRITICAL - halts if missing)
-    }
-
-    # CRITICAL_FILES: Full set for boot + OTA self-healing capability
+    # CRITICAL_FILES: Complete set for boot + OTA self-healing capability.
     # Missing any of these prevents the device from downloading/installing updates.
-    # This is the MINIMAL set required for boot + OTA recovery (21 files total).
+    # This is the MINIMAL set required for boot + OTA recovery (20 files).
+    # boot.py maintains its own _BOOT_CRITICAL subset for emergency recovery.
     CRITICAL_FILES = {
         # === BOOT CHAIN (device won't start without these) ===
         "/boot.py",  # CircuitPython requires source .py file
@@ -88,22 +74,9 @@ class RecoveryManager:
     }
 
     @classmethod
-    def _critical_backup_order(cls) -> List[str]:
-        """Return boot-critical files first, followed by remaining critical files."""
-        ordered: list[str] = []
-        seen: set[str] = set()
-
-        for path in cls.BOOT_CRITICAL_FILES:
-            if path not in seen:
-                ordered.append(path)
-                seen.add(path)
-
-        for path in cls.CRITICAL_FILES:
-            if path not in seen:
-                ordered.append(path)
-                seen.add(path)
-
-        return ordered
+    def _critical_files_list(cls) -> List[str]:
+        """Return CRITICAL_FILES as a list for iteration."""
+        return list(cls.CRITICAL_FILES)
 
     @staticmethod
     def _validate_files_in_directory(base_dir: str, files: set[str]) -> tuple[bool, List[str]]:
@@ -159,11 +132,72 @@ class RecoveryManager:
             return False
 
     @staticmethod
+    def _clear_recovery_directory() -> None:
+        """
+        Clear the recovery directory to ensure a fresh backup.
+
+        Removes all existing files and subdirectories in /recovery/ to prevent
+        stale files from accumulating when CRITICAL_FILES changes.
+        """
+        recovery_dir = RecoveryManager.RECOVERY_DIR
+        try:
+            items = os.listdir(recovery_dir)
+        except OSError:
+            return  # Directory doesn't exist
+
+        # Remove all files first
+        for item in items:
+            item_path = f"{recovery_dir}/{item}"
+            with suppress(OSError):
+                os.remove(item_path)
+
+        # Recurse into directories and remove them
+        try:
+            items = os.listdir(recovery_dir)
+        except OSError:
+            return
+
+        for item in items:
+            item_path = f"{recovery_dir}/{item}"
+            # Recursively clear subdirectories
+            RecoveryManager._clear_subdirectory(item_path)
+            with suppress(OSError):
+                os.rmdir(item_path)
+
+        os.sync()
+
+    @staticmethod
+    def _clear_subdirectory(path: str) -> None:
+        """Recursively clear a subdirectory."""
+        try:
+            items = os.listdir(path)
+        except OSError:
+            return
+
+        for item in items:
+            item_path = f"{path}/{item}"
+            with suppress(OSError):
+                os.remove(item_path)
+
+        # Re-list and recurse into remaining directories
+        try:
+            items = os.listdir(path)
+        except OSError:
+            return
+
+        for item in items:
+            item_path = f"{path}/{item}"
+            RecoveryManager._clear_subdirectory(item_path)
+            with suppress(OSError):
+                os.rmdir(item_path)
+
+    @staticmethod
     def create_recovery_backup() -> tuple[bool, str]:
         """
-        Create or update recovery backup of critical system files.
+        Create a fresh recovery backup of critical system files.
 
-        Backs up only critical files needed for device to boot and perform updates.
+        Clears any existing backup first to ensure no stale files remain,
+        then backs up only critical files needed for device to boot and perform updates.
         Recovery backup is persistent and only updated on successful installations.
 
         Returns:
@@ -171,17 +205,21 @@ class RecoveryManager:
         """
         log = logger("wicid.recovery")
         try:
-            # Create recovery directory if it doesn't exist
+            # Clear existing recovery directory to remove stale files
+            RecoveryManager._clear_recovery_directory()
+            log.debug("Cleared existing recovery directory")
+
+            # Create fresh recovery directory
             try:
                 os.mkdir(RecoveryManager.RECOVERY_DIR)
                 log.debug(f"Created recovery directory: {RecoveryManager.RECOVERY_DIR}")
             except OSError:
-                pass  # Directory already exists
+                pass  # Directory already exists (shouldn't happen after clear)
 
             backed_up_count = 0
             failed_files = []
 
-            for file_path in RecoveryManager._critical_backup_order():
+            for file_path in RecoveryManager._critical_files_list():
                 try:
                     # Determine if it's a file or directory
                     is_dir = False
@@ -271,7 +309,7 @@ class RecoveryManager:
             restored_count = 0
             failed_files = []
 
-            for file_path in RecoveryManager._critical_backup_order():
+            for file_path in RecoveryManager._critical_files_list():
                 recovery_path = RecoveryManager.RECOVERY_DIR + file_path
 
                 try:

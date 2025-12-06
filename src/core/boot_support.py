@@ -3,62 +3,75 @@ WICID Boot Support Module
 
 This module contains all boot logic that runs before code.py:
 1. Storage configuration (disable USB, remount filesystem)
-2. Checking for and installing pending firmware updates
-3. Full reset update strategy (all-or-nothing replacement)
+2. Recovery from missing critical files (via RecoveryManager)
+3. Processing pending firmware updates (full reset strategy)
+
+Boot Flow:
+    boot.py → _emergency_recovery() → boot_support.main()
+                                            ↓
+                                      configure_storage()
+                                            ↓
+                                 check_and_restore_from_recovery()
+                                            ↓
+                                    process_pending_update()
 
 This module is compiled to bytecode (.mpy) for efficiency.
 """
 
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
+# Built-in modules
 import json
 import os
-
-# Import compatibility checking utilities
 import sys
 import time
 import traceback
 
+# CircuitPython hardware modules
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 import storage  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
+# Ensure root is in path for absolute imports
 sys.path.insert(0, "/")
 
-from .app_typing import Any
-
-IMPORT_ERROR = None
-
-# CRITICAL imports - these MUST succeed or boot should fail
-# If these fail, it indicates file corruption or incomplete deployment
+# -----------------------------------------------------------------------------
+# CRITICAL imports - boot halts if these fail
+# boot.py's emergency recovery ensures these files exist before we get here.
+# If they still fail, the device is in an unrecoverable state.
+# -----------------------------------------------------------------------------
 try:
-    from core.logging_helper import logger  # noqa: F401 - Used by code later in module
+    from core.app_typing import Any
+    from core.logging_helper import logger  # noqa: F401 - Used later in module
+    from managers.recovery_manager import RecoveryManager
     from utils.utils import check_release_compatibility, mark_incompatible_release, suppress
 except ImportError as e:
-    # CRITICAL: Cannot continue without these fundamental utilities
     print("=" * 50)
     print(f"FATAL BOOT ERROR: Critical import failed - {e}")
-    print("This indicates file corruption or incomplete firmware deployment!")
-    print("Device cannot boot safely. Please:")
+    print("boot.py emergency recovery should have restored these files.")
+    print("This indicates severe filesystem corruption.")
+    print("Please:")
     print("  1. Enter Safe Mode (hold BOOT button during power-on)")
     print("  2. Run installer.py with HARD update mode")
     print("=" * 50)
-    # Re-raise to halt boot - this is NOT recoverable
     raise
 
+# -----------------------------------------------------------------------------
 # OPTIONAL imports - graceful degradation if these fail
-# Update/Recovery functionality will be disabled but device can still operate
+# These provide UX enhancements but are not required for recovery.
+# -----------------------------------------------------------------------------
 try:
     from controllers.pixel_controller import PixelController
-    from managers.recovery_manager import RecoveryManager
     from managers.update_manager import UpdateManager
 except ImportError as e:
-    IMPORT_ERROR = str(e)
     print("=" * 50)
     print(f"WARNING: Optional import failed - {e}")
-    print("Update and Recovery functionality DISABLED")
-    print("Device will operate in degraded mode")
+    print("LED feedback and update staging DISABLED")
+    print("Recovery functionality remains available")
     print("=" * 50)
     PixelController = None  # type: ignore
     UpdateManager = None  # type: ignore
-    RecoveryManager = None  # type: ignore
 
 # Check for pending firmware update
 PENDING_UPDATE_DIR = "/pending_update"
@@ -103,6 +116,68 @@ def _write_install_log(message: str, overwrite: bool = False) -> None:
             f.write(message + "\n")
     except Exception:
         pass  # Best effort logging
+
+
+def _reset_version_for_ota() -> bool:
+    """
+    Reset VERSION in settings.toml to 0.0.0 to force OTA update pickup.
+
+    Called after recovery to ensure the device will accept any available update,
+    regardless of what version the restored backup was from.
+
+    Reads from recovery/settings.toml (known-good source) rather than root
+    settings.toml to avoid filesystem timing issues after restore.
+
+    Uses the same pattern as pre_install scripts: read entire file as string,
+    do string replacement, write back.
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    settings_path = "/settings.toml"
+    recovery_settings_path = f"{RecoveryManager.RECOVERY_DIR}/settings.toml"
+
+    try:
+        # Read from recovery settings (known-good source after restore)
+        # This avoids filesystem timing issues from reading a just-written file
+        try:
+            with open(recovery_settings_path) as f:
+                current_settings_content = f.read()
+        except OSError:
+            # Fall back to root settings.toml if recovery doesn't have it
+            with open(settings_path) as f:
+                current_settings_content = f.read()
+
+        # Find and replace VERSION line
+        # Try to find existing VERSION line
+        try:
+            # Extract current version
+            current_version = current_settings_content.split('VERSION = "')[1].split('"')[0]
+            # Replace it
+            updated_settings_content = current_settings_content.replace(
+                f'VERSION = "{current_version}"', 'VERSION = "0.0.0"'
+            )
+        except (IndexError, ValueError):
+            # VERSION line not found or malformed, add it at the top
+            if "VERSION =" not in current_settings_content:
+                updated_settings_content = 'VERSION = "0.0.0"\n' + current_settings_content
+            else:
+                # Malformed VERSION line, try to replace any VERSION line
+                import re
+
+                updated_settings_content = re.sub(
+                    r'VERSION\s*=\s*"[^"]*"', 'VERSION = "0.0.0"', current_settings_content
+                )
+
+        # Write the updated settings.toml (same pattern as pre_install scripts)
+        with open(settings_path, "w") as f:
+            f.write(updated_settings_content)
+
+        os.sync()
+        return True
+    except Exception as e:
+        log_boot_message(f"ERROR: Failed to reset VERSION for OTA: {e}")
+        return False
 
 
 def execute_install_script(
@@ -656,8 +731,7 @@ def process_pending_update() -> None:
                     installer.turn_off_led()
 
                 # Mark as incompatible
-                if mark_incompatible_release is not None:
-                    mark_incompatible_release(update_version, f"Pre-install script failed: {script_msg}")
+                mark_incompatible_release(update_version, f"Pre-install script failed: {script_msg}")
 
                 cleanup_pending_update()
                 log_boot_message("=" * 50)
@@ -669,231 +743,206 @@ def process_pending_update() -> None:
             if installer:
                 installer.update_led()
 
-        # Step 3: Verify compatibility using DRY check
-        if check_release_compatibility is not None:
-            is_compatible, error_msg = check_release_compatibility(manifest, current_version)
+        # Step 3: Verify compatibility
+        is_compatible, error_msg = check_release_compatibility(manifest, current_version)
 
-            # Update LED during compatibility check
+        # Update LED during compatibility check
+        if installer:
+            installer.update_led()
+
+        if not is_compatible:
+            log_boot_message(f"ERROR: {error_msg}")
+
+            # Turn off LED on error
+            if installer:
+                installer.turn_off_led()
+
+            # Mark incompatible with detailed reason
+            mark_incompatible_release(manifest.get("version", "unknown"), error_msg or "Unknown error")
+
+            cleanup_pending_update()
+            log_boot_message("=" * 50)
+            log_boot_message("Update aborted due to incompatibility")
+            log_boot_message("=" * 50)
+            return
+
+        log_boot_message("✓ Compatibility verified")
+
+        # Update LED
+        if installer:
+            installer.update_led()
+
+        # Step 3.5: Validate extracted update contains all critical files
+        # This is a second check before destructive operations begin
+        log_boot_message("Validating update package integrity...")
+        all_present, missing_files = RecoveryManager.validate_extracted_update(PENDING_ROOT_DIR)
+
+        if not all_present:
+            log_boot_message("ERROR: Update package is incomplete")
+            log_boot_message(f"Missing {len(missing_files)} critical files:")
+            for missing in missing_files[:10]:
+                log_boot_message(f"  - {missing}")
+            if len(missing_files) > 10:
+                log_boot_message(f"  ... and {len(missing_files) - 10} more")
+            log_boot_message("Installation would brick the device - aborting")
+
+            # Turn off LED on error
+            if installer:
+                installer.turn_off_led()
+
+            # Mark as incompatible
+            mark_incompatible_release(
+                manifest.get("version", "unknown"),
+                f"Incomplete package - missing {len(missing_files)} critical files",
+            )
+
+            cleanup_pending_update()
+            return
+
+        log_boot_message("✓ All critical files present in update package")
+
+        # Update LED after validation
+        if installer:
+            installer.update_led()
+
+        # Step 4: Verify preserved files exist before destructive operations
+        log_boot_message("Verifying preserved files before update...")
+        secrets_exists = False
+        try:
+            with open("/secrets.json") as f:
+                secrets_data = f.read()
+                secrets_size = len(secrets_data)
+            secrets_exists = True
+            log_boot_message(f"✓ secrets.json found ({secrets_size} bytes)")
+        except OSError:
+            log_boot_message("ℹ No secrets.json (first-time setup)")
+
+        # Step 5: Delete everything except secrets, incompatible list, recovery, and DEVELOPMENT flag
+        preserve_paths = [
+            "/secrets.json",
+            "/incompatible_releases.json",
+            "/DEVELOPMENT",
+            "/recovery",
+            PENDING_UPDATE_DIR,
+        ]
+        delete_all_except(preserve_paths, installer)
+        os.sync()  # Sync after deletion
+
+        # Verify preserved files still exist after deletion
+        if secrets_exists:
+            try:
+                with open("/secrets.json") as f:
+                    post_delete_data = f.read()
+                if post_delete_data != secrets_data:
+                    log_boot_message("ERROR: secrets.json was modified during deletion!")
+                    raise Exception("Preservation failed - secrets.json corrupted")
+                log_boot_message("✓ secrets.json preserved after deletion")
+            except OSError as e:
+                log_boot_message("ERROR: secrets.json was deleted during cleanup!")
+                raise Exception("Preservation failed - secrets.json deleted") from e
+
+        # Update LED after deletion
+        if installer:
+            installer.update_led()
+
+        # Step 6: Move files from pending_update/root to root
+        move_directory_contents(PENDING_ROOT_DIR, "/", installer)
+        os.sync()  # Sync after moving all files
+
+        # Verify preserved files still exist after move
+        if secrets_exists:
+            try:
+                with open("/secrets.json") as f:
+                    post_move_data = f.read()
+                if post_move_data != secrets_data:
+                    log_boot_message("ERROR: secrets.json was modified during file move!")
+                    raise Exception("File move corrupted secrets.json")
+                log_boot_message("✓ secrets.json preserved after file move")
+            except OSError as e:
+                log_boot_message("ERROR: secrets.json was deleted during file move!")
+                raise Exception("File move deleted secrets.json") from e
+
+        # Step 7: Validate critical files are present after installation
+        all_present, missing_files = RecoveryManager.validate_critical_files()
+
+        if not all_present:
+            log_boot_message("ERROR: Critical files missing after installation:")
+            for missing_file in missing_files:
+                log_boot_message(f"  - {missing_file}")
+            log_boot_message("Installation incomplete - aborting to prevent broken system")
+            # Turn off LED on error
+            if installer:
+                installer.turn_off_led()
+            return  # Abort without rebooting - device will boot with old version
+
+        log_boot_message("✓ All critical files validated")
+
+        # Update LED after validation
+        if installer:
+            installer.update_led()
+
+        # Step 8: Create or update recovery backup
+        log_boot_message("Creating recovery backup...")
+        try:
+            success, backup_msg = RecoveryManager.create_recovery_backup()
+            if success:
+                log_boot_message(f"✓ {backup_msg}")
+            else:
+                log_boot_message(f"⚠ {backup_msg}")
+        except Exception as e:
+            log_boot_message(f"⚠ Recovery backup failed: {e}")
+
+        # Update LED after backup
+        if installer:
+            installer.update_led()
+
+        # Step 8.5: Execute post-install script if present
+        # Post-install runs AFTER recovery backup is created
+        # This ensures device can recover if script fails
+        if manifest.get("has_post_install_script", False):
+            post_script_path = _get_script_path("post_install", update_version, "")
+            log_boot_message("Post-install script indicated in manifest")
+
+            script_success, script_msg = execute_install_script(
+                script_path=post_script_path,
+                script_type="post_install",
+                version=update_version,
+                installer=installer,
+                pending_root_dir=PENDING_ROOT_DIR,
+                pending_update_dir=PENDING_UPDATE_DIR,
+            )
+
+            if not script_success:
+                # Post-install failures are non-fatal - log and continue
+                log_boot_message(f"WARNING: Post-install script failed: {script_msg}")
+                log_boot_message("Continuing with update (recovery backup already created)")
+                _write_install_log("WARNING: Post-install script failed but update continues")
+            else:
+                log_boot_message("✓ Post-install script completed")
+
+            # Update LED after script
             if installer:
                 installer.update_led()
 
-            if not is_compatible:
-                log_boot_message(f"ERROR: {error_msg}")
+        # Step 9: Cleanup pending update directory
+        cleanup_pending_update(installer)
+        os.sync()  # Sync after cleanup
 
-                # Turn off LED on error
-                if installer:
-                    installer.turn_off_led()
+        # Update LED after cleanup
+        if installer:
+            installer.update_led()
 
-                # Mark incompatible with detailed reason
-                if mark_incompatible_release is not None:
-                    mark_incompatible_release(manifest.get("version", "unknown"), error_msg or "Unknown error")
+        log_boot_message("=" * 50)
+        log_boot_message(f"Update complete: {current_version} → {manifest.get('version')}")
+        log_boot_message("Recovery backup updated")
+        log_boot_message("Rebooting...")
+        log_boot_message("=" * 50)
 
-                cleanup_pending_update()
-                log_boot_message("=" * 50)
-                log_boot_message("Update aborted due to incompatibility")
-                log_boot_message("=" * 50)
-                return
-            else:
-                log_boot_message("✓ Compatibility verified")
+        # Sync filesystem before reboot
+        os.sync()
 
-                # Update LED
-                if installer:
-                    installer.update_led()
-
-                # Step 3.5: Validate extracted update contains all critical files
-                # This is a second check before destructive operations begin
-                log_boot_message("Validating update package integrity...")
-                if RecoveryManager is not None:
-                    all_present, missing_files = RecoveryManager.validate_extracted_update(PENDING_ROOT_DIR)
-
-                    if not all_present:
-                        log_boot_message("ERROR: Update package is incomplete")
-                        log_boot_message(f"Missing {len(missing_files)} critical files:")
-                        for missing in missing_files[:10]:
-                            log_boot_message(f"  - {missing}")
-                        if len(missing_files) > 10:
-                            log_boot_message(f"  ... and {len(missing_files) - 10} more")
-                        log_boot_message("Installation would brick the device - aborting")
-
-                        # Turn off LED on error
-                        if installer:
-                            installer.turn_off_led()
-
-                        # Mark as incompatible
-                        if mark_incompatible_release is not None:
-                            mark_incompatible_release(
-                                manifest.get("version", "unknown"),
-                                f"Incomplete package - missing {len(missing_files)} critical files",
-                            )
-
-                        cleanup_pending_update()
-                        return
-
-                    log_boot_message("✓ All critical files present in update package")
-                else:
-                    log_boot_message("⚠ RecoveryManager not available for validation - proceeding anyway")
-
-                # Update LED after validation
-                if installer:
-                    installer.update_led()
-
-                # Step 4: Verify preserved files exist before destructive operations
-                log_boot_message("Verifying preserved files before update...")
-                secrets_exists = False
-                try:
-                    with open("/secrets.json") as f:
-                        secrets_data = f.read()
-                        secrets_size = len(secrets_data)
-                    secrets_exists = True
-                    log_boot_message(f"✓ secrets.json found ({secrets_size} bytes)")
-                except OSError:
-                    log_boot_message("ℹ No secrets.json (first-time setup)")
-
-                # Step 5: Delete everything except secrets, incompatible list, recovery, and DEVELOPMENT flag
-                preserve_paths = [
-                    "/secrets.json",
-                    "/incompatible_releases.json",
-                    "/DEVELOPMENT",
-                    "/recovery",
-                    PENDING_UPDATE_DIR,
-                ]
-                delete_all_except(preserve_paths, installer)
-                os.sync()  # Sync after deletion
-
-                # Verify preserved files still exist after deletion
-                if secrets_exists:
-                    try:
-                        with open("/secrets.json") as f:
-                            post_delete_data = f.read()
-                        if post_delete_data != secrets_data:
-                            log_boot_message("ERROR: secrets.json was modified during deletion!")
-                            raise Exception("Preservation failed - secrets.json corrupted")
-                        log_boot_message("✓ secrets.json preserved after deletion")
-                    except OSError as e:
-                        log_boot_message("ERROR: secrets.json was deleted during cleanup!")
-                        raise Exception("Preservation failed - secrets.json deleted") from e
-
-                # Update LED after deletion
-                if installer:
-                    installer.update_led()
-
-                # Step 6: Move files from pending_update/root to root
-                move_directory_contents(PENDING_ROOT_DIR, "/", installer)
-                os.sync()  # Sync after moving all files
-
-                # Verify preserved files still exist after move
-                if secrets_exists:
-                    try:
-                        with open("/secrets.json") as f:
-                            post_move_data = f.read()
-                        if post_move_data != secrets_data:
-                            log_boot_message("ERROR: secrets.json was modified during file move!")
-                            raise Exception("File move corrupted secrets.json")
-                        log_boot_message("✓ secrets.json preserved after file move")
-                    except OSError as e:
-                        log_boot_message("ERROR: secrets.json was deleted during file move!")
-                        raise Exception("File move deleted secrets.json") from e
-
-                # Step 7: Validate critical files are present after installation
-                # Use centralized validation from RecoveryManager if available
-                if RecoveryManager is not None:
-                    all_present, missing_files = RecoveryManager.validate_critical_files()
-                else:
-                    # Fallback if RecoveryManager couldn't be imported
-                    # This itself indicates a critical failure
-                    log_boot_message("ERROR: RecoveryManager not available for validation")
-                    all_present = False
-                    missing_files = ["RecoveryManager module (import failed)"]
-
-                if not all_present:
-                    log_boot_message("ERROR: Critical files missing after installation:")
-                    for missing_file in missing_files:
-                        log_boot_message(f"  - {missing_file}")
-                    log_boot_message("Installation incomplete - aborting to prevent broken system")
-                    # Turn off LED on error
-                    if installer:
-                        installer.turn_off_led()
-                    return  # Abort without rebooting - device will boot with old version
-
-                log_boot_message("✓ All critical files validated")
-
-                # Update LED after validation
-                if installer:
-                    installer.update_led()
-
-                # Step 8: Create or update recovery backup
-                log_boot_message("Creating recovery backup...")
-                if RecoveryManager is not None:
-                    try:
-                        success, backup_msg = RecoveryManager.create_recovery_backup()
-                        if success:
-                            log_boot_message(f"✓ {backup_msg}")
-                        else:
-                            log_boot_message(f"⚠ {backup_msg}")
-                    except Exception as e:
-                        log_boot_message(f"⚠ Recovery backup failed: {e}")
-                else:
-                    log_boot_message("⚠ RecoveryManager not available for backup")
-
-                # Update LED after backup
-                if installer:
-                    installer.update_led()
-
-                # Step 8.5: Execute post-install script if present
-                # Post-install runs AFTER recovery backup is created
-                # This ensures device can recover if script fails
-                if manifest.get("has_post_install_script", False):
-                    post_script_path = _get_script_path("post_install", update_version, "")
-                    log_boot_message("Post-install script indicated in manifest")
-
-                    script_success, script_msg = execute_install_script(
-                        script_path=post_script_path,
-                        script_type="post_install",
-                        version=update_version,
-                        installer=installer,
-                        pending_root_dir=PENDING_ROOT_DIR,
-                        pending_update_dir=PENDING_UPDATE_DIR,
-                    )
-
-                    if not script_success:
-                        # Post-install failures are non-fatal - log and continue
-                        log_boot_message(f"WARNING: Post-install script failed: {script_msg}")
-                        log_boot_message("Continuing with update (recovery backup already created)")
-                        _write_install_log("WARNING: Post-install script failed but update continues")
-                    else:
-                        log_boot_message("✓ Post-install script completed")
-
-                    # Update LED after script
-                    if installer:
-                        installer.update_led()
-
-                # Step 9: Cleanup pending update directory
-                cleanup_pending_update(installer)
-                os.sync()  # Sync after cleanup
-
-                # Update LED after cleanup
-                if installer:
-                    installer.update_led()
-
-                log_boot_message("=" * 50)
-                log_boot_message(f"Update complete: {current_version} → {manifest.get('version')}")
-                log_boot_message("Recovery backup updated")
-                log_boot_message("Rebooting...")
-                log_boot_message("=" * 50)
-
-                # Sync filesystem before reboot
-                os.sync()
-
-                # Reboot
-                microcontroller.reset()
-        else:
-            log_boot_message("=" * 50)
-            log_boot_message("CRITICAL: Compatibility check not available")
-            if IMPORT_ERROR:
-                log_boot_message(f"Import error: {IMPORT_ERROR}")
-            log_boot_message("Skipping update for safety")
-            log_boot_message("=" * 50)
-            cleanup_pending_update()
+        # Reboot
+        microcontroller.reset()
 
     except OSError as e:
         # No pending_update directory - normal boot
@@ -907,16 +956,13 @@ def check_and_restore_from_recovery() -> bool:
     """
     Check for missing critical files and restore from recovery if needed.
 
-    This is the first thing that runs at boot to catch catastrophic failures
-    from interrupted updates or corrupted filesystems.
+    This runs early in boot to catch catastrophic failures from interrupted
+    updates or corrupted filesystems. RecoveryManager is guaranteed to be
+    available since it's a CRITICAL import (boot.py ensures it via emergency recovery).
 
     Returns:
         bool: True if recovery was needed and performed, False otherwise
     """
-    if RecoveryManager is None:
-        log_boot_message("RecoveryManager not available, skipping recovery check")
-        return False
-
     # Check if all critical files are present
     all_present, missing_files = RecoveryManager.validate_critical_files()
 
@@ -965,6 +1011,13 @@ def check_and_restore_from_recovery() -> bool:
         # Clean up the failed update
         with suppress(Exception):
             remove_directory_recursive("/pending_update")
+
+        # Reset VERSION to 0.0.0 to force OTA update pickup
+        # This ensures the device will accept any available update after recovery
+        if _reset_version_for_ota():
+            log_boot_message("Reset VERSION to 0.0.0 for OTA pickup")
+        else:
+            log_boot_message("WARNING: Could not reset VERSION for OTA")
 
         log_boot_message("\n→ Device recovered successfully")
         log_boot_message("Continuing with normal boot")

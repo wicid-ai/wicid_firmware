@@ -42,6 +42,56 @@ def _rmtree(path: str) -> None:
         pass
 
 
+class TestRecoveryBackupClearsStaleFiles(TestCase):
+    """Test that recovery backup clears stale files before creating new backup."""
+
+    STALE_FILE = "/recovery/stale_file_that_should_be_removed.txt"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Create a stale file in recovery directory before backup."""
+        # Ensure recovery directory exists
+        try:  # noqa: SIM105
+            os.mkdir("/recovery")
+        except OSError:
+            pass
+
+        # Create a stale file that shouldn't survive backup
+        with open(cls.STALE_FILE, "w") as f:
+            f.write("This file should be removed during backup")
+        os.sync()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Clean up /recovery/ directory."""
+        _rmtree("/recovery")
+        try:  # noqa: SIM105
+            os.sync()
+        except (OSError, AttributeError):
+            pass
+
+    def test_backup_removes_stale_files(self) -> None:
+        """Stale files should be removed when creating a fresh backup."""
+        from managers.recovery_manager import RecoveryManager
+
+        # Verify stale file exists before backup
+        try:
+            os.stat(self.STALE_FILE)
+        except OSError:
+            self.fail("Stale file should exist before backup test")
+
+        # Create recovery backup - this should clear the stale file
+        success, message = RecoveryManager.create_recovery_backup()
+        self.assertTrue(success, f"Backup failed: {message}")
+
+        # Verify stale file was removed
+        try:
+            os.stat(self.STALE_FILE)
+            self.fail("Stale file should have been removed during backup")
+        except OSError:
+            pass  # Expected - file should be gone
+
+
 class TestRecoveryBackup(TestCase):
     """Test recovery backup creation, contents, and integrity."""
 
@@ -69,17 +119,17 @@ class TestRecoveryBackup(TestCase):
 
         self.assertTrue(RecoveryManager.recovery_exists(), "Recovery backup should exist")
 
-    def test_backup_contains_boot_critical_files(self) -> None:
-        """Recovery backup contains all BOOT_CRITICAL files with non-zero size."""
+    def test_backup_contains_critical_files(self) -> None:
+        """Recovery backup contains all CRITICAL_FILES with non-zero size."""
         from managers.recovery_manager import RecoveryManager
 
-        for path in RecoveryManager.BOOT_CRITICAL_FILES:
+        for path in RecoveryManager.CRITICAL_FILES:
             recovery_path = RecoveryManager.RECOVERY_DIR + path
             try:
                 stat = os.stat(recovery_path)
                 self.assertTrue(stat[6] > 0, f"Recovery file is empty: {recovery_path}")
             except OSError:
-                self.fail(f"Boot-critical file missing from recovery: {path}")
+                self.fail(f"Critical file missing from recovery: {path}")
 
     def test_backup_integrity_passes(self) -> None:
         """Backup integrity validation passes after fresh backup."""
@@ -98,17 +148,6 @@ class TestRecoveryValidation(TestCase):
 
         all_present, missing = RecoveryManager.validate_critical_files()
         self.assertTrue(all_present, f"Missing critical files: {missing}")
-
-    def test_boot_critical_files_subset_of_critical(self) -> None:
-        """BOOT_CRITICAL_FILES should be a subset of CRITICAL_FILES."""
-        from managers.recovery_manager import RecoveryManager
-
-        for path in RecoveryManager.BOOT_CRITICAL_FILES:
-            self.assertIn(
-                path,
-                RecoveryManager.CRITICAL_FILES,
-                f"BOOT_CRITICAL file not in CRITICAL_FILES: {path}",
-            )
 
 
 class TestCriticalFilesPresence(TestCase):
