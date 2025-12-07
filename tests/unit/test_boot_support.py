@@ -9,119 +9,11 @@ import os
 import sys
 import tempfile
 import unittest
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, "src")
 
-from tests.test_helpers import create_file_path_redirector
 from tests.unit import TestCase
-
-
-class TestResetVersionForOta(TestCase):
-    """Test _reset_version_for_ota behavior."""
-
-    def setUp(self) -> None:
-        """Create temporary settings files for testing."""
-        self.test_dir = tempfile.mkdtemp()
-        self.settings_path = os.path.join(self.test_dir, "settings.toml")
-        self.recovery_settings_path = os.path.join(self.test_dir, "recovery", "settings.toml")
-        os.makedirs(os.path.join(self.test_dir, "recovery"), exist_ok=True)
-
-    def tearDown(self) -> None:
-        """Clean up temporary files."""
-        import shutil
-
-        shutil.rmtree(self.test_dir, ignore_errors=True)
-
-    def _map_path(self, path: str) -> str:
-        """Map device paths to test directory paths."""
-        if path == "/settings.toml":
-            return self.settings_path
-        elif path == "/recovery/settings.toml":
-            return self.recovery_settings_path
-        return path
-
-    def test_resets_version_to_zero(self) -> None:
-        """_reset_version_for_ota resets VERSION to 0.0.0 in settings.toml."""
-        # Create settings file with a version
-        settings_content = 'VERSION = "1.2.3"\nLOG_LEVEL = "INFO"\n'
-        with open(self.settings_path, "w") as f:
-            f.write(settings_content)
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(settings_content)
-
-        path_map = {"/settings.toml": self.settings_path, "/recovery/settings.toml": self.recovery_settings_path}
-        mock_open = create_file_path_redirector(path_map)
-
-        with (
-            patch("utils.update_install.open", side_effect=mock_open),
-            patch("utils.update_install.os.sync"),
-        ):
-            from core.boot_support import _reset_version_for_ota
-
-            result = _reset_version_for_ota()
-            self.assertTrue(result)
-
-        # Verify version was reset
-        with open(self.settings_path) as f:
-            content = f.read()
-        self.assertIn('VERSION = "0.0.0"', content)
-        self.assertIn("LOG_LEVEL", content)  # Other settings preserved
-
-    def test_handles_missing_recovery_settings(self) -> None:
-        """_reset_version_for_ota falls back to root settings when recovery missing."""
-        settings_content = 'VERSION = "2.0.0"\n'
-        with open(self.settings_path, "w") as f:
-            f.write(settings_content)
-
-        written_content: list[str] = []
-
-        def mock_open(path: str, mode: str = "r") -> Any:
-            if path == "/recovery/settings.toml":
-                raise OSError("Not found")
-
-            mapped_path = self._map_path(path)
-            mock_file = MagicMock()
-
-            if "w" in mode:
-                # Capture written content
-                def write(content: str) -> None:
-                    written_content.append(content)
-
-                mock_file.write.side_effect = write
-                mock_file.__enter__ = MagicMock(return_value=mock_file)
-                mock_file.__exit__ = MagicMock(return_value=False)
-            else:
-                # Return file content for read operations
-                with open(mapped_path, mode) as f:
-                    content = f.read()
-                mock_file.read.return_value = content
-                mock_file.__enter__ = MagicMock(return_value=mock_file)
-                mock_file.__exit__ = MagicMock(return_value=False)
-
-            return mock_file
-
-        with (
-            patch("utils.update_install.open", side_effect=mock_open),
-            patch("utils.update_install.os.sync"),
-        ):
-            from core.boot_support import _reset_version_for_ota
-
-            result = _reset_version_for_ota()
-            self.assertTrue(result)
-
-        # Verify version was reset by checking what was written
-        written = "".join(written_content)
-        self.assertIn('VERSION = "0.0.0"', written)
-
-    def test_returns_false_on_error(self) -> None:
-        """_reset_version_for_ota returns False when file operations fail."""
-        with patch("utils.update_install.reset_version_for_ota", return_value=False):
-            from core.boot_support import _reset_version_for_ota
-
-            result = _reset_version_for_ota()
-            self.assertFalse(result)
 
 
 class TestCheckAndRestoreFromRecovery(TestCase):
@@ -173,7 +65,7 @@ class TestCheckAndRestoreFromRecovery(TestCase):
             patch("utils.recovery.recovery_exists", return_value=True),
             patch("utils.recovery.restore_from_recovery", return_value=(True, "Restored 20 files")),
             patch("core.boot_support.log_boot_message"),
-            patch("core.boot_support._reset_version_for_ota", return_value=True),
+            patch("utils.update_install.reset_version_for_ota", return_value=True),
             patch("core.boot_support.remove_directory_recursive"),
             patch("builtins.open", side_effect=OSError("No manifest")),
         ):
@@ -207,7 +99,6 @@ class TestLogBootMessage(TestCase):
 
     def test_writes_to_boot_log_file(self) -> None:
         """log_boot_message writes messages to boot log file."""
-        import tempfile
 
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
             log_path = log_file.name

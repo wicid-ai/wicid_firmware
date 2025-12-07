@@ -47,7 +47,7 @@ try:
         restore_from_recovery,
         validate_critical_files,
     )
-    from utils.update_install import process_pending_update
+    from utils.update_install import process_pending_update, reset_version_for_ota
     from utils.utils import mark_incompatible_release, remove_directory_recursive, suppress
 except ImportError as e:
     print("=" * 50)
@@ -62,23 +62,6 @@ except ImportError as e:
 
 BOOT_LOG_FILE = "/boot_log.txt"
 _LOGGED_BOOT_ERROR = False
-
-
-def _reset_version_for_ota() -> bool:
-    """
-    Reset VERSION in settings.toml to 0.0.0 to force OTA update pickup.
-
-    Called after recovery to ensure the device will accept any available update,
-    regardless of what version the restored backup was from.
-
-    Delegates to utils.update_install.reset_version_for_ota().
-
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    from utils.update_install import reset_version_for_ota
-
-    return reset_version_for_ota()
 
 
 def log_boot_message(message: str) -> None:
@@ -197,7 +180,7 @@ def check_and_restore_from_recovery() -> bool:
 
         # Reset VERSION to 0.0.0 to force OTA update pickup
         # This ensures the device will accept any available update after recovery
-        if _reset_version_for_ota():
+        if reset_version_for_ota():
             log_boot_message("Reset VERSION to 0.0.0 for OTA pickup")
         else:
             log_boot_message("WARNING: Could not reset VERSION for OTA")
