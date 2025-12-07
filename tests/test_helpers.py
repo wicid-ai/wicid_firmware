@@ -100,3 +100,36 @@ def create_mock_pixel() -> MockPixel:
         >>> assert mock_pixel.color == (255, 0, 0)
     """
     return MockPixel()
+
+
+def create_file_path_redirector(path_map: dict[str, str]) -> Any:
+    """
+    Create a mock for open() that redirects paths to test directories.
+
+    This helper eliminates the need for # noqa: SIM115 comments by properly
+    returning file objects that can be used in context managers.
+
+    Args:
+        path_map: Dictionary mapping device paths to test directory paths
+                  Example: {"/settings.toml": "/tmp/test/settings.toml"}
+
+    Returns:
+        Callable that can be used as side_effect for patching open()
+
+    Example:
+        >>> path_map = {"/settings.toml": "/tmp/test/settings.toml"}
+        >>> mock_open = create_file_path_redirector(path_map)
+        >>> with patch("builtins.open", side_effect=mock_open):
+        ...     # Code under test will read/write to test directory
+        ...     pass
+    """
+    import builtins
+
+    real_open = builtins.open
+
+    def mock_open(path: str, mode: str = "r") -> Any:
+        # Redirect path if it's in the map
+        actual_path = path_map.get(path, path)
+        return real_open(actual_path, mode)
+
+    return mock_open

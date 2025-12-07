@@ -15,6 +15,7 @@ from _hashlib import openssl_sha256
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
+import utils.update_install as update_install
 from core.app_typing import Any, cast
 from managers.update_manager import UpdateManager
 from tests.unit import TestCase
@@ -340,11 +341,6 @@ class TestUpdateManagerInit(TestCase):
         manager = cast(UpdateManager, UpdateManager.instance())
         self.assertIsNotNone(manager.logger)
 
-    def test_has_constants(self) -> None:
-        """Manager has required constants."""
-        self.assertTrue(hasattr(UpdateManager, "PENDING_UPDATE_DIR"))
-        self.assertTrue(hasattr(UpdateManager, "PENDING_ROOT_DIR"))
-
 
 class TestCalculateSha256(TestCase):
     """Test calculate_sha256 helper."""
@@ -376,10 +372,12 @@ class TestCalculateSha256(TestCase):
             def service() -> None:
                 service_calls.append("tick")
 
-            with patch(
-                "managers.update_manager.Scheduler.yield_control", new=AsyncMock(return_value=None)
-            ) as mock_yield, patch("hashlib.sha256", openssl_sha256), patch(
-                "managers.update_manager.hashlib.sha256", openssl_sha256
+            with (
+                patch(
+                    "managers.update_manager.Scheduler.yield_control", new=AsyncMock(return_value=None)
+                ) as mock_yield,
+                patch("hashlib.sha256", openssl_sha256),
+                patch("managers.update_manager.hashlib.sha256", openssl_sha256),
             ):
                 digest = run_async(
                     self.manager.calculate_sha256(
@@ -449,9 +447,11 @@ class TestCleanupPendingUpdate(TestCase):
         """Removes the entire /pending_update directory tree."""
         manager = cast(UpdateManager, UpdateManager.instance())
 
-        with patch("os.listdir", return_value=["root", ".staging", "update.zip"]), patch(
-            "os.remove"
-        ) as mock_remove, patch("os.rmdir") as mock_rmdir:
+        with (
+            patch("os.listdir", return_value=["root", ".staging", "update.zip"]),
+            patch("os.remove") as mock_remove,
+            patch("os.rmdir") as mock_rmdir,
+        ):
             manager._cleanup_pending_update()
             # Should attempt to remove files and directories
             self.assertTrue(mock_remove.called or mock_rmdir.called)
@@ -470,7 +470,7 @@ class TestCleanupPendingUpdate(TestCase):
 
         # Simulate .staging exists
         def listdir_side_effect(path: str) -> list[str]:
-            if path == UpdateManager.PENDING_UPDATE_DIR:
+            if path == update_install.PENDING_UPDATE_DIR:
                 return [".staging", "root"]
             return []
 
@@ -561,12 +561,12 @@ class TestAtomicStaging(TestCase):
     def test_extracts_to_staging_first(self) -> None:
         """Files are extracted to .staging before being moved to root."""
         # This test verifies the staging directory pattern is used
-        self.assertEqual(UpdateManager.PENDING_STAGING_DIR, "/pending_update/.staging")
+        self.assertEqual(update_install.PENDING_STAGING_DIR, "/pending_update/.staging")
 
     def test_staging_renamed_to_root_on_success(self) -> None:
         """On successful extraction, .staging is renamed to root."""
         # Verify the constant exists for the rename target
-        self.assertEqual(UpdateManager.PENDING_ROOT_DIR, "/pending_update/root")
+        self.assertEqual(update_install.PENDING_ROOT_DIR, "/pending_update/root")
 
 
 class TestCheckDownloadAndReboot(TestCase):
@@ -582,9 +582,10 @@ class TestCheckDownloadAndReboot(TestCase):
 
     def test_no_update_skips_download(self) -> None:
         """When no update is available, download_update is not called."""
-        with patch.object(self.manager, "check_for_updates", return_value=None) as mock_check, patch.object(
-            self.manager, "download_update", new=AsyncMock()
-        ) as mock_download:
+        with (
+            patch.object(self.manager, "check_for_updates", return_value=None) as mock_check,
+            patch.object(self.manager, "download_update", new=AsyncMock()) as mock_download,
+        ):
             run_async(self.manager.check_download_and_reboot())
 
         mock_check.assert_called_once()
@@ -593,11 +594,12 @@ class TestCheckDownloadAndReboot(TestCase):
     def test_successful_download_triggers_reset(self) -> None:
         """Successful download waits then resets the microcontroller."""
         update_info = {"version": "2.0.0", "zip_url": "http://example.com/update.zip"}
-        with patch.object(self.manager, "check_for_updates", return_value=update_info), patch.object(
-            self.manager, "download_update", new=AsyncMock(return_value=True)
-        ) as mock_download, patch(
-            "managers.update_manager.Scheduler.sleep", new=AsyncMock(return_value=None)
-        ) as mock_sleep, patch("managers.update_manager.microcontroller.reset") as mock_reset:
+        with (
+            patch.object(self.manager, "check_for_updates", return_value=update_info),
+            patch.object(self.manager, "download_update", new=AsyncMock(return_value=True)) as mock_download,
+            patch("managers.update_manager.Scheduler.sleep", new=AsyncMock(return_value=None)) as mock_sleep,
+            patch("managers.update_manager.microcontroller.reset") as mock_reset,
+        ):
             run_async(self.manager.check_download_and_reboot(delay_seconds=3))
 
         mock_download.assert_awaited_once()
@@ -625,11 +627,12 @@ class TestDownloadUpdate(TestCase):
     def test_disk_space_failure_records_and_cleans(self) -> None:
         """Disk space failure should trigger cleanup and recorded failure."""
         fake_session = MagicMock()
-        with patch.object(self.manager, "_get_session", return_value=fake_session), patch.object(
-            self.manager, "check_disk_space", return_value=(False, "No space")
-        ), patch.object(self.manager, "_cleanup_pending_update") as mock_cleanup, patch.object(
-            self.manager, "_record_failed_update"
-        ) as mock_record:
+        with (
+            patch.object(self.manager, "_get_session", return_value=fake_session),
+            patch.object(self.manager, "check_disk_space", return_value=(False, "No space")),
+            patch.object(self.manager, "_cleanup_pending_update") as mock_cleanup,
+            patch.object(self.manager, "_record_failed_update") as mock_record,
+        ):
             success, message = run_async(self.manager.download_update(zip_url="http://example.com/update.zip"))
 
         self.assertFalse(success)
@@ -650,15 +653,19 @@ class TestDownloadUpdate(TestCase):
 
         verify_mock = AsyncMock(return_value=(False, "Checksum mismatch"))
 
-        with patch.object(self.manager, "_get_session", return_value=session), patch.object(
-            self.manager, "check_disk_space", return_value=(True, "ok")
-        ), patch.object(self.manager, "_cleanup_pending_update") as mock_cleanup, patch.object(
-            self.manager, "_record_failed_update"
-        ) as mock_record, patch("builtins.open", mock_open()), patch("os.mkdir"), patch("os.sync"), patch(
-            "os.remove"
-        ), patch("time.monotonic", return_value=0.0), patch.object(
-            self.manager, "verify_checksum", new=verify_mock
-        ), patch("core.scheduler.Scheduler.yield_control", new=AsyncMock(return_value=None)):
+        with (
+            patch.object(self.manager, "_get_session", return_value=session),
+            patch.object(self.manager, "check_disk_space", return_value=(True, "ok")),
+            patch.object(self.manager, "_cleanup_pending_update") as mock_cleanup,
+            patch.object(self.manager, "_record_failed_update") as mock_record,
+            patch("builtins.open", mock_open()),
+            patch("os.mkdir"),
+            patch("os.sync"),
+            patch("os.remove"),
+            patch("time.monotonic", return_value=0.0),
+            patch.object(self.manager, "verify_checksum", new=verify_mock),
+            patch("core.scheduler.Scheduler.yield_control", new=AsyncMock(return_value=None)),
+        ):
             success, message = run_async(
                 self.manager.download_update(zip_url="http://example.com/update.zip", expected_checksum="deadbeef")
             )

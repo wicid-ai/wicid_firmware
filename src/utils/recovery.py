@@ -25,17 +25,10 @@ import traceback
 
 from core.app_typing import List
 from core.logging_helper import logger
-from utils.utils import suppress
+from utils.utils import remove_directory_recursive, suppress
 
 RECOVERY_DIR = "/recovery"
 RECOVERY_INTEGRITY_FILE = "/recovery/.integrity"
-
-# Files that should NEVER be overwritten during OTA updates
-# Only user-provided data that cannot be regenerated
-PRESERVED_FILES = {
-    "secrets.json",  # WiFi credentials and API keys (user-provided)
-    "DEVELOPMENT",  # Development mode flag (user-set)
-}
 
 # CRITICAL_FILES: Complete set for boot + OTA self-healing capability.
 # Missing any of these prevents the device from downloading/installing updates.
@@ -364,56 +357,9 @@ def _clear_recovery_directory() -> None:
     Removes all existing files and subdirectories in /recovery/ to prevent
     stale files from accumulating when CRITICAL_FILES changes.
     """
-    try:
-        items = os.listdir(RECOVERY_DIR)
-    except OSError:
-        return  # Directory doesn't exist
-
-    # Remove all files first
-    for item in items:
-        item_path = f"{RECOVERY_DIR}/{item}"
-        with suppress(OSError):
-            os.remove(item_path)
-
-    # Recurse into directories and remove them
-    try:
-        items = os.listdir(RECOVERY_DIR)
-    except OSError:
-        return
-
-    for item in items:
-        item_path = f"{RECOVERY_DIR}/{item}"
-        # Recursively clear subdirectories
-        _clear_subdirectory(item_path)
-        with suppress(OSError):
-            os.rmdir(item_path)
-
+    # Use shared utility function
+    remove_directory_recursive(RECOVERY_DIR)
     os.sync()
-
-
-def _clear_subdirectory(path: str) -> None:
-    """Recursively clear a subdirectory."""
-    try:
-        items = os.listdir(path)
-    except OSError:
-        return
-
-    for item in items:
-        item_path = f"{path}/{item}"
-        with suppress(OSError):
-            os.remove(item_path)
-
-    # Re-list and recurse into remaining directories
-    try:
-        items = os.listdir(path)
-    except OSError:
-        return
-
-    for item in items:
-        item_path = f"{path}/{item}"
-        _clear_subdirectory(item_path)
-        with suppress(OSError):
-            os.rmdir(item_path)
 
 
 def _critical_files_list() -> List[str]:

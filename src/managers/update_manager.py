@@ -39,11 +39,13 @@ import traceback
 import adafruit_hashlib as hashlib  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
+import utils.update_install as update_install
 from core.app_typing import Any, Callable
 from core.logging_helper import logger
 from core.scheduler import Scheduler
 from managers.manager_base import ManagerBase
 from utils.recovery import validate_extracted_update
+from utils.update_install import remove_directory_recursive
 from utils.utils import (
     check_release_compatibility,
     compare_versions,
@@ -60,10 +62,6 @@ class UpdateManager(ManagerBase):
     _instance = None
     pixel_controller: Any = None  # PixelController | None, but Any to avoid circular import
 
-    PENDING_UPDATE_DIR = "/pending_update"
-    PENDING_ROOT_DIR = "/pending_update/root"
-    PENDING_STAGING_DIR = "/pending_update/.staging"
-    READY_MARKER_FILE = "/pending_update/.ready"
     MIN_FREE_SPACE_BYTES = 200000  # ~200KB buffer for operations
 
     def _init(
@@ -128,25 +126,12 @@ class UpdateManager(ManagerBase):
         """
         Recursively remove a directory and all its contents.
 
+        Delegates to shared utility function.
+
         Args:
             path: Directory path to remove
         """
-        try:
-            items = os.listdir(path)
-        except OSError:
-            return
-
-        for item in items:
-            item_path = f"{path}/{item}"
-            try:
-                os.remove(item_path)
-            except OSError:
-                self._remove_directory_recursive(item_path)
-                with suppress(OSError):
-                    os.rmdir(item_path)
-
-        with suppress(OSError):
-            os.rmdir(path)
+        remove_directory_recursive(path)
 
     def _cleanup_pending_update(self) -> None:
         """
@@ -157,7 +142,7 @@ class UpdateManager(ManagerBase):
         for next update attempt.
         """
         try:
-            self._remove_directory_recursive(self.PENDING_UPDATE_DIR)
+            remove_directory_recursive(update_install.PENDING_UPDATE_DIR)
             self.logger.debug("Removed pending_update directory")
         except Exception as e:
             self.logger.warning(f"Error cleaning up pending_update: {e}")
@@ -174,7 +159,7 @@ class UpdateManager(ManagerBase):
             manifest_hash: SHA-256 hash of manifest.json for verification
         """
         try:
-            with open(self.READY_MARKER_FILE, "w") as f:
+            with open(update_install.READY_MARKER_FILE, "w") as f:
                 f.write(manifest_hash)
             os.sync()
             self.logger.debug(f"Wrote ready marker with hash: {manifest_hash[:16]}...")
@@ -192,7 +177,7 @@ class UpdateManager(ManagerBase):
             bool: True if marker exists and hash matches, False otherwise
         """
         try:
-            with open(self.READY_MARKER_FILE) as f:
+            with open(update_install.READY_MARKER_FILE) as f:
                 actual_hash = f.read().strip()
             return actual_hash == expected_hash
         except OSError:
@@ -621,11 +606,11 @@ class UpdateManager(ManagerBase):
 
                 # Create staging directory structure
                 with suppress(OSError):
-                    os.mkdir(self.PENDING_UPDATE_DIR)
+                    os.mkdir(update_install.PENDING_UPDATE_DIR)
                 with suppress(OSError):
-                    os.mkdir(self.PENDING_STAGING_DIR)
+                    os.mkdir(update_install.PENDING_STAGING_DIR)
 
-                zip_path = f"{self.PENDING_UPDATE_DIR}/update.zip"
+                zip_path = f"{update_install.PENDING_UPDATE_DIR}/update.zip"
                 self.logger.info(f"Downloading update: {zip_url}")
                 self.logger.debug(f"Saving to: {zip_path}")
 
@@ -752,7 +737,7 @@ class UpdateManager(ManagerBase):
                         total_files = len(files_to_extract)
                         for file_count, filename in enumerate(files_to_extract, start=1):
                             # Extract to staging directory first (atomic staging)
-                            zf.extract(filename, self.PENDING_STAGING_DIR)
+                            zf.extract(filename, update_install.PENDING_STAGING_DIR)
 
                             if file_count % 3 == 0 or file_count == total_files:
                                 progress_pct = (file_count / total_files) * 100 if total_files else None
@@ -765,7 +750,7 @@ class UpdateManager(ManagerBase):
                     self.logger.info("Extraction complete")
                     notify("unpacking", "Extraction complete", 100)
 
-                    manifest_path = f"{self.PENDING_STAGING_DIR}/manifest.json"
+                    manifest_path = f"{update_install.PENDING_STAGING_DIR}/manifest.json"
                     try:
                         with open(manifest_path) as f:  # type: ignore[assignment]
                             manifest = json.load(f)
@@ -781,7 +766,7 @@ class UpdateManager(ManagerBase):
 
                     self.logger.debug("Validating extracted update contains all critical files")
                     notify("unpacking", "Validating update package...", None)
-                    all_present, missing_files = validate_extracted_update(self.PENDING_STAGING_DIR)
+                    all_present, missing_files = validate_extracted_update(update_install.PENDING_STAGING_DIR)
 
                     if not all_present:
                         self.logger.error("Update package is incomplete")
@@ -810,7 +795,7 @@ class UpdateManager(ManagerBase):
                     # This ensures boot.py only sees a complete update
                     self.logger.debug("Performing atomic rename: .staging -> root")
                     try:
-                        os.rename(self.PENDING_STAGING_DIR, self.PENDING_ROOT_DIR)
+                        os.rename(update_install.PENDING_STAGING_DIR, update_install.PENDING_ROOT_DIR)
                     except OSError as e:
                         self.logger.error(f"Failed to rename staging to root: {e}")
                         self._cleanup_pending_update()

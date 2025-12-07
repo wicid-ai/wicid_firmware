@@ -243,68 +243,41 @@ class TestRecoveryValidateExtractedUpdate(unittest.TestCase):
 class TestRecoveryClearRecoveryDirectory(unittest.TestCase):
     """Test _clear_recovery_directory helper function."""
 
-    def test_clears_existing_files(self) -> None:
-        """Existing files in recovery directory should be removed."""
-        removed_files: list[str] = []
-        # Track which files have been "removed" so subsequent listdir calls return empty
-        listdir_calls = {"count": 0}
-
-        def mock_listdir(path: str) -> list[str]:
-            listdir_calls["count"] += 1
-            # First call returns files, subsequent calls return empty (files removed)
-            if listdir_calls["count"] == 1:
-                return ["old_file.mpy", "stale.py"]
-            return []
-
-        def mock_remove(path: str) -> None:
-            removed_files.append(path)
-
+    def test_delegates_to_remove_directory_recursive(self) -> None:
+        """_clear_recovery_directory delegates to shared remove_directory_recursive utility."""
         with (
-            patch("os.listdir", side_effect=mock_listdir),
-            patch("os.remove", side_effect=mock_remove),
-            patch("os.rmdir"),
+            patch("utils.recovery.remove_directory_recursive") as mock_remove,
             patch("os.sync"),
         ):
             from utils.recovery import _clear_recovery_directory
 
             _clear_recovery_directory()
-            self.assertIn("/recovery/old_file.mpy", removed_files)
-            self.assertIn("/recovery/stale.py", removed_files)
+            # Should call shared utility with RECOVERY_DIR
+            mock_remove.assert_called_once_with("/recovery")
 
-    def test_handles_nonexistent_directory(self) -> None:
-        """Should handle gracefully if recovery directory doesn't exist."""
-        with patch("os.listdir", side_effect=OSError("Directory not found")):
-            from utils.recovery import _clear_recovery_directory
-
-            # Should not raise
-            _clear_recovery_directory()
-
-    def test_clears_subdirectories(self) -> None:
-        """Subdirectories in recovery should be recursively cleared."""
-        call_count = {"listdir": 0}
-
-        def mock_listdir(path: str) -> list[str]:
-            call_count["listdir"] += 1
-            # First call to /recovery returns subdir
-            if path == "/recovery" and call_count["listdir"] == 1:
-                return ["subdir"]
-            # First call to /recovery/subdir returns a file
-            if path == "/recovery/subdir" and call_count["listdir"] <= 3:
-                return ["file.mpy"]
-            # Subsequent calls return empty (files removed)
-            return []
-
+    def test_calls_os_sync_after_clearing(self) -> None:
+        """_clear_recovery_directory calls os.sync() after clearing."""
         with (
-            patch("os.listdir", side_effect=mock_listdir),
-            patch("os.remove"),
-            patch("os.rmdir"),
-            patch("os.sync"),
+            patch("utils.recovery.remove_directory_recursive"),
+            patch("os.sync") as mock_sync,
         ):
             from utils.recovery import _clear_recovery_directory
 
             _clear_recovery_directory()
-            # Should have listed both recovery and subdirectory
-            self.assertGreater(call_count["listdir"], 1)
+            mock_sync.assert_called_once()
+
+
+class TestCriticalFilesList(unittest.TestCase):
+    """Test _critical_files_list helper function."""
+
+    def test_returns_list_of_critical_files(self) -> None:
+        """_critical_files_list returns CRITICAL_FILES as a list."""
+        from utils.recovery import CRITICAL_FILES, _critical_files_list
+
+        result = _critical_files_list()
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), len(CRITICAL_FILES))
+        self.assertEqual(set(result), CRITICAL_FILES)
 
 
 class TestRecoveryCreateBackup(unittest.TestCase):
@@ -312,11 +285,6 @@ class TestRecoveryCreateBackup(unittest.TestCase):
 
     def test_clears_directory_before_backup(self) -> None:
         """Recovery directory should be cleared before creating fresh backup."""
-        clear_called = {"called": False}
-
-        def track_clear() -> None:
-            clear_called["called"] = True
-
         mock_file_content = b"test content"
         mock_open_obj = MagicMock()
         mock_open_obj.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=mock_file_content)))
@@ -328,13 +296,12 @@ class TestRecoveryCreateBackup(unittest.TestCase):
             patch("os.sync"),
             patch("builtins.open", return_value=mock_open_obj),
             patch("core.logging_helper.logger"),
-            patch("utils.recovery._clear_recovery_directory", side_effect=track_clear) as mock_clear,
+            patch("utils.recovery._clear_recovery_directory") as mock_clear,
         ):
             from utils.recovery import create_recovery_backup
 
             create_recovery_backup()
             mock_clear.assert_called_once()
-            self.assertTrue(clear_called["called"])
 
     def test_creates_recovery_directory(self) -> None:
         mock_file_content = b"test content"
@@ -564,29 +531,6 @@ class TestRecoveryIntegrity(unittest.TestCase):
             result = validate_backup_integrity()
             self.assertIsInstance(result, tuple)
             self.assertEqual(len(result), 2)
-
-
-class TestPreservedFiles(unittest.TestCase):
-    """Test PRESERVED_FILES constant for user data protection."""
-
-    def test_preserved_files_includes_secrets(self) -> None:
-        """secrets.json must always be preserved."""
-        from utils.recovery import PRESERVED_FILES
-
-        self.assertIn("secrets.json", PRESERVED_FILES)
-
-    def test_preserved_files_includes_development(self) -> None:
-        """DEVELOPMENT flag should be preserved."""
-        from utils.recovery import PRESERVED_FILES
-
-        self.assertIn("DEVELOPMENT", PRESERVED_FILES)
-
-    def test_preserved_files_is_minimal(self) -> None:
-        """Only user-provided data should be preserved."""
-        from utils.recovery import PRESERVED_FILES
-
-        # Only secrets.json and DEVELOPMENT should be preserved
-        self.assertEqual(len(PRESERVED_FILES), 2)
 
 
 class TestBootCriticalAlignment(unittest.TestCase):

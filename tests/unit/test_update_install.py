@@ -1,30 +1,50 @@
 """
-Unit tests for install script execution in boot_support.py.
+Unit tests for update installation utilities.
 
-Tests the pre-install and post-install script execution functionality
-including script discovery, execution, error handling, and logging.
+Tests functions in utils.update_install module including script execution,
+file operations, and update installation logic.
 """
 
-import builtins
 import os
 import shutil
 import sys
 import tempfile
-from collections.abc import Callable
-from typing import Any
-from unittest.mock import patch
+import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, "src")
 
-# Import the functions we're testing
-from core.boot_support import (
+from tests.test_helpers import create_file_path_redirector
+from tests.unit import TestCase
+from utils.update_install import (
     INSTALL_LOG_FILE,
+    PRESERVED_FILES,
     _get_script_path,
-    _reset_version_for_ota,
     _write_install_log,
     execute_install_script,
+    reset_version_for_ota,
 )
-from tests.unit import TestCase
+
+
+class TestPreservedFiles(TestCase):
+    """Test PRESERVED_FILES constant."""
+
+    def test_preserved_files_includes_secrets(self) -> None:
+        """secrets.json must always be preserved."""
+        self.assertIn("secrets.json", PRESERVED_FILES)
+
+    def test_preserved_files_includes_incompatible_releases(self) -> None:
+        """incompatible_releases.json should be preserved."""
+        self.assertIn("incompatible_releases.json", PRESERVED_FILES)
+
+    def test_preserved_files_includes_development(self) -> None:
+        """DEVELOPMENT flag should be preserved."""
+        self.assertIn("DEVELOPMENT", PRESERVED_FILES)
+
+    def test_preserved_files_is_minimal(self) -> None:
+        """Only user-provided data should be preserved."""
+        # Should have exactly 3 files
+        self.assertEqual(len(PRESERVED_FILES), 3)
 
 
 class TestGetScriptPath(TestCase):
@@ -73,14 +93,54 @@ class TestWriteInstallLog(TestCase):
             self.fail("_write_install_log raised an exception on write failure")
 
 
-class MockInstaller:
-    """Mock UpdateInstaller for testing LED feedback."""
+class TestUpdateLed(TestCase):
+    """Tests for update_led function."""
 
-    def __init__(self) -> None:
-        self.update_led_calls = 0
+    def test_update_led_initializes_pixel_controller(self) -> None:
+        """update_led initializes PixelController singleton on first call."""
+        with (
+            patch("utils.update_install._pixel_controller", None),
+            patch("controllers.pixel_controller.PixelController") as mock_pc_class,
+        ):
+            mock_pc = MagicMock()
+            mock_pc_class.return_value = mock_pc
+            from utils.update_install import update_led
 
-    def update_led(self) -> None:
-        self.update_led_calls += 1
+            update_led()
+            mock_pc_class.assert_called_once()
+            mock_pc.indicate_installing.assert_called_once()
+
+    def test_update_led_calls_manual_tick(self) -> None:
+        """update_led calls manual_tick for normal updates."""
+        mock_pc = MagicMock()
+        with patch("utils.update_install._pixel_controller", mock_pc):
+            from utils.update_install import update_led
+
+            update_led()
+            mock_pc.manual_tick.assert_called_once()
+            mock_pc.set_color.assert_not_called()
+
+    def test_update_led_indicates_error(self) -> None:
+        """update_led calls set_color with red when indicate_error=True."""
+        mock_pc = MagicMock()
+        with patch("utils.update_install._pixel_controller", mock_pc):
+            from utils.update_install import update_led
+
+            update_led(indicate_error=True)
+            mock_pc.set_color.assert_called_once_with((255, 0, 0))
+            mock_pc.manual_tick.assert_not_called()
+
+    def test_update_led_handles_no_controller_gracefully(self) -> None:
+        """update_led handles missing PixelController gracefully."""
+        with (
+            patch("utils.update_install._pixel_controller", None),
+            patch("controllers.pixel_controller.PixelController", side_effect=ImportError),
+        ):
+            from utils.update_install import update_led
+
+            # Should not raise
+            update_led()
+            update_led(indicate_error=True)
 
 
 class TestExecuteInstallScript(TestCase):
@@ -89,14 +149,18 @@ class TestExecuteInstallScript(TestCase):
     def setUp(self) -> None:
         """Create a temporary directory for test scripts."""
         self.test_dir = tempfile.mkdtemp()
-        self.mock_installer = MockInstaller()
         # Suppress console output during tests
-        self._log_patcher = patch("core.boot_support.log_boot_message")
+        self._log_mock = MagicMock()
+        self._log_patcher = patch("utils.update_install._get_log_boot_message", return_value=self._log_mock)
         self._log_patcher.start()
+        # Mock update_led to avoid PixelController dependency in tests
+        self._led_patcher = patch("utils.update_install.update_led")
+        self._led_patcher.start()
 
     def tearDown(self) -> None:
         """Clean up temporary directory."""
         self._log_patcher.stop()
+        self._led_patcher.stop()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def _create_script(self, filename: str, content: str) -> str:
@@ -112,7 +176,6 @@ class TestExecuteInstallScript(TestCase):
             script_path="/nonexistent/script.py",
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertFalse(success)
         self.assertIn("not found", msg)
@@ -131,7 +194,6 @@ x = 1 + 1
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertFalse(success)
         self.assertIn("missing main()", msg)
@@ -151,7 +213,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
             pending_root_dir="/pending_update/root",
             pending_update_dir="/pending_update",
         )
@@ -173,7 +234,6 @@ def main(log_message, version):
             script_path=script,
             script_type="post_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertTrue(success)
         self.assertIn("completed successfully", msg)
@@ -193,7 +253,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertTrue(success)
 
@@ -212,7 +271,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertFalse(success)
         self.assertIn("returned failure", msg)
@@ -231,7 +289,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertFalse(success)
         self.assertIn("error", msg.lower())
@@ -252,7 +309,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertTrue(success)
 
@@ -273,12 +329,11 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=self.mock_installer,
         )
         self.assertTrue(success)
 
-    def test_installer_led_updated_during_execution(self) -> None:
-        """Installer's update_led is called during script execution."""
+    def test_update_led_called_during_execution(self) -> None:
+        """update_led is called during script execution."""
         script = self._create_script(
             "simple.py",
             """
@@ -287,33 +342,14 @@ def main(log_message, pending_root_dir, pending_update_dir):
 """,
         )
 
-        execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-            installer=self.mock_installer,
-        )
-        # LED should be updated at least once during execution
-        self.assertGreater(self.mock_installer.update_led_calls, 0)
-
-    def test_works_without_installer(self) -> None:
-        """Script execution works when installer is None."""
-        script = self._create_script(
-            "no_installer.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    log_message("Running without installer")
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-            installer=None,
-        )
-        self.assertTrue(success)
+        with patch("utils.update_install.update_led") as mock_update_led:
+            execute_install_script(
+                script_path=script,
+                script_type="pre_install",
+                version="1.0.0",
+            )
+            # LED should be updated at least once during execution
+            self.assertGreater(mock_update_led.call_count, 0)
 
     def test_log_message_callback_works(self) -> None:
         """The log_message function passed to script works."""
@@ -333,7 +369,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
         )
         self.assertTrue(success)
 
@@ -353,7 +388,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
             pending_root_dir="/test/root",
             pending_update_dir="/test/pending",
         )
@@ -374,7 +408,6 @@ def main(log_message, version):
             script_path=script,
             script_type="post_install",
             version="2.0.0-beta",
-            installer=None,
         )
         self.assertTrue(success)
 
@@ -393,18 +426,13 @@ def main(log_message, pending_root_dir, pending_update_dir)
             script_path=script,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
         )
         self.assertFalse(success)
         self.assertIn("error", msg.lower())
 
 
 class TestResetVersionForOta(TestCase):
-    """Tests for _reset_version_for_ota function."""
-
-    # Save reference to real open() before any patching can occur
-    # Use builtins module to get unpatched open()
-    _real_open: Callable[..., Any] = builtins.open
+    """Tests for reset_version_for_ota function."""
 
     def setUp(self) -> None:
         """Create a temporary directory structure mimicking device filesystem."""
@@ -415,28 +443,16 @@ class TestResetVersionForOta(TestCase):
         self.settings_path = os.path.join(self.test_dir, "settings.toml")
         self.recovery_settings_path = os.path.join(self.recovery_dir, "settings.toml")
 
+        # Create path map for file redirector
+        self.path_map = {
+            "/settings.toml": self.settings_path,
+            "/settings.toml.tmp": os.path.join(self.test_dir, "settings.toml.tmp"),
+            "/recovery/settings.toml": self.recovery_settings_path,
+        }
+
     def tearDown(self) -> None:
         """Clean up temporary directory."""
         shutil.rmtree(self.test_dir, ignore_errors=True)
-
-    def _map_path(self, path: str) -> str:
-        """Map device paths to test directory paths."""
-        if path == "/settings.toml":
-            return os.path.join(self.test_dir, "settings.toml")
-        elif path == "/settings.toml.tmp":
-            return os.path.join(self.test_dir, "settings.toml.tmp")
-        elif path == "/recovery/settings.toml":
-            return os.path.join(self.test_dir, "recovery", "settings.toml")
-        return path
-
-    def _create_open_mock(self) -> Callable[..., Any]:
-        """Create a mock for open() that redirects paths to test directory."""
-        real_open = self._real_open
-
-        def mock_open(path: str, mode: str = "r") -> Any:
-            return real_open(self._map_path(path), mode)
-
-        return mock_open
 
     def test_reads_from_recovery_and_writes_to_root(self) -> None:
         """Should read from recovery/settings.toml and write to root settings.toml.
@@ -458,11 +474,11 @@ LOG_LEVEL = "INFO"
             f.write(recovery_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertTrue(result)
 
@@ -478,7 +494,7 @@ LOG_LEVEL = "INFO"
         self.assertGreater(len(content.strip()), 20, "settings.toml should not be empty or minimal")
 
     def test_file_not_empty_after_operation(self) -> None:
-        """Root settings.toml must NOT be empty after _reset_version_for_ota.
+        """Root settings.toml must NOT be empty after reset_version_for_ota.
 
         This test specifically checks for the bug where settings.toml ends up blank.
         """
@@ -497,11 +513,11 @@ WIFI_RETRY_TIMEOUT = 259200
             f.write(recovery_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertTrue(result)
 
@@ -562,10 +578,8 @@ SYSTEM_UPDATE_MANIFEST_URL = "http://10.0.0.142:8080/releases.json"
                 # Simulate a write failure (e.g., disk full, I/O error)
                 raise OSError("Simulated write failure")
 
-        map_path = self._map_path
-
         def mock_open_with_write_failure(path: str, mode: str = "r") -> object:
-            actual_path = map_path(path)
+            actual_path = self.path_map.get(path, path)
 
             # Fail writes to settings.toml
             if "w" in mode and path == "/settings.toml":
@@ -573,11 +587,11 @@ SYSTEM_UPDATE_MANIFEST_URL = "http://10.0.0.142:8080/releases.json"
             return original_open(actual_path, mode)
 
         with (
-            patch("core.boot_support.open", side_effect=mock_open_with_write_failure),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=mock_open_with_write_failure),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         # The function should return False on failure
         self.assertFalse(result)
@@ -609,11 +623,11 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://example.com/releases.json"
         # Don't create recovery settings - it should fall back
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertTrue(result)
 
@@ -635,11 +649,11 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
             f.write(original_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertTrue(result)
         with open(self.settings_path) as f:
@@ -660,11 +674,11 @@ LOG_LEVEL = "INFO"
             f.write(original_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            _reset_version_for_ota()
+            reset_version_for_ota()
 
         with open(self.settings_path) as f:
             content = f.read()
@@ -683,11 +697,11 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
             f.write(original_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertTrue(result)
         with open(self.settings_path) as f:
@@ -697,10 +711,10 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
     def test_returns_false_on_file_error(self) -> None:
         """Should return False if file operations fail."""
         with (
-            patch("core.boot_support.open", side_effect=OSError("File not found")),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=OSError("File not found")),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertFalse(result)
 
@@ -714,11 +728,11 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
             f.write(original_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync"),
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync"),
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            result = _reset_version_for_ota()
+            result = reset_version_for_ota()
 
         self.assertTrue(result)
         with open(self.settings_path) as f:
@@ -734,11 +748,15 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
             f.write(original_content)
 
         with (
-            patch("core.boot_support.open", side_effect=self._create_open_mock()),
-            patch("core.boot_support.os.sync") as mock_sync,
-            patch("core.boot_support.log_boot_message"),
+            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
+            patch("utils.update_install.os.sync") as mock_sync,
+            patch("utils.update_install._get_log_boot_message"),
         ):
-            _reset_version_for_ota()
+            reset_version_for_ota()
 
         # Function should call sync after writing
         mock_sync.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

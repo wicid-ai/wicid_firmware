@@ -98,7 +98,7 @@ class TestInstallScriptExecution(TestCase):
 
     def test_pre_install_script_can_create_files(self) -> None:
         """Pre-install script can create files on filesystem."""
-        from core.boot_support import execute_install_script
+        from utils.update_install import execute_install_script
 
         script_content = """
 def main(log_message, pending_root_dir, pending_update_dir):
@@ -113,7 +113,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
             pending_root_dir=self.TEST_ROOT,
             pending_update_dir=self.TEST_DIR,
         )
@@ -135,7 +134,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 
     def test_post_install_script_can_modify_files(self) -> None:
         """Post-install script can modify existing files."""
-        from core.boot_support import execute_install_script
+        from utils.update_install import execute_install_script
 
         # Create an initial file
         with open("/test_post_install_marker", "w") as f:
@@ -154,7 +153,6 @@ def main(log_message, version):
             script_path=script_path,
             script_type="post_install",
             version="1.0.0",
-            installer=None,
         )
 
         self.assertTrue(success, f"Script should succeed: {msg}")
@@ -174,7 +172,7 @@ def main(log_message, version):
 
     def test_pre_install_can_access_pending_update_files(self) -> None:
         """Pre-install script can read files from pending_update/root/."""
-        from core.boot_support import execute_install_script
+        from utils.update_install import execute_install_script
 
         # Create a file in pending_update/root/
         with open(f"{self.TEST_ROOT}/test_file.txt", "w") as f:
@@ -198,7 +196,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
             pending_root_dir=self.TEST_ROOT,
             pending_update_dir=self.TEST_DIR,
         )
@@ -218,7 +215,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 
     def test_script_failure_does_not_crash_system(self) -> None:
         """Script that raises exception returns failure but doesn't crash."""
-        from core.boot_support import execute_install_script
+        from utils.update_install import execute_install_script
 
         script_content = """
 def main(log_message, pending_root_dir, pending_update_dir):
@@ -232,7 +229,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
             pending_root_dir=self.TEST_ROOT,
             pending_update_dir=self.TEST_DIR,
         )
@@ -242,7 +238,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 
     def test_install_log_created_on_execution(self) -> None:
         """Install log is created when script executes."""
-        from core.boot_support import INSTALL_LOG_FILE, execute_install_script
+        from utils.update_install import INSTALL_LOG_FILE, execute_install_script
 
         script_content = """
 def main(log_message, pending_root_dir, pending_update_dir):
@@ -255,7 +251,6 @@ def main(log_message, pending_root_dir, pending_update_dir):
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
-            installer=None,
             pending_root_dir=self.TEST_ROOT,
             pending_update_dir=self.TEST_DIR,
         )
@@ -275,21 +270,21 @@ class TestInstallScriptPathResolution(TestCase):
 
     def test_get_script_path_simple_version(self) -> None:
         """Path generation works for simple versions."""
-        from core.boot_support import _get_script_path
+        from utils.update_install import _get_script_path
 
         path = _get_script_path("pre_install", "1.0.0", "/pending_update/root")
         self.assertEqual(path, "/pending_update/root/firmware_install_scripts/pre_install_v1.0.0.py")
 
     def test_get_script_path_prerelease_version(self) -> None:
         """Path generation works for prerelease versions."""
-        from core.boot_support import _get_script_path
+        from utils.update_install import _get_script_path
 
         path = _get_script_path("post_install", "0.6.0-b2", "")
         self.assertEqual(path, "/firmware_install_scripts/post_install_v0.6.0-b2.py")
 
     def test_get_script_path_rc_version(self) -> None:
         """Path generation works for release candidate versions."""
-        from core.boot_support import _get_script_path
+        from utils.update_install import _get_script_path
 
         path = _get_script_path("pre_install", "2.0.0-rc1", "/staging")
         self.assertEqual(path, "/staging/firmware_install_scripts/pre_install_v2.0.0-rc1.py")

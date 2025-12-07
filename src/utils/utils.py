@@ -8,6 +8,7 @@ including button handling, configuration validation, and other shared logic.
 import json
 import os
 import sys
+import time
 
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
@@ -339,3 +340,57 @@ def trigger_safe_mode() -> None:
     log.info("Device will reboot with USB enabled")
     microcontroller.on_next_reset(microcontroller.RunMode.SAFE_MODE)
     microcontroller.reset()
+
+
+def remove_directory_recursive(path: str) -> None:
+    """
+    Recursively remove a directory and all its contents.
+    CircuitPython-compatible (no os.walk).
+
+    Uses multiple passes to handle FAT filesystem quirks and hidden files.
+
+    Args:
+        path: Directory path to remove
+    """
+    try:
+        items = os.listdir(path)
+    except OSError:
+        # Path doesn't exist or isn't a directory
+        return
+
+    # First pass: Remove all files (including hidden files like ._*)
+    for item in items:
+        item_path = f"{path}/{item}" if not path.endswith("/") else f"{path}{item}"
+
+        # Try to remove as file
+        with suppress(OSError):
+            os.remove(item_path)
+
+    # Second pass: Recurse into directories and remove them
+    # Re-list to handle any changes from first pass
+    try:
+        items = os.listdir(path)
+    except OSError:
+        return
+
+    for item in items:
+        item_path = f"{path}/{item}" if not path.endswith("/") else f"{path}{item}"
+
+        # Recurse into subdirectories
+        remove_directory_recursive(item_path)
+
+        # Try to remove the directory
+        with suppress(OSError):
+            os.rmdir(item_path)
+
+    # Final pass: Remove the directory itself (with retry)
+    for _ in range(3):
+        try:
+            os.rmdir(path)
+            break  # Success
+        except OSError:
+            # Sync filesystem and retry
+            with suppress(OSError, AttributeError):
+                os.sync()
+            with suppress(OSError, AttributeError):
+                time.sleep(0.1)

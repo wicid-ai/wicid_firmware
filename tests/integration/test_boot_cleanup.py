@@ -97,7 +97,7 @@ class TestBootCleanup(TestCase):
     def _cleanup(self) -> None:
         """Remove test directory if it exists."""
         try:
-            from core.boot_support import remove_directory_recursive
+            from utils.utils import remove_directory_recursive
 
             remove_directory_recursive(self.test_dir)
             os.sync()
@@ -106,7 +106,7 @@ class TestBootCleanup(TestCase):
 
     def test_remove_empty_directory(self) -> None:
         """Remove an empty directory."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         os.mkdir(self.test_dir)
         self.assertTrue(self._dir_exists(self.test_dir), "Test directory should exist")
@@ -117,7 +117,7 @@ class TestBootCleanup(TestCase):
 
     def test_remove_directory_with_files(self) -> None:
         """Remove directory containing regular files."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         os.mkdir(self.test_dir)
         with open(f"{self.test_dir}/file1.txt", "w") as f:
@@ -131,7 +131,7 @@ class TestBootCleanup(TestCase):
 
     def test_remove_directory_with_hidden_files(self) -> None:
         """Remove directory containing hidden files (._*)."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         os.mkdir(self.test_dir)
         with open(f"{self.test_dir}/regular.txt", "w") as f:
@@ -145,7 +145,7 @@ class TestBootCleanup(TestCase):
 
     def test_remove_nested_directory_structure(self) -> None:
         """Remove deeply nested directory structure."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         _create_test_structure(self.test_dir)
 
@@ -159,19 +159,19 @@ class TestBootCleanup(TestCase):
 
     def test_remove_nonexistent_directory(self) -> None:
         """Remove non-existent directory (should not raise error)."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         # Should not raise - idempotent operation
         remove_directory_recursive("/nonexistent_test_dir_12345")
 
     def test_cleanup_pending_update_with_artifacts(self) -> None:
         """Test cleanup_pending_update removes all artifacts."""
-        from core.boot_support import cleanup_pending_update
+        from utils.update_install import cleanup_pending_update
 
         # Create a mock pending_update structure
         pending_dir = "/pending_update"
         try:
-            from core.boot_support import remove_directory_recursive
+            from utils.utils import remove_directory_recursive
 
             remove_directory_recursive(pending_dir)
         except (OSError, ImportError):
@@ -200,7 +200,7 @@ class TestBootCleanupWithHiddenFiles(TestCase):
 
     def test_hidden_files_in_root_are_removed(self) -> None:
         """Hidden files at root level are removed."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         test_dir = "/test_hidden_cleanup"
         with suppress(OSError, ImportError):
@@ -221,7 +221,7 @@ class TestBootCleanupWithHiddenFiles(TestCase):
 
     def test_mixed_hidden_and_regular_files(self) -> None:
         """Mixed hidden and regular files are all removed."""
-        from core.boot_support import remove_directory_recursive
+        from utils.utils import remove_directory_recursive
 
         test_dir = "/test_mixed_cleanup"
         with suppress(OSError, ImportError):
