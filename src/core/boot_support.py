@@ -3,7 +3,7 @@ WICID Boot Support Module
 
 This module contains all boot logic that runs before code.py:
 1. Storage configuration (disable USB, remount filesystem)
-2. Recovery from missing critical files (via RecoveryManager)
+2. Recovery from missing critical files (via recovery utilities)
 3. Processing pending firmware updates (full reset strategy)
 
 Boot Flow:
@@ -44,7 +44,14 @@ sys.path.insert(0, "/")
 try:
     from core.app_typing import Any
     from core.logging_helper import logger  # noqa: F401 - Used later in module
-    from managers.recovery_manager import RecoveryManager
+    from utils.recovery import (
+        RECOVERY_DIR,
+        create_recovery_backup,
+        recovery_exists,
+        restore_from_recovery,
+        validate_critical_files,
+        validate_extracted_update,
+    )
     from utils.utils import check_release_compatibility, mark_incompatible_release, suppress
 except ImportError as e:
     print("=" * 50)
@@ -135,7 +142,7 @@ def _reset_version_for_ota() -> bool:
         bool: True if successful, False otherwise
     """
     settings_path = "/settings.toml"
-    recovery_settings_path = f"{RecoveryManager.RECOVERY_DIR}/settings.toml"
+    recovery_settings_path = f"{RECOVERY_DIR}/settings.toml"
 
     try:
         # Read from recovery settings (known-good source after restore)
@@ -775,7 +782,7 @@ def process_pending_update() -> None:
         # Step 3.5: Validate extracted update contains all critical files
         # This is a second check before destructive operations begin
         log_boot_message("Validating update package integrity...")
-        all_present, missing_files = RecoveryManager.validate_extracted_update(PENDING_ROOT_DIR)
+        all_present, missing_files = validate_extracted_update(PENDING_ROOT_DIR)
 
         if not all_present:
             log_boot_message("ERROR: Update package is incomplete")
@@ -863,7 +870,7 @@ def process_pending_update() -> None:
                 raise Exception("File move deleted secrets.json") from e
 
         # Step 7: Validate critical files are present after installation
-        all_present, missing_files = RecoveryManager.validate_critical_files()
+        all_present, missing_files = validate_critical_files()
 
         if not all_present:
             log_boot_message("ERROR: Critical files missing after installation:")
@@ -884,7 +891,7 @@ def process_pending_update() -> None:
         # Step 8: Create or update recovery backup
         log_boot_message("Creating recovery backup...")
         try:
-            success, backup_msg = RecoveryManager.create_recovery_backup()
+            success, backup_msg = create_recovery_backup()
             if success:
                 log_boot_message(f"✓ {backup_msg}")
             else:
@@ -957,14 +964,14 @@ def check_and_restore_from_recovery() -> bool:
     Check for missing critical files and restore from recovery if needed.
 
     This runs early in boot to catch catastrophic failures from interrupted
-    updates or corrupted filesystems. RecoveryManager is guaranteed to be
-    available since it's a CRITICAL import (boot.py ensures it via emergency recovery).
+    updates or corrupted filesystems. Recovery utilities are guaranteed to be
+    available since they're CRITICAL imports (boot.py ensures it via emergency recovery).
 
     Returns:
         bool: True if recovery was needed and performed, False otherwise
     """
     # Check if all critical files are present
-    all_present, missing_files = RecoveryManager.validate_critical_files()
+    all_present, missing_files = validate_critical_files()
 
     if all_present:
         # All good, no recovery needed
@@ -980,7 +987,7 @@ def check_and_restore_from_recovery() -> bool:
     if len(missing_files) > 10:
         log_boot_message(f"  ... and {len(missing_files) - 10} more")
 
-    if not RecoveryManager.recovery_exists():
+    if not recovery_exists():
         log_boot_message("\n✗ No recovery backup available")
         log_boot_message("Device may not boot correctly")
         log_boot_message("Manual intervention required")
@@ -988,7 +995,7 @@ def check_and_restore_from_recovery() -> bool:
 
     # Attempt recovery
     log_boot_message("\n→ Attempting recovery from backup...")
-    success, message = RecoveryManager.restore_from_recovery()
+    success, message = restore_from_recovery()
 
     if success:
         log_boot_message(f"✓ {message}")

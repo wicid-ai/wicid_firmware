@@ -72,7 +72,7 @@ class TestRecoveryBackupClearsStaleFiles(TestCase):
 
     def test_backup_removes_stale_files(self) -> None:
         """Stale files should be removed when creating a fresh backup."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import create_recovery_backup
 
         # Verify stale file exists before backup
         try:
@@ -81,7 +81,7 @@ class TestRecoveryBackupClearsStaleFiles(TestCase):
             self.fail("Stale file should exist before backup test")
 
         # Create recovery backup - this should clear the stale file
-        success, message = RecoveryManager.create_recovery_backup()
+        success, message = create_recovery_backup()
         self.assertTrue(success, f"Backup failed: {message}")
 
         # Verify stale file was removed
@@ -98,9 +98,9 @@ class TestRecoveryBackup(TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Create recovery backup once for all tests in this class."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import create_recovery_backup
 
-        success, message = RecoveryManager.create_recovery_backup()
+        success, message = create_recovery_backup()
         if not success:
             raise RuntimeError(f"Failed to create recovery backup: {message}")
 
@@ -115,16 +115,16 @@ class TestRecoveryBackup(TestCase):
 
     def test_backup_exists(self) -> None:
         """Recovery backup directory exists after creation."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import recovery_exists
 
-        self.assertTrue(RecoveryManager.recovery_exists(), "Recovery backup should exist")
+        self.assertTrue(recovery_exists(), "Recovery backup should exist")
 
     def test_backup_contains_critical_files(self) -> None:
         """Recovery backup contains all CRITICAL_FILES with non-zero size."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES, RECOVERY_DIR
 
-        for path in RecoveryManager.CRITICAL_FILES:
-            recovery_path = RecoveryManager.RECOVERY_DIR + path
+        for path in CRITICAL_FILES:
+            recovery_path = RECOVERY_DIR + path
             try:
                 stat = os.stat(recovery_path)
                 self.assertTrue(stat[6] > 0, f"Recovery file is empty: {recovery_path}")
@@ -133,9 +133,9 @@ class TestRecoveryBackup(TestCase):
 
     def test_backup_integrity_passes(self) -> None:
         """Backup integrity validation passes after fresh backup."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import validate_backup_integrity
 
-        valid, message = RecoveryManager.validate_backup_integrity()
+        valid, message = validate_backup_integrity()
         self.assertTrue(valid, f"Integrity check failed: {message}")
 
 
@@ -144,9 +144,9 @@ class TestRecoveryValidation(TestCase):
 
     def test_validate_critical_files_passes_on_healthy_system(self) -> None:
         """All critical files should be present on a healthy system."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import validate_critical_files
 
-        all_present, missing = RecoveryManager.validate_critical_files()
+        all_present, missing = validate_critical_files()
         self.assertTrue(all_present, f"Missing critical files: {missing}")
 
 
@@ -155,10 +155,10 @@ class TestCriticalFilesPresence(TestCase):
 
     def test_all_critical_files_exist(self) -> None:
         """Every file in CRITICAL_FILES should exist on device."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         missing = []
-        for path in RecoveryManager.CRITICAL_FILES:
+        for path in CRITICAL_FILES:
             try:
                 os.stat(path)
             except OSError:
@@ -168,10 +168,10 @@ class TestCriticalFilesPresence(TestCase):
 
     def test_critical_files_are_not_empty(self) -> None:
         """Critical files should not be empty (0 bytes)."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         empty_files = []
-        for path in RecoveryManager.CRITICAL_FILES:
+        for path in CRITICAL_FILES:
             try:
                 stat = os.stat(path)
                 if stat[6] == 0:  # st_size
@@ -226,7 +226,7 @@ class TestScriptOnlyReleaseValidation(TestCase):
         """Script-only release with valid manifest passes validation."""
         import json
 
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import validate_extracted_update
 
         # Create a script-only manifest
         manifest = {"version": "1.0.0-s1", "script_only_release": True}
@@ -235,7 +235,7 @@ class TestScriptOnlyReleaseValidation(TestCase):
         os.sync()
 
         # Validate - should pass even without critical files
-        all_present, missing = RecoveryManager.validate_extracted_update(self.TEST_DIR)
+        all_present, missing = validate_extracted_update(self.TEST_DIR)
         self.assertTrue(all_present, "Script-only release should pass validation without critical files")
         self.assertEqual(missing, [], "Should have no missing files for script-only release")
 
@@ -243,7 +243,7 @@ class TestScriptOnlyReleaseValidation(TestCase):
         """Normal release without critical files fails validation."""
         import json
 
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import validate_extracted_update
 
         # Create a normal release manifest
         manifest = {"version": "1.0.0", "script_only_release": False}
@@ -252,13 +252,13 @@ class TestScriptOnlyReleaseValidation(TestCase):
         os.sync()
 
         # Validate - should fail because critical files are missing
-        all_present, missing = RecoveryManager.validate_extracted_update(self.TEST_DIR)
+        all_present, missing = validate_extracted_update(self.TEST_DIR)
         self.assertFalse(all_present, "Normal release should fail without critical files")
         self.assertTrue(len(missing) > 0, "Should report missing critical files")
 
     def test_malformed_json_falls_back_to_normal_validation(self) -> None:
         """Malformed JSON in manifest falls back to normal validation."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import validate_extracted_update
 
         # Create malformed JSON - this will raise ValueError in CircuitPython
         with open(f"{self.TEST_DIR}/manifest.json", "w") as f:
@@ -266,17 +266,17 @@ class TestScriptOnlyReleaseValidation(TestCase):
         os.sync()
 
         # Validate - should fall back to normal validation and fail
-        all_present, missing = RecoveryManager.validate_extracted_update(self.TEST_DIR)
+        all_present, missing = validate_extracted_update(self.TEST_DIR)
         self.assertFalse(all_present, "Malformed JSON should fall back to normal validation")
         self.assertTrue(len(missing) > 0, "Should report missing critical files")
 
     def test_missing_manifest_falls_back_to_normal_validation(self) -> None:
         """Missing manifest.json falls back to normal validation."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import validate_extracted_update
 
         # No manifest file created
         # Validate - should fall back to normal validation and fail
-        all_present, missing = RecoveryManager.validate_extracted_update(self.TEST_DIR)
+        all_present, missing = validate_extracted_update(self.TEST_DIR)
         self.assertFalse(all_present, "Missing manifest should fall back to normal validation")
         self.assertTrue(len(missing) > 0, "Should report missing critical files")
 

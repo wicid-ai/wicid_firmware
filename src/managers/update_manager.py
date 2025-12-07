@@ -43,7 +43,7 @@ from core.app_typing import Any, Callable
 from core.logging_helper import logger
 from core.scheduler import Scheduler
 from managers.manager_base import ManagerBase
-from managers.recovery_manager import RecoveryManager
+from utils.recovery import validate_extracted_update
 from utils.utils import (
     check_release_compatibility,
     compare_versions,
@@ -781,7 +781,7 @@ class UpdateManager(ManagerBase):
 
                     self.logger.debug("Validating extracted update contains all critical files")
                     notify("unpacking", "Validating update package...", None)
-                    all_present, missing_files = RecoveryManager.validate_extracted_update(self.PENDING_STAGING_DIR)
+                    all_present, missing_files = validate_extracted_update(self.PENDING_STAGING_DIR)
 
                     if not all_present:
                         self.logger.error("Update package is incomplete")

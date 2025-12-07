@@ -1,19 +1,19 @@
-"""Unit tests for RecoveryManager."""
+"""Unit tests for recovery utilities."""
 
 import json
 import unittest
 from unittest.mock import MagicMock, patch
 
 
-class TestRecoveryManagerValidateCriticalFiles(unittest.TestCase):
-    """Test validate_critical_files static method."""
+class TestRecoveryValidateCriticalFiles(unittest.TestCase):
+    """Test validate_critical_files function."""
 
     def test_all_files_present_returns_true(self) -> None:
         with patch("os.stat") as mock_stat:
             mock_stat.return_value = MagicMock()  # File exists
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_critical_files
 
-            all_present, missing = RecoveryManager.validate_critical_files()
+            all_present, missing = validate_critical_files()
             self.assertTrue(all_present)
             self.assertEqual(missing, [])
 
@@ -24,9 +24,9 @@ class TestRecoveryManagerValidateCriticalFiles(unittest.TestCase):
             return MagicMock()
 
         with patch("os.stat", side_effect=stat_side_effect):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_critical_files
 
-            all_present, missing = RecoveryManager.validate_critical_files()
+            all_present, missing = validate_critical_files()
             self.assertFalse(all_present)
             self.assertIn("/boot.py", missing)
 
@@ -39,38 +39,38 @@ class TestRecoveryManagerValidateCriticalFiles(unittest.TestCase):
             return MagicMock()
 
         with patch("os.stat", side_effect=stat_side_effect):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_critical_files
 
-            all_present, missing = RecoveryManager.validate_critical_files()
+            all_present, missing = validate_critical_files()
             self.assertFalse(all_present)
             for path in missing_paths:
                 self.assertIn(path, missing)
 
 
-class TestRecoveryManagerRecoveryExists(unittest.TestCase):
-    """Test recovery_exists static method."""
+class TestRecoveryExists(unittest.TestCase):
+    """Test recovery_exists function."""
 
     def test_recovery_exists_with_files(self) -> None:
         with patch("os.listdir", return_value=["boot.py", "code.py"]):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import recovery_exists
 
-            self.assertTrue(RecoveryManager.recovery_exists())
+            self.assertTrue(recovery_exists())
 
     def test_recovery_exists_empty_directory(self) -> None:
         with patch("os.listdir", return_value=[]):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import recovery_exists
 
-            self.assertFalse(RecoveryManager.recovery_exists())
+            self.assertFalse(recovery_exists())
 
     def test_recovery_exists_directory_not_found(self) -> None:
         with patch("os.listdir", side_effect=OSError("Directory not found")):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import recovery_exists
 
-            self.assertFalse(RecoveryManager.recovery_exists())
+            self.assertFalse(recovery_exists())
 
 
-class TestRecoveryManagerValidateFilesInDirectory(unittest.TestCase):
-    """Test _validate_files_in_directory helper method."""
+class TestRecoveryValidateFilesInDirectory(unittest.TestCase):
+    """Test _validate_files_in_directory helper function."""
 
     def test_validates_files_in_root_directory(self) -> None:
         """Test validation with empty base_dir (root filesystem)."""
@@ -78,9 +78,9 @@ class TestRecoveryManagerValidateFilesInDirectory(unittest.TestCase):
 
         with patch("os.stat") as mock_stat:
             mock_stat.return_value = MagicMock()
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import _validate_files_in_directory
 
-            all_present, missing = RecoveryManager._validate_files_in_directory("", test_files)
+            all_present, missing = _validate_files_in_directory("", test_files)
             self.assertTrue(all_present)
             self.assertEqual(missing, [])
 
@@ -90,9 +90,9 @@ class TestRecoveryManagerValidateFilesInDirectory(unittest.TestCase):
 
         with patch("os.stat") as mock_stat:
             mock_stat.return_value = MagicMock()
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import _validate_files_in_directory
 
-            all_present, missing = RecoveryManager._validate_files_in_directory("/tmp/update", test_files)
+            all_present, missing = _validate_files_in_directory("/tmp/update", test_files)
             self.assertTrue(all_present)
             self.assertEqual(missing, [])
             # Verify it checked the correct paths
@@ -109,23 +109,23 @@ class TestRecoveryManagerValidateFilesInDirectory(unittest.TestCase):
             return MagicMock()
 
         with patch("os.stat", side_effect=stat_side_effect):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import _validate_files_in_directory
 
-            all_present, missing = RecoveryManager._validate_files_in_directory("/tmp", test_files)
+            all_present, missing = _validate_files_in_directory("/tmp", test_files)
             self.assertFalse(all_present)
             self.assertIn("/missing.py", missing)
             self.assertNotIn("/boot.py", missing)
 
 
-class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
-    """Test validate_extracted_update static method."""
+class TestRecoveryValidateExtractedUpdate(unittest.TestCase):
+    """Test validate_extracted_update function."""
 
     def test_all_files_present_in_extracted_dir(self) -> None:
         with patch("os.stat") as mock_stat:
             mock_stat.return_value = MagicMock()
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_extracted_update
 
-            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            all_present, missing = validate_extracted_update("/tmp/update")
             self.assertTrue(all_present)
             self.assertEqual(missing, [])
 
@@ -136,9 +136,9 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             return MagicMock()
 
         with patch("os.stat", side_effect=stat_side_effect):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_extracted_update
 
-            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            all_present, missing = validate_extracted_update("/tmp/update")
             self.assertFalse(all_present)
             self.assertIn("/boot.py", missing)
 
@@ -156,9 +156,9 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             raise OSError("File not found")
 
         with patch("builtins.open", side_effect=mock_open_func):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_extracted_update
 
-            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            all_present, missing = validate_extracted_update("/tmp/update")
             self.assertTrue(all_present)
             self.assertEqual(missing, [])
 
@@ -177,9 +177,9 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             patch("builtins.open", side_effect=mock_open_func),
             patch("os.stat", side_effect=stat_side_effect),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_extracted_update
 
-            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            all_present, missing = validate_extracted_update("/tmp/update")
             self.assertFalse(all_present)
             self.assertIn("/boot.py", missing)
 
@@ -205,9 +205,9 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             patch("os.stat", side_effect=stat_side_effect),
             patch("json.load", side_effect=ValueError("Invalid JSON")),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_extracted_update
 
-            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            all_present, missing = validate_extracted_update("/tmp/update")
             self.assertFalse(all_present)
             self.assertIn("/boot.py", missing)
 
@@ -233,15 +233,15 @@ class TestRecoveryManagerValidateExtractedUpdate(unittest.TestCase):
             patch("builtins.open", side_effect=mock_open_func),
             patch("os.stat", side_effect=stat_side_effect),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_extracted_update
 
-            all_present, missing = RecoveryManager.validate_extracted_update("/tmp/update")
+            all_present, missing = validate_extracted_update("/tmp/update")
             self.assertFalse(all_present)
             self.assertIn("/boot.py", missing)
 
 
-class TestRecoveryManagerClearRecoveryDirectory(unittest.TestCase):
-    """Test _clear_recovery_directory helper method."""
+class TestRecoveryClearRecoveryDirectory(unittest.TestCase):
+    """Test _clear_recovery_directory helper function."""
 
     def test_clears_existing_files(self) -> None:
         """Existing files in recovery directory should be removed."""
@@ -265,19 +265,19 @@ class TestRecoveryManagerClearRecoveryDirectory(unittest.TestCase):
             patch("os.rmdir"),
             patch("os.sync"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import _clear_recovery_directory
 
-            RecoveryManager._clear_recovery_directory()
+            _clear_recovery_directory()
             self.assertIn("/recovery/old_file.mpy", removed_files)
             self.assertIn("/recovery/stale.py", removed_files)
 
     def test_handles_nonexistent_directory(self) -> None:
         """Should handle gracefully if recovery directory doesn't exist."""
         with patch("os.listdir", side_effect=OSError("Directory not found")):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import _clear_recovery_directory
 
             # Should not raise
-            RecoveryManager._clear_recovery_directory()
+            _clear_recovery_directory()
 
     def test_clears_subdirectories(self) -> None:
         """Subdirectories in recovery should be recursively cleared."""
@@ -300,15 +300,15 @@ class TestRecoveryManagerClearRecoveryDirectory(unittest.TestCase):
             patch("os.rmdir"),
             patch("os.sync"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import _clear_recovery_directory
 
-            RecoveryManager._clear_recovery_directory()
+            _clear_recovery_directory()
             # Should have listed both recovery and subdirectory
             self.assertGreater(call_count["listdir"], 1)
 
 
-class TestRecoveryManagerCreateBackup(unittest.TestCase):
-    """Test create_recovery_backup static method."""
+class TestRecoveryCreateBackup(unittest.TestCase):
+    """Test create_recovery_backup function."""
 
     def test_clears_directory_before_backup(self) -> None:
         """Recovery directory should be cleared before creating fresh backup."""
@@ -328,13 +328,11 @@ class TestRecoveryManagerCreateBackup(unittest.TestCase):
             patch("os.sync"),
             patch("builtins.open", return_value=mock_open_obj),
             patch("core.logging_helper.logger"),
-            patch(
-                "managers.recovery_manager.RecoveryManager._clear_recovery_directory", side_effect=track_clear
-            ) as mock_clear,
+            patch("utils.recovery._clear_recovery_directory", side_effect=track_clear) as mock_clear,
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import create_recovery_backup
 
-            RecoveryManager.create_recovery_backup()
+            create_recovery_backup()
             mock_clear.assert_called_once()
             self.assertTrue(clear_called["called"])
 
@@ -351,9 +349,9 @@ class TestRecoveryManagerCreateBackup(unittest.TestCase):
             patch("builtins.open", return_value=mock_open_obj),
             patch("core.logging_helper.logger"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import create_recovery_backup
 
-            success, message = RecoveryManager.create_recovery_backup()
+            success, message = create_recovery_backup()
             # Should attempt to create recovery directory
             mock_mkdir.assert_called()
 
@@ -374,9 +372,9 @@ class TestRecoveryManagerCreateBackup(unittest.TestCase):
             patch("builtins.open", side_effect=mock_open_func),
             patch("core.logging_helper.logger"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import create_recovery_backup
 
-            success, message = RecoveryManager.create_recovery_backup()
+            success, message = create_recovery_backup()
             self.assertTrue(success)
             self.assertIn("complete", message.lower())
 
@@ -391,25 +389,25 @@ class TestRecoveryManagerCreateBackup(unittest.TestCase):
             patch("builtins.open", side_effect=mock_open_func),
             patch("core.logging_helper.logger"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import create_recovery_backup
 
-            success, message = RecoveryManager.create_recovery_backup()
+            success, message = create_recovery_backup()
             # Should return partial success with failures
             self.assertFalse(success)
             self.assertIn("Partial", message)
 
 
-class TestRecoveryManagerRestoreFromRecovery(unittest.TestCase):
-    """Test restore_from_recovery static method."""
+class TestRecoveryRestoreFromRecovery(unittest.TestCase):
+    """Test restore_from_recovery function."""
 
     def test_restore_no_backup_found(self) -> None:
         with (
             patch("os.listdir", side_effect=OSError),
             patch("core.logging_helper.logger"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import restore_from_recovery
 
-            success, message = RecoveryManager.restore_from_recovery()
+            success, message = restore_from_recovery()
             self.assertFalse(success)
             self.assertIn("No recovery backup found", message)
 
@@ -434,46 +432,46 @@ class TestRecoveryManagerRestoreFromRecovery(unittest.TestCase):
             patch("builtins.open", side_effect=mock_open_func),
             patch("core.logging_helper.logger"),
         ):
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import restore_from_recovery
 
-            success, message = RecoveryManager.restore_from_recovery()
+            success, message = restore_from_recovery()
             self.assertTrue(success)
             self.assertIn("complete", message.lower())
 
 
-class TestRecoveryManagerCriticalFiles(unittest.TestCase):
+class TestRecoveryCriticalFiles(unittest.TestCase):
     """Test CRITICAL_FILES constant."""
 
     def test_critical_files_includes_boot_files(self) -> None:
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
-        self.assertIn("/boot.py", RecoveryManager.CRITICAL_FILES)
-        self.assertIn("/code.py", RecoveryManager.CRITICAL_FILES)
+        self.assertIn("/boot.py", CRITICAL_FILES)
+        self.assertIn("/code.py", CRITICAL_FILES)
 
     def test_critical_files_includes_settings(self) -> None:
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
-        self.assertIn("/settings.toml", RecoveryManager.CRITICAL_FILES)
+        self.assertIn("/settings.toml", CRITICAL_FILES)
 
     def test_critical_files_includes_manifest(self) -> None:
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
-        self.assertIn("/manifest.json", RecoveryManager.CRITICAL_FILES)
+        self.assertIn("/manifest.json", CRITICAL_FILES)
 
 
-class TestRecoveryManagerMinimalSet(unittest.TestCase):
+class TestRecoveryMinimalSet(unittest.TestCase):
     """Test that CRITICAL_FILES contains the minimal set for boot + OTA recovery."""
 
     def test_critical_files_count(self) -> None:
         """Critical files should be exactly 20 files (minimal OTA recovery set)."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         # The minimal set for boot + OTA capability is exactly 20 files
-        self.assertEqual(len(RecoveryManager.CRITICAL_FILES), 20)
+        self.assertEqual(len(CRITICAL_FILES), 20)
 
     def test_boot_chain_is_complete(self) -> None:
         """Boot chain files must all be present for device to start."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         boot_chain = [
             "/boot.py",
@@ -486,27 +484,27 @@ class TestRecoveryManagerMinimalSet(unittest.TestCase):
             "/core/scheduler.mpy",
         ]
         for path in boot_chain:
-            self.assertIn(path, RecoveryManager.CRITICAL_FILES, f"Missing boot chain file: {path}")
+            self.assertIn(path, CRITICAL_FILES, f"Missing boot chain file: {path}")
 
     def test_ota_chain_is_complete(self) -> None:
         """OTA update chain files must all be present for self-healing."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         ota_chain = [
             "/managers/manager_base.mpy",
             "/managers/system_manager.mpy",
             "/managers/update_manager.mpy",
-            "/managers/recovery_manager.mpy",
+            "/utils/recovery.mpy",
             "/managers/connection_manager.mpy",
             "/controllers/wifi_radio_controller.mpy",
             "/utils/zipfile_lite.mpy",
         ]
         for path in ota_chain:
-            self.assertIn(path, RecoveryManager.CRITICAL_FILES, f"Missing OTA chain file: {path}")
+            self.assertIn(path, CRITICAL_FILES, f"Missing OTA chain file: {path}")
 
     def test_library_dependencies_are_complete(self) -> None:
         """Library dependencies required by OTA chain must be present."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         lib_deps = [
             "/lib/adafruit_requests.mpy",
@@ -514,19 +512,19 @@ class TestRecoveryManagerMinimalSet(unittest.TestCase):
             "/lib/adafruit_hashlib/__init__.mpy",
         ]
         for path in lib_deps:
-            self.assertIn(path, RecoveryManager.CRITICAL_FILES, f"Missing library: {path}")
+            self.assertIn(path, CRITICAL_FILES, f"Missing library: {path}")
 
     def test_config_files_are_present(self) -> None:
         """Configuration files required for boot and updates must be present."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         config_files = ["/settings.toml", "/manifest.json"]
         for path in config_files:
-            self.assertIn(path, RecoveryManager.CRITICAL_FILES, f"Missing config file: {path}")
+            self.assertIn(path, CRITICAL_FILES, f"Missing config file: {path}")
 
     def test_unnecessary_files_are_not_included(self) -> None:
         """Files not required for OTA recovery should NOT be in CRITICAL_FILES."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import CRITICAL_FILES
 
         # These are nice-to-have but not required for boot + OTA
         unnecessary = [
@@ -534,24 +532,24 @@ class TestRecoveryManagerMinimalSet(unittest.TestCase):
             "/lib/neopixel.mpy",  # Only needed for pixel_controller
         ]
         for path in unnecessary:
-            self.assertNotIn(path, RecoveryManager.CRITICAL_FILES, f"Unnecessary file included: {path}")
+            self.assertNotIn(path, CRITICAL_FILES, f"Unnecessary file included: {path}")
 
 
-class TestRecoveryManagerIntegrity(unittest.TestCase):
+class TestRecoveryIntegrity(unittest.TestCase):
     """Test recovery backup integrity features."""
 
     def test_backup_includes_integrity_metadata(self) -> None:
         """Recovery backup should track file hashes for corruption detection."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import RECOVERY_INTEGRITY_FILE
 
         # Verify the integrity file constant exists
-        self.assertTrue(hasattr(RecoveryManager, "RECOVERY_INTEGRITY_FILE"))
+        self.assertIsNotNone(RECOVERY_INTEGRITY_FILE)
 
     def test_validate_backup_integrity_exists(self) -> None:
-        """Method to validate backup integrity should exist."""
-        from managers.recovery_manager import RecoveryManager
+        """Function to validate backup integrity should exist."""
+        from utils.recovery import validate_backup_integrity
 
-        self.assertTrue(hasattr(RecoveryManager, "validate_backup_integrity"))
+        self.assertTrue(callable(validate_backup_integrity))
 
     def test_validate_backup_integrity_returns_tuple(self) -> None:
         """validate_backup_integrity returns (valid, message) tuple."""
@@ -561,9 +559,9 @@ class TestRecoveryManagerIntegrity(unittest.TestCase):
             patch("os.listdir", return_value=["boot.py"]),
         ):
             mock_stat.return_value = MagicMock()
-            from managers.recovery_manager import RecoveryManager
+            from utils.recovery import validate_backup_integrity
 
-            result = RecoveryManager.validate_backup_integrity()
+            result = validate_backup_integrity()
             self.assertIsInstance(result, tuple)
             self.assertEqual(len(result), 2)
 
@@ -573,26 +571,26 @@ class TestPreservedFiles(unittest.TestCase):
 
     def test_preserved_files_includes_secrets(self) -> None:
         """secrets.json must always be preserved."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import PRESERVED_FILES
 
-        self.assertIn("secrets.json", RecoveryManager.PRESERVED_FILES)
+        self.assertIn("secrets.json", PRESERVED_FILES)
 
     def test_preserved_files_includes_development(self) -> None:
         """DEVELOPMENT flag should be preserved."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import PRESERVED_FILES
 
-        self.assertIn("DEVELOPMENT", RecoveryManager.PRESERVED_FILES)
+        self.assertIn("DEVELOPMENT", PRESERVED_FILES)
 
     def test_preserved_files_is_minimal(self) -> None:
         """Only user-provided data should be preserved."""
-        from managers.recovery_manager import RecoveryManager
+        from utils.recovery import PRESERVED_FILES
 
         # Only secrets.json and DEVELOPMENT should be preserved
-        self.assertEqual(len(RecoveryManager.PRESERVED_FILES), 2)
+        self.assertEqual(len(PRESERVED_FILES), 2)
 
 
 class TestBootCriticalAlignment(unittest.TestCase):
-    """Test that boot.py's _BOOT_CRITICAL aligns with RecoveryManager.CRITICAL_FILES."""
+    """Test that boot.py's _BOOT_CRITICAL aligns with CRITICAL_FILES."""
 
     def _get_boot_critical_from_source(self) -> list[str]:
         """Parse boot.py to extract the _BOOT_CRITICAL list."""
@@ -616,8 +614,8 @@ class TestBootCriticalAlignment(unittest.TestCase):
         return []
 
     def test_boot_critical_is_subset_of_critical_files(self) -> None:
-        """boot.py's _BOOT_CRITICAL must be a subset of RecoveryManager.CRITICAL_FILES."""
-        from managers.recovery_manager import RecoveryManager
+        """boot.py's _BOOT_CRITICAL must be a subset of CRITICAL_FILES."""
+        from utils.recovery import CRITICAL_FILES
 
         boot_critical = self._get_boot_critical_from_source()
         self.assertTrue(len(boot_critical) > 0, "Could not parse _BOOT_CRITICAL from boot.py")
@@ -625,23 +623,23 @@ class TestBootCriticalAlignment(unittest.TestCase):
         for path in boot_critical:
             self.assertIn(
                 path,
-                RecoveryManager.CRITICAL_FILES,
-                f"boot.py _BOOT_CRITICAL file {path} not in RecoveryManager.CRITICAL_FILES",
+                CRITICAL_FILES,
+                f"boot.py _BOOT_CRITICAL file {path} not in CRITICAL_FILES",
             )
 
     def test_boot_critical_count(self) -> None:
         """boot.py _BOOT_CRITICAL should have exactly 5 files for recovery chain."""
         boot_critical = self._get_boot_critical_from_source()
-        # 5 files: boot_support, app_typing, logging_helper, utils, recovery_manager
+        # 5 files: boot_support, app_typing, logging_helper, utils, recovery
         self.assertEqual(len(boot_critical), 5, f"Expected 5 files, got {len(boot_critical)}: {boot_critical}")
 
-    def test_boot_critical_includes_recovery_manager(self) -> None:
-        """recovery_manager.mpy must be in _BOOT_CRITICAL for recovery to work."""
+    def test_boot_critical_includes_recovery(self) -> None:
+        """recovery.mpy must be in _BOOT_CRITICAL for recovery to work."""
         boot_critical = self._get_boot_critical_from_source()
         self.assertIn(
-            "/managers/recovery_manager.mpy",
+            "/utils/recovery.mpy",
             boot_critical,
-            "recovery_manager.mpy missing from boot.py _BOOT_CRITICAL",
+            "recovery.mpy missing from boot.py _BOOT_CRITICAL",
         )
 
     def test_boot_critical_includes_boot_support(self) -> None:
