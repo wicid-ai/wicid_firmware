@@ -5,8 +5,11 @@ Tests verify:
 - Logger creation and naming
 - Log level filtering
 - Level configuration
+- File logging functionality
 """
 
+import os
+import tempfile
 from unittest.mock import patch
 
 # Store original log level to restore after tests
@@ -158,3 +161,109 @@ class TestLogLevelConstants(TestCase):
         self.assertEqual(ERROR, 40)
         self.assertEqual(CRITICAL, 50)
         self.assertEqual(TESTING, 60)
+
+
+class TestFileLogging(TestCase):
+    """Test file logging functionality."""
+
+    def setUp(self) -> None:
+        """Store original log level."""
+        self._original_level = logging_module._log_level
+        logging_module._log_level = INFO
+
+    def tearDown(self) -> None:
+        """Restore original log level."""
+        logging_module._log_level = self._original_level
+
+    def test_logger_with_file_writes_to_file(self) -> None:
+        """Logger with log_file parameter writes to file."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
+            log_path = log_file.name
+
+        try:
+            log = logger("wicid.test", log_file=log_path)
+
+            with patch("builtins.print"):
+                log.info("Test message")
+
+            # Verify message was written to file
+            with open(log_path) as f:
+                content = f.read()
+            self.assertIn("[INFO: Test] Test message", content)
+        finally:
+            os.unlink(log_path)
+
+    def test_logger_with_file_writes_to_stdout_and_file(self) -> None:
+        """Logger with log_file writes to both stdout and file."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
+            log_path = log_file.name
+
+        try:
+            log = logger("wicid.test", log_file=log_path)
+
+            with patch("builtins.print") as mock_print:
+                log.info("Test message")
+
+            # Verify it printed to stdout
+            mock_print.assert_called_once()
+            # Verify it also wrote to file
+            with open(log_path) as f:
+                content = f.read()
+            self.assertIn("Test message", content)
+        finally:
+            os.unlink(log_path)
+
+    def test_logger_with_file_appends_to_file(self) -> None:
+        """Logger with log_file appends to existing file."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
+            log_path = log_file.name
+            log_file.write("Existing content\n")
+
+        try:
+            log = logger("wicid.test", log_file=log_path)
+
+            with patch("builtins.print"):
+                log.info("New message")
+
+            # Verify file contains both old and new content
+            with open(log_path) as f:
+                content = f.read()
+            self.assertIn("Existing content", content)
+            self.assertIn("New message", content)
+        finally:
+            os.unlink(log_path)
+
+    def test_logger_with_file_handles_write_failure_gracefully(self) -> None:
+        """Logger continues to work even if file write fails."""
+        log = logger("wicid.test", log_file="/nonexistent/directory/log.txt")
+
+        with patch("builtins.print") as mock_print, patch("builtins.open", side_effect=OSError("Write failed")):
+            # Should not raise
+            log.info("Test message")
+            # Should still print to stdout (log message) and error message
+            self.assertGreaterEqual(mock_print.call_count, 1)
+            # First call should be the log message
+            self.assertIn("Test message", str(mock_print.call_args_list[0]))
+
+    def test_logger_without_file_only_writes_to_stdout(self) -> None:
+        """Logger without log_file only writes to stdout."""
+        log = logger("wicid.test")
+
+        with patch("builtins.print") as mock_print:
+            log.info("Test message")
+
+            # Verify it printed to stdout
+            mock_print.assert_called_once()
+            # Verify no file operations occurred
+            self.assertIsNone(getattr(log, "_log_file", None))
+
+    def test_logger_function_accepts_log_file_parameter(self) -> None:
+        """logger() function accepts optional log_file parameter."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
+            log_path = log_file.name
+
+        try:
+            log = logger("wicid.test", log_file=log_path)
+            self.assertEqual(log._log_file, log_path)
+        finally:
+            os.unlink(log_path)

@@ -19,8 +19,13 @@ import traceback
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
 from core.app_typing import Any
+from core.logging_helper import logger
 from utils.recovery import RECOVERY_DIR, create_recovery_backup, validate_critical_files, validate_extracted_update
 from utils.utils import check_release_compatibility, mark_incompatible_release, remove_directory_recursive, suppress
+
+# Import BOOT_LOG_FILE from boot_support (must be lazy to avoid circular dependency)
+# boot_support imports process_pending_update from this module, so we import
+# BOOT_LOG_FILE inside _boot_file_logger() function
 
 # Path constants for pending update directory structure
 PENDING_UPDATE_DIR = "/pending_update"
@@ -38,9 +43,8 @@ PRESERVED_FILES = {
     "DEVELOPMENT",  # Development mode flag (user-set)
 }
 
-# Import boot logging function - boot_support provides this
-# We'll import it dynamically to avoid circular dependencies
-_log_boot_message: Any = None
+# Boot logger instance - initialized lazily to avoid circular dependencies
+_boot_file_logger_instance: Any = None
 
 
 def cleanup_pending_update() -> None:
@@ -48,14 +52,14 @@ def cleanup_pending_update() -> None:
     Remove pending update directory and all its contents.
     Logs errors but continues to attempt cleanup.
     """
-    log_boot_message = _get_log_boot_message()
-    log_boot_message("Cleaning up pending update...")
+    log = _boot_file_logger()
+    log.info("Cleaning up pending update...")
 
     try:
         remove_directory_recursive(PENDING_UPDATE_DIR)
-        log_boot_message("✓ Cleanup complete")
+        log.info("✓ Cleanup complete")
     except Exception as e:
-        log_boot_message(f"Warning: Cleanup error: {e}")
+        log.info(f"Warning: Cleanup error: {e}")
 
 
 def delete_all_except(preserve_paths: list[str]) -> None:
@@ -66,8 +70,8 @@ def delete_all_except(preserve_paths: list[str]) -> None:
     Args:
         preserve_paths: List of paths to preserve (e.g., ['/secrets.json', '/pending_update'])
     """
-    log_boot_message = _get_log_boot_message()
-    log_boot_message("Performing full reset (deleting all existing files)...")
+    log = _boot_file_logger()
+    log.info("Performing full reset (deleting all existing files)...")
 
     # Normalize preserve paths (case-insensitive for FAT32 filesystem)
     preserve_set = {path.rstrip("/").lower() for path in preserve_paths}
@@ -83,7 +87,7 @@ def delete_all_except(preserve_paths: list[str]) -> None:
 
         # Skip preserved paths (case-insensitive comparison for FAT32)
         if item_path.lower() in preserve_set:
-            log_boot_message(f"  Preserved: {item_path}")
+            log.info(f"  Preserved: {item_path}")
             continue
 
         # Skip system files/directories
@@ -102,9 +106,9 @@ def delete_all_except(preserve_paths: list[str]) -> None:
             remove_directory_recursive(item_path)
 
         except Exception as e:
-            log_boot_message(f"  Error processing {item_path}: {e}")
+            log.info(f"  Error processing {item_path}: {e}")
 
-    log_boot_message("✓ Full reset complete")
+    log.info("✓ Full reset complete")
 
 
 def execute_install_script(
@@ -131,8 +135,8 @@ def execute_install_script(
     Returns:
         tuple: (success, message)
     """
-    log_boot_message = _get_log_boot_message()
-    log_boot_message(f"Executing {script_type} script: {script_path}")
+    log = _boot_file_logger()
+    log.info(f"Executing {script_type} script: {script_path}")
     _write_install_log(f"\n{'=' * 50}")
     _write_install_log(f"{script_type.upper()} SCRIPT EXECUTION")
     _write_install_log(f"Script: {script_path}")
@@ -148,7 +152,7 @@ def execute_install_script(
             os.stat(script_path)
         except OSError:
             msg = f"Script not found: {script_path}"
-            log_boot_message(msg)
+            log.info(msg)
             _write_install_log(msg)
             return (False, msg)
 
@@ -158,7 +162,7 @@ def execute_install_script(
 
         # Create log function for script to use
         def script_log(message: str) -> None:
-            log_boot_message(f"  [{script_type}] {message}")
+            log.info(f"  [{script_type}] {message}")
             _write_install_log(f"  {message}")
             update_led()
 
@@ -183,7 +187,7 @@ def execute_install_script(
         # Check if main() is defined
         if "main" not in script_globals:
             msg = f"Script missing main() function: {script_path}"
-            log_boot_message(f"ERROR: {msg}")
+            log.info(f"ERROR: {msg}")
             _write_install_log(f"ERROR: {msg}")
             return (False, msg)
 
@@ -196,23 +200,23 @@ def execute_install_script(
         # Interpret result
         if result is True or result is None:
             msg = f"{script_type} script completed successfully"
-            log_boot_message(f"✓ {msg}")
+            log.info(f"✓ {msg}")
             _write_install_log(f"SUCCESS: {msg}")
             return (True, msg)
         else:
             msg = f"{script_type} script returned failure"
-            log_boot_message(f"✗ {msg}")
+            log.info(f"✗ {msg}")
             _write_install_log(f"FAILURE: {msg}")
             return (False, msg)
 
     except Exception as e:
         msg = f"{script_type} script error: {e}"
-        log_boot_message(f"ERROR: {msg}")
+        log.info(f"ERROR: {msg}")
         _write_install_log(f"ERROR: {msg}")
         # Traceback logging - protect against traceback module issues in CircuitPython
         try:
             tb_str = traceback.format_exc()
-            log_boot_message(f"Traceback: {tb_str}")
+            log.info(f"Traceback: {tb_str}")
             _write_install_log(f"Traceback:\n{tb_str}")
         except Exception:
             pass  # Best effort traceback logging
@@ -234,8 +238,8 @@ def move_directory_contents(src_dir: str, dest_dir: str) -> None:
         src_dir: Source directory path
         dest_dir: Destination directory path
     """
-    log_boot_message = _get_log_boot_message()
-    log_boot_message(f"Moving files from {src_dir} to {dest_dir}...")
+    log = _boot_file_logger()
+    log.info(f"Moving files from {src_dir} to {dest_dir}...")
 
     items = os.listdir(src_dir)
 
@@ -249,7 +253,7 @@ def move_directory_contents(src_dir: str, dest_dir: str) -> None:
         # Skip preserved files - never overwrite them during OTA updates
         # Use case-insensitive comparison for FAT32 filesystem compatibility
         if dest_dir == "/" and item.lower() in [f.lower() for f in PRESERVED_FILES]:
-            log_boot_message(f"  Skipping preserved file: {item}")
+            log.info(f"  Skipping preserved file: {item}")
             # Remove from pending_update to avoid confusion
             with suppress(OSError):
                 os.remove(src_path)
@@ -274,7 +278,7 @@ def move_directory_contents(src_dir: str, dest_dir: str) -> None:
                 try:
                     os.rmdir(src_path)
                 except OSError as e:
-                    log_boot_message(f"  Could not remove {src_path}: {e}")
+                    log.info(f"  Could not remove {src_path}: {e}")
             else:
                 # Move file
                 try:
@@ -282,9 +286,9 @@ def move_directory_contents(src_dir: str, dest_dir: str) -> None:
                     # Extract filename from dest_path for checking
                     dest_filename = dest_path.split("/")[-1]
                     if dest_filename.lower() in [f.lower() for f in PRESERVED_FILES]:
-                        log_boot_message(f"ERROR: Attempted to overwrite preserved file: {dest_filename}")
-                        log_boot_message(f"  Source: {src_path}")
-                        log_boot_message(f"  Destination: {dest_path}")
+                        log.info(f"ERROR: Attempted to overwrite preserved file: {dest_filename}")
+                        log.info(f"  Source: {src_path}")
+                        log.info(f"  Destination: {dest_path}")
                         raise Exception(f"BUG: Move would overwrite preserved file {dest_filename}")
 
                     # Read from source
@@ -298,12 +302,12 @@ def move_directory_contents(src_dir: str, dest_dir: str) -> None:
                     # Remove source
                     os.remove(src_path)
                 except Exception as e:
-                    log_boot_message(f"  Could not move {src_path}: {e}")
+                    log.info(f"  Could not move {src_path}: {e}")
 
         except Exception as e:
-            log_boot_message(f"  Error processing {item}: {e}")
+            log.info(f"  Error processing {item}: {e}")
 
-    log_boot_message("✓ File move complete")
+    log.info("✓ File move complete")
 
 
 def process_pending_update() -> None:
@@ -313,9 +317,9 @@ def process_pending_update() -> None:
     This is the main entry point for update installation during boot.
     Called from boot_support.py after recovery checks complete.
     """
-    log_boot_message = _get_log_boot_message()
-    log_boot_message("\n=== BOOT: Checking for pending firmware updates ===")
-    log_boot_message(f"Looking for: {PENDING_ROOT_DIR}")
+    log = _boot_file_logger()
+    log.info("\n=== BOOT: Checking for pending firmware updates ===")
+    log.info(f"Looking for: {PENDING_ROOT_DIR}")
 
     # Clean up any incomplete staging first
     _cleanup_incomplete_staging()
@@ -327,43 +331,43 @@ def process_pending_update() -> None:
             files = os.listdir(PENDING_ROOT_DIR)
         except OSError:
             # Directory doesn't exist - normal boot
-            log_boot_message("No pending update found - proceeding with normal boot")
+            log.info("No pending update found - proceeding with normal boot")
             return
 
         # Check if directory has files
         if not files:
-            log_boot_message("Pending update directory is empty - cleaning up")
+            log.info("Pending update directory is empty - cleaning up")
             cleanup_pending_update()
             return
 
         # Verify the .ready marker exists (atomic staging verification)
         if not _validate_ready_marker():
-            log_boot_message("WARNING: Pending update missing .ready marker")
-            log_boot_message("Update staging was incomplete - cleaning up")
+            log.info("WARNING: Pending update missing .ready marker")
+            log.info("Update staging was incomplete - cleaning up")
             cleanup_pending_update()
             return
 
-        log_boot_message("✓ Ready marker validated")
-        log_boot_message(f"Found {len(files)} files in pending update")
+        log.info("✓ Ready marker validated")
+        log.info(f"Found {len(files)} files in pending update")
 
-        log_boot_message("=" * 50)
-        log_boot_message("FIRMWARE UPDATE DETECTED")
-        log_boot_message("=" * 50)
+        log.info("=" * 50)
+        log.info("FIRMWARE UPDATE DETECTED")
+        log.info("=" * 50)
 
         # Initialize LED feedback (accesses singleton internally)
         update_led()
         if _pixel_controller:
-            log_boot_message("LED indicator: flashing blue/green during update")
+            log.info("LED indicator: flashing blue/green during update")
 
         # Step 1: Load manifest from extracted update
         manifest_path = f"{PENDING_ROOT_DIR}/manifest.json"
         try:
             with open(manifest_path) as f:
                 manifest = json.load(f)
-            log_boot_message("✓ Manifest loaded")
+            log.info("✓ Manifest loaded")
         except Exception as e:
-            log_boot_message(f"ERROR: Could not load manifest: {e}")
-            log_boot_message(f"Traceback: {traceback.format_exc()}")
+            log.info(f"ERROR: Could not load manifest: {e}")
+            log.info(f"Traceback: {traceback.format_exc()}")
             cleanup_pending_update()
             return
 
@@ -373,8 +377,8 @@ def process_pending_update() -> None:
         except Exception:
             current_version = "0.0.0"
 
-        log_boot_message(f"Current version: {current_version}")
-        log_boot_message(f"Update version: {manifest.get('version', 'unknown')}")
+        log.info(f"Current version: {current_version}")
+        log.info(f"Update version: {manifest.get('version', 'unknown')}")
 
         # Initialize install log for this update attempt
         update_version = manifest.get("version", "unknown")
@@ -388,7 +392,7 @@ def process_pending_update() -> None:
         # This allows the script to modify files before validation runs
         if manifest.get("has_pre_install_script", False):
             pre_script_path = _get_script_path("pre_install", update_version, PENDING_ROOT_DIR)
-            log_boot_message("Pre-install script indicated in manifest")
+            log.info("Pre-install script indicated in manifest")
 
             script_success, script_msg = execute_install_script(
                 script_path=pre_script_path,
@@ -399,7 +403,7 @@ def process_pending_update() -> None:
             )
 
             if not script_success:
-                log_boot_message(f"ERROR: Pre-install script failed: {script_msg}")
+                log.info(f"ERROR: Pre-install script failed: {script_msg}")
 
                 # Indicate error on LED
                 update_led(indicate_error=True)
@@ -408,9 +412,9 @@ def process_pending_update() -> None:
                 mark_incompatible_release(update_version, f"Pre-install script failed: {script_msg}")
 
                 cleanup_pending_update()
-                log_boot_message("=" * 50)
-                log_boot_message("Update aborted due to pre-install script failure")
-                log_boot_message("=" * 50)
+                log.info("=" * 50)
+                log.info("Update aborted due to pre-install script failure")
+                log.info("=" * 50)
                 return
 
             # Update LED after script
@@ -423,7 +427,7 @@ def process_pending_update() -> None:
         update_led()
 
         if not is_compatible:
-            log_boot_message(f"ERROR: {error_msg}")
+            log.info(f"ERROR: {error_msg}")
 
             # Indicate error on LED
             update_led(indicate_error=True)
@@ -432,29 +436,29 @@ def process_pending_update() -> None:
             mark_incompatible_release(manifest.get("version", "unknown"), error_msg or "Unknown error")
 
             cleanup_pending_update()
-            log_boot_message("=" * 50)
-            log_boot_message("Update aborted due to incompatibility")
-            log_boot_message("=" * 50)
+            log.info("=" * 50)
+            log.info("Update aborted due to incompatibility")
+            log.info("=" * 50)
             return
 
-        log_boot_message("✓ Compatibility verified")
+        log.info("✓ Compatibility verified")
 
         # Update LED
         update_led()
 
         # Step 3.5: Validate extracted update contains all critical files
         # This is a second check before destructive operations begin
-        log_boot_message("Validating update package integrity...")
+        log.info("Validating update package integrity...")
         all_present, missing_files = validate_extracted_update(PENDING_ROOT_DIR)
 
         if not all_present:
-            log_boot_message("ERROR: Update package is incomplete")
-            log_boot_message(f"Missing {len(missing_files)} critical files:")
+            log.info("ERROR: Update package is incomplete")
+            log.info(f"Missing {len(missing_files)} critical files:")
             for missing in missing_files[:10]:
-                log_boot_message(f"  - {missing}")
+                log.info(f"  - {missing}")
             if len(missing_files) > 10:
-                log_boot_message(f"  ... and {len(missing_files) - 10} more")
-            log_boot_message("Installation would brick the device - aborting")
+                log.info(f"  ... and {len(missing_files) - 10} more")
+            log.info("Installation would brick the device - aborting")
 
             # Indicate error on LED
             update_led(indicate_error=True)
@@ -468,22 +472,22 @@ def process_pending_update() -> None:
             cleanup_pending_update()
             return
 
-        log_boot_message("✓ All critical files present in update package")
+        log.info("✓ All critical files present in update package")
 
         # Update LED after validation
         update_led()
 
         # Step 4: Verify preserved files exist before destructive operations
-        log_boot_message("Verifying preserved files before update...")
+        log.info("Verifying preserved files before update...")
         secrets_exists = False
         try:
             with open("/secrets.json") as f:
                 secrets_data = f.read()
                 secrets_size = len(secrets_data)
             secrets_exists = True
-            log_boot_message(f"✓ secrets.json found ({secrets_size} bytes)")
+            log.info(f"✓ secrets.json found ({secrets_size} bytes)")
         except OSError:
-            log_boot_message("ℹ No secrets.json (first-time setup)")
+            log.info("ℹ No secrets.json (first-time setup)")
 
         # Step 5: Delete everything except secrets, incompatible list, recovery, and DEVELOPMENT flag
         preserve_paths = [
@@ -502,11 +506,11 @@ def process_pending_update() -> None:
                 with open("/secrets.json") as f:
                     post_delete_data = f.read()
                 if post_delete_data != secrets_data:
-                    log_boot_message("ERROR: secrets.json was modified during deletion!")
+                    log.info("ERROR: secrets.json was modified during deletion!")
                     raise Exception("Preservation failed - secrets.json corrupted")
-                log_boot_message("✓ secrets.json preserved after deletion")
+                log.info("✓ secrets.json preserved after deletion")
             except OSError as e:
-                log_boot_message("ERROR: secrets.json was deleted during cleanup!")
+                log.info("ERROR: secrets.json was deleted during cleanup!")
                 raise Exception("Preservation failed - secrets.json deleted") from e
 
         # Update LED after deletion
@@ -522,40 +526,40 @@ def process_pending_update() -> None:
                 with open("/secrets.json") as f:
                     post_move_data = f.read()
                 if post_move_data != secrets_data:
-                    log_boot_message("ERROR: secrets.json was modified during file move!")
+                    log.info("ERROR: secrets.json was modified during file move!")
                     raise Exception("File move corrupted secrets.json")
-                log_boot_message("✓ secrets.json preserved after file move")
+                log.info("✓ secrets.json preserved after file move")
             except OSError as e:
-                log_boot_message("ERROR: secrets.json was deleted during file move!")
+                log.info("ERROR: secrets.json was deleted during file move!")
                 raise Exception("File move deleted secrets.json") from e
 
         # Step 7: Validate critical files are present after installation
         all_present, missing_files = validate_critical_files()
 
         if not all_present:
-            log_boot_message("ERROR: Critical files missing after installation:")
+            log.info("ERROR: Critical files missing after installation:")
             for missing_file in missing_files:
-                log_boot_message(f"  - {missing_file}")
-            log_boot_message("Installation incomplete - aborting to prevent broken system")
+                log.info(f"  - {missing_file}")
+            log.info("Installation incomplete - aborting to prevent broken system")
             # Indicate error on LED
             update_led(indicate_error=True)
             return  # Abort without rebooting - device will boot with old version
 
-        log_boot_message("✓ All critical files validated")
+        log.info("✓ All critical files validated")
 
         # Update LED after validation
         update_led()
 
         # Step 8: Create or update recovery backup
-        log_boot_message("Creating recovery backup...")
+        log.info("Creating recovery backup...")
         try:
             success, backup_msg = create_recovery_backup()
             if success:
-                log_boot_message(f"✓ {backup_msg}")
+                log.info(f"✓ {backup_msg}")
             else:
-                log_boot_message(f"⚠ {backup_msg}")
+                log.info(f"⚠ {backup_msg}")
         except Exception as e:
-            log_boot_message(f"⚠ Recovery backup failed: {e}")
+            log.info(f"⚠ Recovery backup failed: {e}")
 
         # Update LED after backup
         update_led()
@@ -565,7 +569,7 @@ def process_pending_update() -> None:
         # This ensures device can recover if script fails
         if manifest.get("has_post_install_script", False):
             post_script_path = _get_script_path("post_install", update_version, "")
-            log_boot_message("Post-install script indicated in manifest")
+            log.info("Post-install script indicated in manifest")
 
             script_success, script_msg = execute_install_script(
                 script_path=post_script_path,
@@ -577,11 +581,11 @@ def process_pending_update() -> None:
 
             if not script_success:
                 # Post-install failures are non-fatal - log and continue
-                log_boot_message(f"WARNING: Post-install script failed: {script_msg}")
-                log_boot_message("Continuing with update (recovery backup already created)")
+                log.info(f"WARNING: Post-install script failed: {script_msg}")
+                log.info("Continuing with update (recovery backup already created)")
                 _write_install_log("WARNING: Post-install script failed but update continues")
             else:
-                log_boot_message("✓ Post-install script completed")
+                log.info("✓ Post-install script completed")
 
             # Update LED after script
             update_led()
@@ -593,11 +597,11 @@ def process_pending_update() -> None:
         # Update LED after cleanup
         update_led()
 
-        log_boot_message("=" * 50)
-        log_boot_message(f"Update complete: {current_version} → {manifest.get('version')}")
-        log_boot_message("Recovery backup updated")
-        log_boot_message("Rebooting...")
-        log_boot_message("=" * 50)
+        log.info("=" * 50)
+        log.info(f"Update complete: {current_version} → {manifest.get('version')}")
+        log.info("Recovery backup updated")
+        log.info("Rebooting...")
+        log.info("=" * 50)
 
         # Sync filesystem before reboot
         os.sync()
@@ -607,10 +611,10 @@ def process_pending_update() -> None:
 
     except OSError as e:
         # No pending_update directory - normal boot
-        log_boot_message(f"OSError during update check: {e}")
+        log.info(f"OSError during update check: {e}")
     except Exception as e:
-        log_boot_message(f"Error checking for updates: {e}")
-        log_boot_message(f"Traceback: {traceback.format_exc()}")
+        log.info(f"Error checking for updates: {e}")
+        log.info(f"Traceback: {traceback.format_exc()}")
 
 
 def reset_version_for_ota() -> bool:
@@ -629,7 +633,7 @@ def reset_version_for_ota() -> bool:
     Returns:
         bool: True if successful, False otherwise
     """
-    log_boot_message = _get_log_boot_message()
+    log = _boot_file_logger()
     settings_path = "/settings.toml"
     recovery_settings_path = f"{RECOVERY_DIR}/settings.toml"
 
@@ -672,7 +676,7 @@ def reset_version_for_ota() -> bool:
         os.sync()
         return True
     except Exception as e:
-        log_boot_message(f"ERROR: Failed to reset VERSION for OTA: {e}")
+        log.info(f"ERROR: Failed to reset VERSION for OTA: {e}")
         return False
 
 
@@ -718,6 +722,17 @@ def update_led(indicate_error: bool = False) -> None:
         pass  # Best effort LED updates
 
 
+def _boot_file_logger() -> Any:
+    """Get boot logger instance with file output."""
+    global _boot_file_logger_instance
+    if _boot_file_logger_instance is None:
+        # Lazy import to avoid circular dependency with boot_support
+        from core.boot_support import BOOT_LOG_FILE
+
+        _boot_file_logger_instance = logger("wicid.boot", log_file=BOOT_LOG_FILE)
+    return _boot_file_logger_instance
+
+
 def _cleanup_incomplete_staging() -> None:
     """
     Clean up incomplete staging directory if present.
@@ -725,24 +740,14 @@ def _cleanup_incomplete_staging() -> None:
     Called when .staging exists but .ready marker is missing,
     indicating an interrupted download/extraction.
     """
-    log_boot_message = _get_log_boot_message()
+    log = _boot_file_logger()
     try:
         items = os.listdir(PENDING_STAGING_DIR)
         if items:
-            log_boot_message("Found incomplete staging directory - cleaning up")
+            log.info("Found incomplete staging directory - cleaning up")
             remove_directory_recursive(PENDING_STAGING_DIR)
     except OSError:
         pass  # No staging directory
-
-
-def _get_log_boot_message() -> Any:
-    """Get log_boot_message function from boot_support."""
-    global _log_boot_message
-    if _log_boot_message is None:
-        from core.boot_support import log_boot_message
-
-        _log_boot_message = log_boot_message
-    return _log_boot_message
 
 
 def _get_script_path(script_type: str, version: str, base_dir: str = "") -> str:

@@ -18,6 +18,9 @@ TESTING = 60  # Suppresses all logs except test output
 
 _LEVEL_NAMES = {10: "DEBUG", 20: "INFO", 30: "WARNING", 40: "ERROR", 50: "CRITICAL", 60: "TESTING"}
 
+# File write error suppression (global to prevent spam across all loggers)
+_LOGGED_FILE_ERROR = False
+
 
 class WicidLogger:
     """
@@ -33,14 +36,16 @@ class WicidLogger:
         logger.info("Connected")  # Output: [INFO: Wifi] Connected
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, log_file: str | None = None) -> None:
         """
         Initialize logger with a hierarchical name.
 
         Args:
             name: Logger name (e.g., 'wicid.wifi', 'wicid.config')
+            log_file: Optional file path to write logs to (in addition to stdout)
         """
         self.name = name if name else "main"
+        self._log_file = log_file
 
         # Extract readable module name from hierarchical name
         # 'wicid.wifi' -> 'Wifi'
@@ -60,14 +65,34 @@ class WicidLogger:
 
     def _log(self, level: int, msg: str, exc_info: bool = False) -> None:
         """Internal logging method."""
-        global _log_level
+        global _log_level, _LOGGED_FILE_ERROR
         if level >= _log_level:
-            # TESTING level outputs raw (no prefix) for clean test output
+            # Format message
             if level == TESTING:
-                print(msg)
+                formatted_msg = msg
             else:
                 level_name = _LEVEL_NAMES.get(level, "UNKNOWN")
-                print(f"[{level_name}: {self.module}] {msg}")
+                formatted_msg = f"[{level_name}: {self.module}] {msg}"
+
+            # Always print to stdout
+            print(formatted_msg)
+
+            # Write to file if log_file is set
+            if self._log_file is not None:
+                try:
+                    with open(self._log_file, "a") as f:
+                        f.write(formatted_msg + "\n")
+                        _LOGGED_FILE_ERROR = False  # Reset on success
+                except OSError as e:
+                    # Only print filesystem errors once to avoid spam
+                    if not _LOGGED_FILE_ERROR:
+                        print(f"! Boot log write failed (OSError): {e}")
+                        _LOGGED_FILE_ERROR = True
+                except Exception as e:
+                    if not _LOGGED_FILE_ERROR:
+                        print(f"! Boot log write failed: {e}")
+                        _LOGGED_FILE_ERROR = True
+
             # Only print traceback if the log level would be displayed
             if exc_info:
                 try:
@@ -112,20 +137,22 @@ class WicidLogger:
         self._log(TESTING, msg)
 
 
-def logger(name: str = "wicid") -> WicidLogger:
+def logger(name: str = "wicid", log_file: str | None = None) -> WicidLogger:
     """
     Get a logger instance for the given name.
 
     Args:
         name: Hierarchical logger name (e.g., 'wicid.wifi')
+        log_file: Optional file path to write logs to (in addition to stdout)
 
     Returns:
         WicidLogger: Logger instance
 
     Example:
         logger("wicid.wifi").info("Connected")
+        logger("wicid.boot", log_file="/boot_log.txt").info("Boot message")
     """
-    return WicidLogger(name)
+    return WicidLogger(name, log_file=log_file)
 
 
 def configure_logging(log_level_str: str = "INFO") -> WicidLogger:

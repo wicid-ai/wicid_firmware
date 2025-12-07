@@ -38,8 +38,10 @@ class TestCheckAndRestoreFromRecovery(TestCase):
         """check_and_restore_from_recovery returns False when no recovery needed."""
         with (
             patch("utils.recovery.validate_critical_files", return_value=(True, [])),
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             from core.boot_support import check_and_restore_from_recovery
 
             result = check_and_restore_from_recovery()
@@ -50,8 +52,10 @@ class TestCheckAndRestoreFromRecovery(TestCase):
         with (
             patch("utils.recovery.validate_critical_files", return_value=(False, ["/boot.py"])),
             patch("utils.recovery.recovery_exists", return_value=False),
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             from core.boot_support import check_and_restore_from_recovery
 
             result = check_and_restore_from_recovery()
@@ -64,11 +68,13 @@ class TestCheckAndRestoreFromRecovery(TestCase):
             patch("utils.recovery.validate_critical_files", return_value=(False, ["/boot.py"])),
             patch("utils.recovery.recovery_exists", return_value=True),
             patch("utils.recovery.restore_from_recovery", return_value=(True, "Restored 20 files")),
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
             patch("utils.update_install.reset_version_for_ota", return_value=True),
             patch("core.boot_support.remove_directory_recursive"),
             patch("builtins.open", side_effect=OSError("No manifest")),
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             # Reload module to pick up patched functions
             import importlib
 
@@ -86,60 +92,76 @@ class TestCheckAndRestoreFromRecovery(TestCase):
             patch("utils.recovery.validate_critical_files", return_value=(False, ["/boot.py"])),
             patch("utils.recovery.recovery_exists", return_value=True),
             patch("utils.recovery.restore_from_recovery", return_value=(False, "Recovery failed")),
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             from core.boot_support import check_and_restore_from_recovery
 
             result = check_and_restore_from_recovery()
             self.assertFalse(result)
 
 
-class TestLogBootMessage(TestCase):
-    """Test log_boot_message behavior."""
+class TestBootLogging(TestCase):
+    """Test boot logging behavior using logger pattern."""
 
-    def test_writes_to_boot_log_file(self) -> None:
-        """log_boot_message writes messages to boot log file."""
+    def setUp(self) -> None:
+        """Set up test isolation."""
+        import core.logging_helper as logging_module
 
+        self._original_level = logging_module._log_level
+        logging_module._log_level = 20  # INFO
+
+    def tearDown(self) -> None:
+        """Restore original log level."""
+        import core.logging_helper as logging_module
+
+        logging_module._log_level = self._original_level
+
+    def test_logger_writes_to_boot_log_file(self) -> None:
+        """Logger with BOOT_LOG_FILE writes messages to boot log file."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
             log_path = log_file.name
 
         try:
-            with (
-                patch("core.boot_support.BOOT_LOG_FILE", log_path),
-                patch("builtins.print"),
-            ):
-                from core.boot_support import log_boot_message
+            with patch("core.boot_support.BOOT_LOG_FILE", log_path):
+                from core.logging_helper import logger
 
-                log_boot_message("Test message")
+                log = logger("wicid.boot", log_file=log_path)
+                with patch("builtins.print"):
+                    log.info("Test message")
 
-            # Verify message was written
-            with open(log_path) as f:
-                content = f.read()
-            self.assertIn("Test message", content)
+                # Verify message was written
+                with open(log_path) as f:
+                    content = f.read()
+                self.assertIn("[INFO: Boot] Test message", content)
         finally:
             os.unlink(log_path)
 
-    def test_prints_to_console(self) -> None:
-        """log_boot_message prints messages to console."""
-        with (
-            patch("builtins.print") as mock_print,
-            patch("core.boot_support.BOOT_LOG_FILE", "/nonexistent/log"),
-        ):
-            from core.boot_support import log_boot_message
+    def test_logger_prints_to_console(self) -> None:
+        """Logger prints messages to console even with log_file."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as log_file:
+            log_path = log_file.name
 
-            log_boot_message("Console test")
-            mock_print.assert_called_with("Console test")
+        try:
+            from core.logging_helper import logger
 
-    def test_handles_file_write_failure_gracefully(self) -> None:
-        """log_boot_message continues even if file write fails."""
-        with (
-            patch("builtins.print"),
-            patch("builtins.open", side_effect=OSError("Write failed")),
-        ):
-            from core.boot_support import log_boot_message
+            log = logger("wicid.boot", log_file=log_path)
+            with patch("builtins.print") as mock_print:
+                log.info("Console test")
+                mock_print.assert_called()
+                self.assertIn("Console test", str(mock_print.call_args))
+        finally:
+            os.unlink(log_path)
 
+    def test_logger_handles_file_write_failure_gracefully(self) -> None:
+        """Logger continues even if file write fails."""
+        from core.logging_helper import logger
+
+        log = logger("wicid.boot", log_file="/nonexistent/directory/log.txt")
+        with patch("builtins.print"), patch("builtins.open", side_effect=OSError("Write failed")):
             # Should not raise
-            log_boot_message("Test message")
+            log.info("Test message")
 
 
 class TestConfigureStorage(TestCase):
@@ -150,8 +172,10 @@ class TestConfigureStorage(TestCase):
         with (
             patch("storage.disable_usb_drive") as mock_disable,
             patch("storage.remount", return_value=True),
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             from core.boot_support import configure_storage
 
             configure_storage()
@@ -162,8 +186,10 @@ class TestConfigureStorage(TestCase):
         with (
             patch("storage.disable_usb_drive"),
             patch("storage.remount", return_value=True) as mock_remount,
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             from core.boot_support import configure_storage
 
             configure_storage()
@@ -173,8 +199,10 @@ class TestConfigureStorage(TestCase):
         """configure_storage handles storage errors without crashing."""
         with (
             patch("storage.disable_usb_drive", side_effect=OSError("Storage error")),
-            patch("core.boot_support.log_boot_message"),
+            patch("core.logging_helper.logger") as mock_logger,
         ):
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
             from core.boot_support import configure_storage
 
             # Should not raise

@@ -41,7 +41,7 @@ sys.path.insert(0, "/")
 # If they still fail, the device is in an unrecoverable state.
 # -----------------------------------------------------------------------------
 try:
-    from core.logging_helper import logger  # noqa: F401 - Used later in module
+    from core.logging_helper import logger
     from utils.recovery import (
         recovery_exists,
         restore_from_recovery,
@@ -61,31 +61,6 @@ except ImportError as e:
     raise
 
 BOOT_LOG_FILE = "/boot_log.txt"
-_LOGGED_BOOT_ERROR = False
-
-
-def log_boot_message(message: str) -> None:
-    """
-    Write a message to the boot log file and console.
-    Always prints to console for serial debugging.
-    """
-    # Always print to console first (critical for debugging)
-    print(message)
-
-    global _LOGGED_BOOT_ERROR
-    # Try to write to file, but don't let failures block boot
-    try:
-        with open(BOOT_LOG_FILE, "a") as f:
-            f.write(message + "\n")
-    except OSError as e:
-        # Only print filesystem errors once to avoid spam
-        if not _LOGGED_BOOT_ERROR:
-            print(f"! Boot log write failed (OSError): {e}")
-            _LOGGED_BOOT_ERROR = True
-    except Exception as e:
-        if not _LOGGED_BOOT_ERROR:
-            print(f"! Boot log write failed: {e}")
-            _LOGGED_BOOT_ERROR = True
 
 
 def configure_storage() -> None:
@@ -95,24 +70,25 @@ def configure_storage() -> None:
     Wrapped in try/except to allow boot to continue if storage config fails.
     Note: USB serial console is configured in boot.py before this runs.
     """
+    log = logger("wicid.boot", log_file=BOOT_LOG_FILE)
     try:
         # Production mode: disable USB mass storage, allow code to write files
         storage.disable_usb_drive()
         storage.remount("/", readonly=False)
 
-        log_boot_message("=" * 50)
-        log_boot_message("PRODUCTION MODE")
-        log_boot_message("Filesystem writable from code")
-        log_boot_message("USB mass storage disabled")
-        log_boot_message("USB serial console ENABLED for debugging")
-        log_boot_message("To enable USB for development: Hold button for 10 seconds to enter Safe Mode")
-        log_boot_message("=" * 50)
+        log.info("=" * 50)
+        log.info("PRODUCTION MODE")
+        log.info("Filesystem writable from code")
+        log.info("USB mass storage disabled")
+        log.info("USB serial console ENABLED for debugging")
+        log.info("To enable USB for development: Hold button for 10 seconds to enter Safe Mode")
+        log.info("=" * 50)
     except Exception as e:
-        log_boot_message("=" * 50)
-        log_boot_message(f"ERROR: Storage configuration failed: {e}")
-        log_boot_message("Device may be in inconsistent state")
-        log_boot_message("Continuing boot to allow recovery...")
-        log_boot_message("=" * 50)
+        log.info("=" * 50)
+        log.info(f"ERROR: Storage configuration failed: {e}")
+        log.info("Device may be in inconsistent state")
+        log.info("Continuing boot to allow recovery...")
+        log.info("=" * 50)
 
 
 # process_pending_update is now imported from utils.update_install
@@ -129,6 +105,7 @@ def check_and_restore_from_recovery() -> bool:
     Returns:
         bool: True if recovery was needed and performed, False otherwise
     """
+    log = logger("wicid.boot", log_file=BOOT_LOG_FILE)
     # Check if all critical files are present
     all_present, missing_files = validate_critical_files()
 
@@ -137,27 +114,27 @@ def check_and_restore_from_recovery() -> bool:
         return False
 
     # Critical files missing - check if recovery backup exists
-    log_boot_message("=" * 50)
-    log_boot_message("CRITICAL: Missing critical files detected")
-    log_boot_message("=" * 50)
-    log_boot_message(f"Missing {len(missing_files)} critical files:")
+    log.info("=" * 50)
+    log.info("CRITICAL: Missing critical files detected")
+    log.info("=" * 50)
+    log.info(f"Missing {len(missing_files)} critical files:")
     for missing in missing_files[:10]:  # Show first 10
-        log_boot_message(f"  - {missing}")
+        log.info(f"  - {missing}")
     if len(missing_files) > 10:
-        log_boot_message(f"  ... and {len(missing_files) - 10} more")
+        log.info(f"  ... and {len(missing_files) - 10} more")
 
     if not recovery_exists():
-        log_boot_message("\n✗ No recovery backup available")
-        log_boot_message("Device may not boot correctly")
-        log_boot_message("Manual intervention required")
+        log.info("\n✗ No recovery backup available")
+        log.info("Device may not boot correctly")
+        log.info("Manual intervention required")
         return False
 
     # Attempt recovery
-    log_boot_message("\n→ Attempting recovery from backup...")
+    log.info("\n→ Attempting recovery from backup...")
     success, message = restore_from_recovery()
 
     if success:
-        log_boot_message(f"✓ {message}")
+        log.info(f"✓ {message}")
 
         # Try to determine what version caused the failure
         try:
@@ -170,7 +147,7 @@ def check_and_restore_from_recovery() -> bool:
                     mark_incompatible_release(
                         failed_version, "Automatic recovery triggered - update left device in unbootable state"
                     )
-                log_boot_message(f"Marked version {failed_version} as incompatible")
+                log.info(f"Marked version {failed_version} as incompatible")
         except Exception:
             pass  # Couldn't determine version, continue anyway
 
@@ -181,16 +158,16 @@ def check_and_restore_from_recovery() -> bool:
         # Reset VERSION to 0.0.0 to force OTA update pickup
         # This ensures the device will accept any available update after recovery
         if reset_version_for_ota():
-            log_boot_message("Reset VERSION to 0.0.0 for OTA pickup")
+            log.info("Reset VERSION to 0.0.0 for OTA pickup")
         else:
-            log_boot_message("WARNING: Could not reset VERSION for OTA")
+            log.info("WARNING: Could not reset VERSION for OTA")
 
-        log_boot_message("\n→ Device recovered successfully")
-        log_boot_message("Continuing with normal boot")
+        log.info("\n→ Device recovered successfully")
+        log.info("Continuing with normal boot")
         return True
     else:
-        log_boot_message(f"✗ {message}")
-        log_boot_message("Manual intervention required")
+        log.info(f"✗ {message}")
+        log.info("Manual intervention required")
         return False
 
 
@@ -200,6 +177,7 @@ def main() -> None:
     Configures storage and processes any pending updates.
     Note: USB serial console is configured in boot.py before this runs.
     """
+    log = logger("wicid.boot", log_file=BOOT_LOG_FILE)
     # Configure storage (this might fail if filesystem is corrupted)
     configure_storage()
 
@@ -208,7 +186,7 @@ def main() -> None:
 
     if recovery_performed:
         # Recovery was needed - reboot to ensure clean state
-        log_boot_message("\n→ Rebooting after recovery...")
+        log.info("\n→ Rebooting after recovery...")
         # NOTE: time.sleep() is acceptable here - this runs in boot.py before the scheduler is initialized
         time.sleep(2)
         os.sync()

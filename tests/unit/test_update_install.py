@@ -151,7 +151,7 @@ class TestExecuteInstallScript(TestCase):
         self.test_dir = tempfile.mkdtemp()
         # Suppress console output during tests
         self._log_mock = MagicMock()
-        self._log_patcher = patch("utils.update_install._get_log_boot_message", return_value=self._log_mock)
+        self._log_patcher = patch("utils.update_install._boot_file_logger", return_value=self._log_mock)
         self._log_patcher.start()
         # Mock update_led to avoid PixelController dependency in tests
         self._led_patcher = patch("utils.update_install.update_led")
@@ -476,7 +476,7 @@ LOG_LEVEL = "INFO"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -515,7 +515,7 @@ WIFI_RETRY_TIMEOUT = 259200
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -589,7 +589,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "http://10.0.0.142:8080/releases.json"
         with (
             patch("utils.update_install.open", side_effect=mock_open_with_write_failure),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -625,7 +625,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://example.com/releases.json"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -651,7 +651,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -676,7 +676,7 @@ LOG_LEVEL = "INFO"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             reset_version_for_ota()
 
@@ -699,7 +699,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -712,7 +712,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
         """Should return False if file operations fail."""
         with (
             patch("utils.update_install.open", side_effect=OSError("File not found")),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -730,7 +730,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync"),
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             result = reset_version_for_ota()
 
@@ -750,7 +750,7 @@ SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
         with (
             patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
             patch("utils.update_install.os.sync") as mock_sync,
-            patch("utils.update_install._get_log_boot_message"),
+            patch("utils.update_install._boot_file_logger"),
         ):
             reset_version_for_ota()
 
