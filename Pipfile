@@ -4,12 +4,6 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-rcssmin = "*"
-rjsmin = "*"
-htmlmin2 = "*"
-beautifulsoup4 = "*"
-circup = "*"
-pylint = "*"
 
 [dev-packages]
 ruff = "*"
@@ -18,6 +12,13 @@ pre-commit = "*"
 adafruit-circuitpython-typing = "*"
 coverage = "*"
 vulture = "*"
+rcssmin = "*"
+rjsmin = "*"
+htmlmin2 = "*"
+beautifulsoup4 = "*"
+circup = "*"
+pylint = "*"
+pylint-sort-functions = "*"
 
 [requires]
 python_version = "3.14"
