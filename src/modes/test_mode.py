@@ -139,13 +139,13 @@ def _get_user_choice() -> str:
     TEST_LOG.testing("  3 - Rerun Tests (keeps TESTMODE flag)")
     TEST_LOG.testing("")
     TEST_LOG.testing("Enter a number (1-3) OR press button for default (1)")
-    TEST_LOG.testing("Timeout: 30 seconds")
+    TEST_LOG.testing("Timeout: 5 minutes")
     TEST_LOG.testing("=" * 70)
     TEST_LOG.testing("Choice: ")
 
     choice = "1"  # Default
     start_time = time.monotonic()
-    timeout = 30
+    timeout = 300  # 5 minutes
 
     # Try to get the button pin for polling (may fail if fully mocked)
     button_pin = None

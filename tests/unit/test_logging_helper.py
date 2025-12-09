@@ -140,10 +140,11 @@ class TestConfigureLogging(TestCase):
         configure_logging("INVALID")
         self.assertEqual(logging_module._log_level, INFO)
 
-    def test_configure_returns_logger(self) -> None:
-        """configure_logging() returns a WicidLogger."""
-        log = configure_logging("INFO")
-        self.assertIsInstance(log, WicidLogger)
+    def test_configure_completes_successfully(self) -> None:
+        """configure_logging() completes without error."""
+        configure_logging("INFO")
+        # Verify it set the level correctly
+        self.assertEqual(logging_module._log_level, INFO)
 
 
 class TestLogLevelConstants(TestCase):

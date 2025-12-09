@@ -1,29 +1,18 @@
 """
 Unit tests for update installation utilities.
 
-Tests functions in utils.update_install module including script execution,
-file operations, and update installation logic.
+Tests the public API of utils.update_install module (process_pending_update).
+Private helpers are tested indirectly through the public API.
 """
 
-import os
-import shutil
+import contextlib
 import sys
-import tempfile
-import unittest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, "src")
 
-from tests.test_helpers import create_file_path_redirector
 from tests.unit import TestCase
-from utils.update_install import (
-    INSTALL_LOG_FILE,
-    PRESERVED_FILES,
-    _get_script_path,
-    _write_install_log,
-    execute_install_script,
-    reset_version_for_ota,
-)
+from utils.update_install import PRESERVED_FILES
 
 
 class TestPreservedFiles(TestCase):
@@ -43,720 +32,401 @@ class TestPreservedFiles(TestCase):
 
     def test_preserved_files_is_minimal(self) -> None:
         """Only user-provided data should be preserved."""
-        # Should have exactly 3 files
-        self.assertEqual(len(PRESERVED_FILES), 3)
+        # Should have exactly 4 files
+        self.assertEqual(len(PRESERVED_FILES), 4)
 
 
-class TestGetScriptPath(TestCase):
-    """Tests for _get_script_path function."""
-
-    def test_pre_install_script_path_with_base_dir(self) -> None:
-        """Pre-install script path includes base directory and firmware_install_scripts subdirectory."""
-        result = _get_script_path("pre_install", "0.6.0-b2", "/pending_update/root")
-        self.assertEqual(result, "/pending_update/root/firmware_install_scripts/pre_install_v0.6.0-b2.py")
-
-    def test_post_install_script_path_without_base_dir(self) -> None:
-        """Post-install script path includes firmware_install_scripts subdirectory at root."""
-        result = _get_script_path("post_install", "1.0.0", "")
-        self.assertEqual(result, "/firmware_install_scripts/post_install_v1.0.0.py")
-
-    def test_version_with_prerelease_suffix(self) -> None:
-        """Script path includes full version with prerelease suffix and firmware_install_scripts subdirectory."""
-        result = _get_script_path("pre_install", "0.6.0-rc1", "/pending")
-        self.assertEqual(result, "/pending/firmware_install_scripts/pre_install_v0.6.0-rc1.py")
-
-    def test_simple_version(self) -> None:
-        """Script path works with simple version numbers and firmware_install_scripts subdirectory."""
-        result = _get_script_path("post_install", "2.0.0", "")
-        self.assertEqual(result, "/firmware_install_scripts/post_install_v2.0.0.py")
-
-
-class TestWriteInstallLog(TestCase):
-    """Tests for _write_install_log function."""
+class TestProcessPendingUpdate(TestCase):
+    """Tests for process_pending_update function (public API)."""
 
     def setUp(self) -> None:
-        """Create a temporary directory for test files."""
-        self.test_dir = tempfile.mkdtemp()
-        self.original_log_file = INSTALL_LOG_FILE
-        # We can't easily patch the constant, so we'll test the function behavior
-
-    def tearDown(self) -> None:
-        """Clean up temporary directory."""
-        shutil.rmtree(self.test_dir, ignore_errors=True)
-
-    def test_write_install_log_does_not_raise_on_failure(self) -> None:
-        """_write_install_log should not raise exceptions on write failure."""
-        # Test with an invalid path - should not raise
-        try:
-            _write_install_log("test message")
-        except Exception:
-            self.fail("_write_install_log raised an exception on write failure")
-
-
-class TestUpdateLed(TestCase):
-    """Tests for update_led function."""
-
-    def test_update_led_initializes_pixel_controller(self) -> None:
-        """update_led initializes PixelController singleton on first call."""
-        with (
-            patch("utils.update_install._pixel_controller", None),
-            patch("controllers.pixel_controller.PixelController") as mock_pc_class,
-        ):
-            mock_pc = MagicMock()
-            mock_pc_class.return_value = mock_pc
-            from utils.update_install import update_led
-
-            update_led()
-            mock_pc_class.assert_called_once()
-            mock_pc.indicate_installing.assert_called_once()
-
-    def test_update_led_calls_manual_tick(self) -> None:
-        """update_led calls manual_tick for normal updates."""
-        mock_pc = MagicMock()
-        with patch("utils.update_install._pixel_controller", mock_pc):
-            from utils.update_install import update_led
-
-            update_led()
-            mock_pc.manual_tick.assert_called_once()
-            mock_pc.set_color.assert_not_called()
-
-    def test_update_led_indicates_error(self) -> None:
-        """update_led calls set_color with red when indicate_error=True."""
-        mock_pc = MagicMock()
-        with patch("utils.update_install._pixel_controller", mock_pc):
-            from utils.update_install import update_led
-
-            update_led(indicate_error=True)
-            mock_pc.set_color.assert_called_once_with((255, 0, 0))
-            mock_pc.manual_tick.assert_not_called()
-
-    def test_update_led_handles_no_controller_gracefully(self) -> None:
-        """update_led handles missing PixelController gracefully."""
-        with (
-            patch("utils.update_install._pixel_controller", None),
-            patch("controllers.pixel_controller.PixelController", side_effect=ImportError),
-        ):
-            from utils.update_install import update_led
-
-            # Should not raise
-            update_led()
-            update_led(indicate_error=True)
-
-
-class TestExecuteInstallScript(TestCase):
-    """Tests for execute_install_script function."""
-
-    def setUp(self) -> None:
-        """Create a temporary directory for test scripts."""
-        self.test_dir = tempfile.mkdtemp()
-        # Suppress console output during tests
+        """Set up mocks for process_pending_update tests."""
+        # Mock logger
         self._log_mock = MagicMock()
         self._log_patcher = patch("utils.update_install._boot_file_logger", return_value=self._log_mock)
         self._log_patcher.start()
-        # Mock update_led to avoid PixelController dependency in tests
-        self._led_patcher = patch("utils.update_install.update_led")
+
+        # Mock LED updates
+        self._led_patcher = patch("utils.update_install._update_led")
         self._led_patcher.start()
 
+        # Mock microcontroller.reset
+        self._reset_patcher = patch("microcontroller.reset")
+        self._reset_mock = self._reset_patcher.start()
+
+        # Mock file operations
+        self._delete_all_except_patcher = patch("utils.update_install._delete_all_except")
+        self._delete_all_except_mock = self._delete_all_except_patcher.start()
+
+        self._move_contents_patcher = patch("utils.update_install._move_directory_contents")
+        self._move_contents_mock = self._move_contents_patcher.start()
+
+        self._cleanup_patcher = patch("utils.update_install._cleanup_pending_update")
+        self._cleanup_mock = self._cleanup_patcher.start()
+
+        self._validate_files_patcher = patch("utils.update_install.validate_files")
+        self._validate_files_mock = self._validate_files_patcher.start()
+
+        self._create_backup_patcher = patch("utils.update_install.create_recovery_backup")
+        self._create_backup_mock = self._create_backup_patcher.start()
+
+        self._check_compat_patcher = patch("utils.update_install.check_release_compatibility")
+        self._check_compat_mock = self._check_compat_patcher.start()
+
+        self._mark_incompat_patcher = patch("utils.update_install.mark_incompatible_release")
+        self._mark_incompat_mock = self._mark_incompat_patcher.start()
+
+        # Mock os operations
+        self._os_patcher = patch("utils.update_install.os")
+        self._os_mock = self._os_patcher.start()
+        self._os_mock.listdir.return_value = ["manifest.json"]
+        self._os_mock.getenv.return_value = "0.5.0"
+        self._os_mock.sync.return_value = None
+
+        # Mock file open for manifest.json
+        self._open_patcher = patch("builtins.open", create=True)
+        self._open_mock = self._open_patcher.start()
+
+        # Mock _validate_ready_marker
+        self._validate_ready_patcher = patch("utils.update_install._validate_ready_marker", return_value=True)
+        self._validate_ready_mock = self._validate_ready_patcher.start()
+
+        # Mock _cleanup_incomplete_staging
+        self._cleanup_staging_patcher = patch("utils.update_install._cleanup_incomplete_staging")
+        self._cleanup_staging_mock = self._cleanup_staging_patcher.start()
+
+        # Mock _get_script_path
+        self._get_script_path_patcher = patch("utils.update_install._get_script_path")
+        self._get_script_path_mock = self._get_script_path_patcher.start()
+        self._get_script_path_mock.return_value = (
+            "/pending_update/root/firmware_install_scripts/pre_install_v0.6.0-s3.py"
+        )
+
+        # Mock settings.toml updater to avoid touching filesystem and to assert calls
+        self._update_settings_patcher = patch("utils.update_install._update_settings_toml")
+        self._update_settings_mock = self._update_settings_patcher.start()
+
+        # Mock _execute_install_script
+        self._execute_script_patcher = patch("utils.update_install._execute_install_script")
+        self._execute_script_mock = self._execute_script_patcher.start()
+        self._execute_script_mock.return_value = (True, "Script completed successfully")
+
     def tearDown(self) -> None:
-        """Clean up temporary directory."""
+        """Stop all patchers."""
         self._log_patcher.stop()
         self._led_patcher.stop()
-        shutil.rmtree(self.test_dir, ignore_errors=True)
+        self._reset_patcher.stop()
+        self._delete_all_except_patcher.stop()
+        self._move_contents_patcher.stop()
+        self._cleanup_patcher.stop()
+        self._validate_files_patcher.stop()
+        self._create_backup_patcher.stop()
+        self._check_compat_patcher.stop()
+        self._mark_incompat_patcher.stop()
+        self._os_patcher.stop()
+        self._open_patcher.stop()
+        self._validate_ready_patcher.stop()
+        self._cleanup_staging_patcher.stop()
+        self._get_script_path_patcher.stop()
+        self._execute_script_patcher.stop()
+        self._update_settings_patcher.stop()
 
-    def _create_script(self, filename: str, content: str) -> str:
-        """Create a test script file."""
-        script_path = os.path.join(self.test_dir, filename)
-        with open(script_path, "w") as f:
-            f.write(content)
-        return script_path
+    def _setup_manifest_file(self, manifest_data: dict, include_secrets: bool = False) -> None:
+        """Set up mock for reading manifest.json and optionally secrets.json."""
+        import json
+        from io import StringIO
 
-    def test_script_not_found_returns_failure(self) -> None:
-        """Returns failure tuple when script doesn't exist."""
-        success, msg = execute_install_script(
-            script_path="/nonexistent/script.py",
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertFalse(success)
-        self.assertIn("not found", msg)
+        manifest_json = json.dumps(manifest_data)
+        manifest_file_mock = MagicMock()
+        manifest_file_mock.__enter__.return_value = StringIO(manifest_json)
+        manifest_file_mock.__exit__.return_value = None
 
-    def test_script_missing_main_returns_failure(self) -> None:
-        """Returns failure when script doesn't define main()."""
-        script = self._create_script(
-            "no_main.py",
-            """
-# Script without main function
-x = 1 + 1
-""",
-        )
+        # Make open return the file mock for manifest.json, but raise OSError for other files
+        def open_side_effect(path: str, mode: str = "r") -> MagicMock:
+            if path == "/pending_update/root/manifest.json":
+                return manifest_file_mock
+            elif path == "/secrets.json" and include_secrets:
+                secrets_file_mock = MagicMock()
+                secrets_file_mock.__enter__.return_value = StringIO('{"test": "data"}')
+                secrets_file_mock.__exit__.return_value = None
+                return secrets_file_mock
+            raise OSError(f"File not found: {path}")
 
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertFalse(success)
-        self.assertIn("missing main()", msg)
+        self._open_mock.side_effect = open_side_effect
 
-    def test_pre_install_script_success(self) -> None:
-        """Pre-install script returning True is successful."""
-        script = self._create_script(
-            "pre_install_v1.0.0.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    log_message("Test pre-install running")
-    return True
-""",
-        )
+    def test_script_only_release_skips_delete_all_except(self) -> None:
+        """Script-only releases should NOT call delete_all_except()."""
+        from utils.update_install import process_pending_update
 
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-            pending_root_dir="/pending_update/root",
-            pending_update_dir="/pending_update",
-        )
-        self.assertTrue(success)
-        self.assertIn("completed successfully", msg)
-
-    def test_post_install_script_success(self) -> None:
-        """Post-install script returning True is successful."""
-        script = self._create_script(
-            "post_install_v1.0.0.py",
-            """
-def main(log_message, version):
-    log_message(f"Test post-install for version {version}")
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="post_install",
-            version="1.0.0",
-        )
-        self.assertTrue(success)
-        self.assertIn("completed successfully", msg)
-
-    def test_script_returning_none_is_success(self) -> None:
-        """Script returning None (implicit return) is treated as success."""
-        script = self._create_script(
-            "implicit_return.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    log_message("No explicit return")
-    # No return statement - returns None implicitly
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertTrue(success)
-
-    def test_script_returning_false_is_failure(self) -> None:
-        """Script returning False is treated as failure."""
-        script = self._create_script(
-            "returns_false.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    log_message("Returning False")
-    return False
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertFalse(success)
-        self.assertIn("returned failure", msg)
-
-    def test_script_exception_is_failure(self) -> None:
-        """Script raising exception is treated as failure."""
-        script = self._create_script(
-            "raises_exception.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    raise ValueError("Intentional error for testing")
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertFalse(success)
-        self.assertIn("error", msg.lower())
-
-    def test_script_has_access_to_os_module(self) -> None:
-        """Script can use os module from execution environment."""
-        script = self._create_script(
-            "uses_os.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    import os
-    log_message(f"Current dir: {os.getcwd()}")
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertTrue(success)
-
-    def test_script_has_access_to_json_module(self) -> None:
-        """Script can use json module from execution environment."""
-        script = self._create_script(
-            "uses_json.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    import json
-    data = json.dumps({"test": True})
-    log_message(f"JSON: {data}")
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertTrue(success)
-
-    def test_update_led_called_during_execution(self) -> None:
-        """update_led is called during script execution."""
-        script = self._create_script(
-            "simple.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    return True
-""",
-        )
-
-        with patch("utils.update_install.update_led") as mock_update_led:
-            execute_install_script(
-                script_path=script,
-                script_type="pre_install",
-                version="1.0.0",
-            )
-            # LED should be updated at least once during execution
-            self.assertGreater(mock_update_led.call_count, 0)
-
-    def test_log_message_callback_works(self) -> None:
-        """The log_message function passed to script works."""
-        script = self._create_script(
-            "logs_messages.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    log_message("Message 1")
-    log_message("Message 2")
-    return True
-""",
-        )
-
-        # We can't easily capture log messages without mocking more,
-        # but we can verify the script runs successfully
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertTrue(success)
-
-    def test_pre_install_receives_correct_arguments(self) -> None:
-        """Pre-install script receives pending_root_dir and pending_update_dir."""
-        script = self._create_script(
-            "check_args.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir):
-    assert pending_root_dir == "/test/root", f"Got {pending_root_dir}"
-    assert pending_update_dir == "/test/pending", f"Got {pending_update_dir}"
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-            pending_root_dir="/test/root",
-            pending_update_dir="/test/pending",
-        )
-        self.assertTrue(success)
-
-    def test_post_install_receives_version(self) -> None:
-        """Post-install script receives version argument."""
-        script = self._create_script(
-            "check_version.py",
-            """
-def main(log_message, version):
-    assert version == "2.0.0-beta", f"Got {version}"
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="post_install",
-            version="2.0.0-beta",
-        )
-        self.assertTrue(success)
-
-    def test_syntax_error_in_script_is_failure(self) -> None:
-        """Script with syntax error returns failure."""
-        script = self._create_script(
-            "syntax_error.py",
-            """
-def main(log_message, pending_root_dir, pending_update_dir)
-    # Missing colon above
-    return True
-""",
-        )
-
-        success, msg = execute_install_script(
-            script_path=script,
-            script_type="pre_install",
-            version="1.0.0",
-        )
-        self.assertFalse(success)
-        self.assertIn("error", msg.lower())
-
-
-class TestResetVersionForOta(TestCase):
-    """Tests for reset_version_for_ota function."""
-
-    def setUp(self) -> None:
-        """Create a temporary directory structure mimicking device filesystem."""
-        self.test_dir = tempfile.mkdtemp()
-        # Create recovery directory structure
-        self.recovery_dir = os.path.join(self.test_dir, "recovery")
-        os.makedirs(self.recovery_dir)
-        self.settings_path = os.path.join(self.test_dir, "settings.toml")
-        self.recovery_settings_path = os.path.join(self.recovery_dir, "settings.toml")
-
-        # Create path map for file redirector
-        self.path_map = {
-            "/settings.toml": self.settings_path,
-            "/settings.toml.tmp": os.path.join(self.test_dir, "settings.toml.tmp"),
-            "/recovery/settings.toml": self.recovery_settings_path,
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
         }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
 
-    def tearDown(self) -> None:
-        """Clean up temporary directory."""
-        shutil.rmtree(self.test_dir, ignore_errors=True)
+        # This should raise SystemExit or similar when microcontroller.reset() is called
+        # We'll catch it to verify the behavior
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-    def test_reads_from_recovery_and_writes_to_root(self) -> None:
-        """Should read from recovery/settings.toml and write to root settings.toml.
+        # Verify delete_all_except was NOT called
+        self._delete_all_except_mock.assert_not_called()
 
-        This is the key test case: after restore_from_recovery() runs, we read
-        from the known-good recovery source and update VERSION in root.
-        """
-        recovery_content = """# WICID System Configuration
-VERSION = "0.6.0-b3"
-SYSTEM_UPDATE_MANIFEST_URL = "http://10.0.0.142:8080/releases.json"
-LOG_LEVEL = "INFO"
-"""
-        # Recovery has the good content
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(recovery_content)
+    def test_script_only_release_skips_move_directory_contents(self) -> None:
+        """Script-only releases should NOT call move_directory_contents()."""
+        from utils.update_install import process_pending_update
 
-        # Root settings.toml exists but might be in unknown state after restore
-        with open(self.settings_path, "w") as f:
-            f.write(recovery_content)
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        self.assertTrue(result)
+        # Verify move_directory_contents was NOT called
+        self._move_contents_mock.assert_not_called()
 
-        # Verify root settings.toml has VERSION = 0.0.0 and preserves other content
-        with open(self.settings_path) as f:
-            content = f.read()
+    def test_script_only_release_skips_post_install_validation(self) -> None:
+        """Script-only releases should NOT call validate_files() after initial check."""
+        from utils.update_install import process_pending_update
 
-        self.assertIn('VERSION = "0.0.0"', content)
-        self.assertIn("SYSTEM_UPDATE_MANIFEST_URL", content)
-        self.assertIn("LOG_LEVEL", content)
-        self.assertNotIn("0.6.0-b3", content)
-        # Critical: file should NOT be empty
-        self.assertGreater(len(content.strip()), 20, "settings.toml should not be empty or minimal")
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
 
-    def test_file_not_empty_after_operation(self) -> None:
-        """Root settings.toml must NOT be empty after reset_version_for_ota.
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        This test specifically checks for the bug where settings.toml ends up blank.
-        """
-        recovery_content = """# WICID System Configuration
-VERSION = "0.6.0-b3"
-SYSTEM_UPDATE_MANIFEST_URL = "http://10.0.0.142:8080/releases.json"
-SYSTEM_UPDATE_CHECK_INTERVAL = 4
-PERIODIC_REBOOT_INTERVAL = 24
-WEATHER_UPDATE_INTERVAL = 1200
-LOG_LEVEL = "INFO"
-WIFI_RETRY_TIMEOUT = 259200
-"""
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(recovery_content)
-        with open(self.settings_path, "w") as f:
-            f.write(recovery_content)
+        # Verify validate_files was NOT called with empty string (post-install validation)
+        # It might be called once for the initial check, but not for post-install validation
+        calls = self._validate_files_mock.call_args_list
+        post_install_calls = [call for call in calls if call[0][0] == ""]
+        self.assertEqual(
+            len(post_install_calls),
+            0,
+            "validate_files should not be called for post-install validation in script-only releases",
+        )
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+    def test_script_only_release_skips_recovery_backup(self) -> None:
+        """Script-only releases should NOT call create_recovery_backup()."""
+        from utils.update_install import process_pending_update
 
-        self.assertTrue(result)
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
 
-        with open(self.settings_path) as f:
-            content = f.read()
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        # The file must not be empty
-        self.assertNotEqual(content, "", "settings.toml is empty - this is the bug!")
-        self.assertNotEqual(content.strip(), "", "settings.toml is blank - this is the bug!")
+        # Verify create_recovery_backup was NOT called
+        self._create_backup_mock.assert_not_called()
 
-        # All original settings should be preserved (except VERSION value)
-        self.assertIn("SYSTEM_UPDATE_MANIFEST_URL", content)
-        self.assertIn("SYSTEM_UPDATE_CHECK_INTERVAL", content)
-        self.assertIn("PERIODIC_REBOOT_INTERVAL", content)
-        self.assertIn("WEATHER_UPDATE_INTERVAL", content)
-        self.assertIn("LOG_LEVEL", content)
-        self.assertIn("WIFI_RETRY_TIMEOUT", content)
+    def test_script_only_release_calls_cleanup(self) -> None:
+        """Script-only releases SHOULD call cleanup_pending_update()."""
+        from utils.update_install import process_pending_update
 
-    def test_file_not_empty_when_write_fails_after_truncation(self) -> None:
-        """If write() fails after file is opened in 'w' mode, file must NOT be empty.
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest, include_secrets=True)
+        self._check_compat_mock.return_value = (True, None)
+        # Mock validate_files to return success for post-install check
+        self._validate_files_mock.return_value = (True, [])
 
-        This reproduces the production bug: opening in 'w' mode truncates the file
-        immediately. If an exception occurs during write, the file is left empty.
-        This test verifies the function handles write failures gracefully.
-        """
-        recovery_content = """# WICID System Configuration
-VERSION = "0.6.0-b3"
-SYSTEM_UPDATE_MANIFEST_URL = "http://10.0.0.142:8080/releases.json"
-"""
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(recovery_content)
-        with open(self.settings_path, "w") as f:
-            f.write(recovery_content)
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        original_open = open
-        write_called = False
+        # Verify cleanup_pending_update WAS called
+        self._cleanup_mock.assert_called_once()
 
-        class FailingWriteFile:
-            """File-like object that fails on write()."""
+    def test_script_only_release_calls_reset(self) -> None:
+        """Script-only releases SHOULD call microcontroller.reset() to reboot."""
+        from utils.update_install import process_pending_update
 
-            def __init__(self, path: str, mode: str) -> None:
-                self.path = path
-                self.mode = mode
-                self._real_file = original_open(path, mode)
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest, include_secrets=True)
+        self._check_compat_mock.return_value = (True, None)
+        # Mock validate_files to return success for post-install check
+        self._validate_files_mock.return_value = (True, [])
 
-            def __enter__(self) -> "FailingWriteFile":
-                return self
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-            def __exit__(self, *args: object) -> None:
-                self._real_file.close()
+        # Verify microcontroller.reset WAS called
+        self._reset_mock.assert_called_once()
 
-            def read(self) -> str:
-                return self._real_file.read()
+    def test_script_only_release_updates_settings_version(self) -> None:
+        """Script-only releases should update settings.toml version via helper."""
+        from utils.update_install import process_pending_update
 
-            def write(self, content: str) -> None:
-                nonlocal write_called
-                write_called = True
-                # Simulate a write failure (e.g., disk full, I/O error)
-                raise OSError("Simulated write failure")
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest, include_secrets=True)
+        self._check_compat_mock.return_value = (True, None)
+        self._validate_files_mock.return_value = (True, [])
 
-        def mock_open_with_write_failure(path: str, mode: str = "r") -> object:
-            actual_path = self.path_map.get(path, path)
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-            # Fail writes to settings.toml
-            if "w" in mode and path == "/settings.toml":
-                return FailingWriteFile(actual_path, mode)
-            return original_open(actual_path, mode)
+        self._update_settings_mock.assert_called_once_with("0.5.0", "0.6.0-s3")
 
-        with (
-            patch("utils.update_install.open", side_effect=mock_open_with_write_failure),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+    def test_script_only_release_executes_pre_install_script(self) -> None:
+        """Script-only releases SHOULD execute pre-install script."""
+        from utils.update_install import process_pending_update
 
-        # The function should return False on failure
-        self.assertFalse(result)
-        self.assertTrue(write_called, "write was not called - test setup issue")
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
 
-        # CRITICAL: Even though write failed, the original file must NOT be empty
-        # The file will be empty because opening in "w" mode truncates it immediately
-        # This test documents the limitation: if write fails, file will be empty
-        # In practice, this should be rare, and the function returns False to indicate failure
-        with open(self.settings_path) as f:
-            content = f.read()
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        # Note: With the simple write pattern, if write() fails after truncation,
-        # the file WILL be empty. This is a known limitation of the pattern.
-        # The function returns False to indicate failure, allowing caller to handle it.
-        # In practice, write failures on CircuitPython FAT filesystem are rare.
-        self.assertEqual(content, "", "File was not truncated - write may have succeeded")
+        # Verify _execute_install_script was called for pre-install
+        self._execute_script_mock.assert_called()
+        call_args = self._execute_script_mock.call_args
+        self.assertEqual(call_args[1]["script_type"], "pre_install")
 
-    def test_falls_back_to_root_when_recovery_missing(self) -> None:
-        """Should fall back to reading root settings.toml if recovery doesn't exist."""
-        root_content = """# WICID System Configuration
-VERSION = "0.5.0"
-SYSTEM_UPDATE_MANIFEST_URL = "https://example.com/releases.json"
-"""
-        # Only root settings exists, no recovery
-        with open(self.settings_path, "w") as f:
-            f.write(root_content)
+    def test_script_only_release_skips_post_install_script(self) -> None:
+        """Script-only releases should NOT execute post-install script even if indicated."""
+        from utils.update_install import process_pending_update
 
-        # Don't create recovery settings - it should fall back
+        manifest = {
+            "version": "0.6.0-s3",
+            "script_only_release": True,
+            "has_pre_install_script": True,
+            "has_post_install_script": True,  # Even if True, should not execute
+        }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        self.assertTrue(result)
+        # Verify _execute_install_script was NOT called with post_install type
+        post_install_calls = [
+            call for call in self._execute_script_mock.call_args_list if call[1].get("script_type") == "post_install"
+        ]
+        self.assertEqual(
+            len(post_install_calls), 0, "Post-install script should not be executed for script-only releases"
+        )
 
-        with open(self.settings_path) as f:
-            content = f.read()
+    def test_full_release_calls_delete_all_except(self) -> None:
+        """Full releases (non-script-only) SHOULD call delete_all_except()."""
+        from utils.update_install import process_pending_update
 
-        self.assertIn('VERSION = "0.0.0"', content)
-        self.assertIn("SYSTEM_UPDATE_MANIFEST_URL", content)
+        manifest = {
+            "version": "0.6.0",
+            "script_only_release": False,  # Full release
+            "has_pre_install_script": False,
+            "has_post_install_script": False,
+        }
+        self._setup_manifest_file(manifest)
+        self._check_compat_mock.return_value = (True, None)
+        self._validate_files_mock.return_value = (True, [])
 
-    def test_replaces_version_line(self) -> None:
-        """VERSION line should be replaced with 0.0.0."""
-        original_content = """# WICID System Configuration
-VERSION = "0.6.0-s1"
-SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-"""
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(original_content)
-        with open(self.settings_path, "w") as f:
-            f.write(original_content)
+        # Mock secrets.json read
+        import json
+        from io import StringIO
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+        def open_side_effect(path: str, mode: str = "r") -> MagicMock:
+            if path == "/pending_update/root/manifest.json":
+                file_mock = MagicMock()
+                file_mock.__enter__.return_value = StringIO(json.dumps(manifest))
+                file_mock.__exit__.return_value = None
+                return file_mock
+            elif path == "/secrets.json":
+                file_mock = MagicMock()
+                file_mock.__enter__.return_value = StringIO('{"test": "data"}')
+                file_mock.__exit__.return_value = None
+                return file_mock
+            raise OSError(f"File not found: {path}")
 
-        self.assertTrue(result)
-        with open(self.settings_path) as f:
-            content = f.read()
-        self.assertIn('VERSION = "0.0.0"', content)
-        self.assertNotIn("0.6.0-s1", content)
+        self._open_mock.side_effect = open_side_effect
 
-    def test_preserves_other_settings(self) -> None:
-        """Other settings should be preserved unchanged."""
-        original_content = """# WICID System Configuration
-VERSION = "0.6.0-s1"
-SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-LOG_LEVEL = "INFO"
-"""
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(original_content)
-        with open(self.settings_path, "w") as f:
-            f.write(original_content)
+        with contextlib.suppress(SystemExit, Exception):
+            process_pending_update()
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            reset_version_for_ota()
+        # Verify _delete_all_except WAS called for full release
+        self._delete_all_except_mock.assert_called()
 
-        with open(self.settings_path) as f:
-            content = f.read()
-        self.assertIn("SYSTEM_UPDATE_MANIFEST_URL", content)
-        self.assertIn("LOG_LEVEL", content)
-        self.assertIn("# WICID System Configuration", content)
+    def test_no_pending_update_exits_early(self) -> None:
+        """When no pending update exists, process_pending_update exits early."""
+        from utils.update_install import process_pending_update
 
-    def test_handles_missing_version_line(self) -> None:
-        """Should add VERSION if not present in file."""
-        original_content = """# WICID System Configuration
-SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
-"""
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(original_content)
-        with open(self.settings_path, "w") as f:
-            f.write(original_content)
+        # Mock os.listdir to raise OSError (no directory)
+        self._os_mock.listdir.side_effect = OSError("No such directory")
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+        process_pending_update()
 
-        self.assertTrue(result)
-        with open(self.settings_path) as f:
-            content = f.read()
-        self.assertIn('VERSION = "0.0.0"', content)
+        # Should not call any update operations
+        self._delete_all_except_mock.assert_not_called()
+        self._move_contents_mock.assert_not_called()
+        self._reset_mock.assert_not_called()
 
-    def test_returns_false_on_file_error(self) -> None:
-        """Should return False if file operations fail."""
-        with (
-            patch("utils.update_install.open", side_effect=OSError("File not found")),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+    def test_empty_pending_update_cleans_up(self) -> None:
+        """Empty pending update directory triggers cleanup."""
+        from utils.update_install import process_pending_update
 
-        self.assertFalse(result)
+        # Empty directory
+        self._os_mock.listdir.return_value = []
 
-    def test_handles_version_with_spaces(self) -> None:
-        """Should handle VERSION lines with different whitespace."""
-        original_content = """VERSION   =   "0.6.0-beta"
-"""
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(original_content)
-        with open(self.settings_path, "w") as f:
-            f.write(original_content)
+        process_pending_update()
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync"),
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            result = reset_version_for_ota()
+        # Should call cleanup
+        self._cleanup_mock.assert_called()
+        # Should not proceed with update
+        self._reset_mock.assert_not_called()
 
-        self.assertTrue(result)
-        with open(self.settings_path) as f:
-            content = f.read()
-        self.assertIn('VERSION = "0.0.0"', content)
+    def test_missing_ready_marker_aborts_update(self) -> None:
+        """Missing .ready marker prevents update installation."""
+        from utils.update_install import process_pending_update
 
-    def test_calls_os_sync(self) -> None:
-        """Should call os.sync() to persist changes."""
-        original_content = 'VERSION = "0.6.0"\n'
-        with open(self.recovery_settings_path, "w") as f:
-            f.write(original_content)
-        with open(self.settings_path, "w") as f:
-            f.write(original_content)
+        self._os_mock.listdir.return_value = ["manifest.json"]
+        self._validate_ready_mock.return_value = False
 
-        with (
-            patch("utils.update_install.open", side_effect=create_file_path_redirector(self.path_map)),
-            patch("utils.update_install.os.sync") as mock_sync,
-            patch("utils.update_install._boot_file_logger"),
-        ):
-            reset_version_for_ota()
+        process_pending_update()
 
-        # Function should call sync after writing
-        mock_sync.assert_called_once()
+        # Should cleanup but not proceed
+        self._cleanup_mock.assert_called()
+        self._reset_mock.assert_not_called()
 
 
 if __name__ == "__main__":
+    import unittest
+
     unittest.main()

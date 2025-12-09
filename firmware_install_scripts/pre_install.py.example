@@ -31,8 +31,9 @@ ERROR HANDLING:
 SCRIPT-ONLY RELEASES:
 For releases that only need to run a script (e.g., config patches):
 1. Perform the required modifications
-2. Clean up /pending_update/ directory
-3. Call microcontroller.reset() to reboot
+2. Return True so the installer can clean up and reboot safely
+Optional: manually call microcontroller.reset() or update VERSION in settings.toml
+  only if you must short-circuit the installer; otherwise the installer handles both.
 This prevents the normal update flow from running (and failing validation).
 
 NAMING CONVENTION:
@@ -118,27 +119,22 @@ def script_only_example(log_message, pending_root_dir, pending_update_dir):
     This demonstrates how to use pre-install scripts for lightweight patches
     without a full firmware update.
     """
-    import microcontroller
-
     log_message("Script-only patch starting...")
 
-    # Do the patch work
     try:
-        # This step is critical to ensure the version is updated correctly, and the device doesn't get stuck in a loop of updates.
-        # May want to run this last, and should also consider attempting to update the incompatible_releases.json file on failure
-        # to prevent the device from trying to update to the same version.
-        _update_version(log_message, pending_root_dir)
+        # Optional: bump VERSION early (installer will also bump when it runs).
+        # Enable if you want the device to advertise the new version immediately.
+        # _update_version(log_message, pending_root_dir)
 
         # Example: Update a single setting
         with open("/settings.toml", "r") as f:
             content = f.read()
 
-        # Modify content
         content = content.replace('OLD_VALUE = "old"', 'NEW_VALUE = "new"')
 
         with open("/settings.toml", "w") as f:
             f.write(content)
-
+        os.sync()
         log_message("Settings patched successfully")
 
         # Change the secrets.json zip code to 96714, Hanalei, HI 96714
@@ -147,27 +143,28 @@ def script_only_example(log_message, pending_root_dir, pending_update_dir):
         secrets["weather_zip"] = "96714"
         with open("/secrets.json", "w") as f:
             json.dump(secrets, f)
-
+        os.sync()
         log_message("Secrets patched successfully")
     except Exception as e:
         log_message(f"Error patching: {e}")
-        # Still cleanup and reboot
+        # Returning False aborts the update.
+        return False
 
-    # Clean up pending update (important!)
-    log_message("Cleaning up pending update...")
+    # Preferred path: return to installer so it can clean up and reboot safely.
+    return True
+
+    # -------------------------------------------------------------------------
+    # Optional hard-exit path (NOT recommended; use only if you must short-circuit
+    # the installer). This bypasses installer cleanup/LED handling and can risk
+    # filesystem corruption if done mid-write. Leave disabled for normal use.
+    # -------------------------------------------------------------------------
+    import microcontroller
     try:
         _remove_dir_recursive(pending_update_dir)
     except Exception as e:
         log_message(f"Cleanup warning: {e}")
-
-    # Sync filesystem
     os.sync()
-
-    log_message("Rebooting after script-only patch...")
-
-    # Reboot - normal update flow will not continue
     microcontroller.reset()
-    # Never reaches here
 
 def _update_version(log_message, pending_root_dir):
     """Helper to update the VERSION in settings.toml from manifest.json"""

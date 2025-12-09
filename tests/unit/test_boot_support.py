@@ -19,30 +19,15 @@ from tests.unit import TestCase
 class TestCheckAndRestoreFromRecovery(TestCase):
     """Test check_and_restore_from_recovery behavior."""
 
-    def setUp(self) -> None:
-        """Set up test isolation."""
-        # Ensure mark_incompatible_release is available for all tests
-        import core.boot_support
-
-        self.original_mark = core.boot_support.mark_incompatible_release
-        if self.original_mark is None:
-            core.boot_support.mark_incompatible_release = MagicMock()
-
-    def tearDown(self) -> None:
-        """Clean up test isolation."""
-        import core.boot_support
-
-        core.boot_support.mark_incompatible_release = self.original_mark
-
     def test_returns_false_when_all_files_present(self) -> None:
         """check_and_restore_from_recovery returns False when no recovery needed."""
         with (
-            patch("utils.recovery.validate_critical_files", return_value=(True, [])),
+            patch("utils.recovery.validate_files", return_value=(True, [])),
             patch("core.logging_helper.logger") as mock_logger,
         ):
             mock_log = MagicMock()
             mock_logger.return_value = mock_log
-            from core.boot_support import check_and_restore_from_recovery
+            from utils.recovery import check_and_restore_from_recovery
 
             result = check_and_restore_from_recovery()
             self.assertFalse(result)
@@ -50,53 +35,44 @@ class TestCheckAndRestoreFromRecovery(TestCase):
     def test_returns_false_when_no_recovery_backup(self) -> None:
         """check_and_restore_from_recovery returns False when no backup available."""
         with (
-            patch("utils.recovery.validate_critical_files", return_value=(False, ["/boot.py"])),
-            patch("utils.recovery.recovery_exists", return_value=False),
+            patch("utils.recovery.validate_files", return_value=(False, ["/boot.py"])),
+            patch("utils.recovery._recovery_exists", return_value=False),
             patch("core.logging_helper.logger") as mock_logger,
         ):
             mock_log = MagicMock()
             mock_logger.return_value = mock_log
-            from core.boot_support import check_and_restore_from_recovery
+            from utils.recovery import check_and_restore_from_recovery
 
             result = check_and_restore_from_recovery()
             self.assertFalse(result)
 
     def test_returns_true_when_recovery_succeeds(self) -> None:
         """check_and_restore_from_recovery returns True when recovery restoration succeeds."""
-        # Patch at the source module where functions are imported from
         with (
-            patch("utils.recovery.validate_critical_files", return_value=(False, ["/boot.py"])),
-            patch("utils.recovery.recovery_exists", return_value=True),
-            patch("utils.recovery.restore_from_recovery", return_value=(True, "Restored 20 files")),
+            patch("utils.recovery.validate_files", return_value=(False, ["/boot.py"])),
+            patch("utils.recovery._recovery_exists", return_value=True),
+            patch("utils.recovery._restore_from_recovery", return_value=(True, "Restored 20 files")),
             patch("core.logging_helper.logger") as mock_logger,
-            patch("utils.update_install.reset_version_for_ota", return_value=True),
-            patch("core.boot_support.remove_directory_recursive"),
-            patch("builtins.open", side_effect=OSError("No manifest")),
         ):
             mock_log = MagicMock()
             mock_logger.return_value = mock_log
-            # Reload module to pick up patched functions
-            import importlib
+            from utils.recovery import check_and_restore_from_recovery
 
-            import core.boot_support
-
-            importlib.reload(core.boot_support)
-
-            result = core.boot_support.check_and_restore_from_recovery()
+            result = check_and_restore_from_recovery()
             # Key behavior: function returns True when recovery succeeds
             self.assertTrue(result)
 
     def test_returns_false_when_recovery_fails(self) -> None:
         """check_and_restore_from_recovery returns False when recovery restoration fails."""
         with (
-            patch("utils.recovery.validate_critical_files", return_value=(False, ["/boot.py"])),
-            patch("utils.recovery.recovery_exists", return_value=True),
-            patch("utils.recovery.restore_from_recovery", return_value=(False, "Recovery failed")),
+            patch("utils.recovery.validate_files", return_value=(False, ["/boot.py"])),
+            patch("utils.recovery._recovery_exists", return_value=True),
+            patch("utils.recovery._restore_from_recovery", return_value=(False, "Recovery failed")),
             patch("core.logging_helper.logger") as mock_logger,
         ):
             mock_log = MagicMock()
             mock_logger.return_value = mock_log
-            from core.boot_support import check_and_restore_from_recovery
+            from utils.recovery import check_and_restore_from_recovery
 
             result = check_and_restore_from_recovery()
             self.assertFalse(result)

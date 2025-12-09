@@ -5,6 +5,7 @@ Orchestrates system initialization and mode execution using manager classes.
 
 import os
 import sys
+import time
 
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
@@ -32,9 +33,11 @@ APP_LOG = logger("wicid")
 input_mgr = InputManager.instance()
 
 # Display boot log if it exists
+time.sleep(2)
 print("\n" + "=" * 60)
 print("BOOT LOG")
 print("=" * 60)
+APP_LOG.info("Displaying boot log")
 try:
     with open("/boot_log.txt") as f:
         print(f.read())
@@ -95,6 +98,7 @@ async def _startup_sequence() -> None:
 
 
 def main() -> None:
+    APP_LOG.info("Starting main")
     """Entrypoint that schedules startup sequence and runs scheduler."""
     scheduler = Scheduler.instance()
     scheduler.schedule_now(

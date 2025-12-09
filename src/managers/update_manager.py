@@ -40,11 +40,11 @@ import adafruit_hashlib as hashlib  # pyright: ignore[reportMissingImports]  # C
 import microcontroller  # pyright: ignore[reportMissingImports]  # CircuitPython-only module
 
 import utils.update_install as update_install
-from core.app_typing import Any, Callable
+from core.app_typing import Any, Callable, List
 from core.logging_helper import logger
 from core.scheduler import Scheduler
 from managers.manager_base import ManagerBase
-from utils.recovery import validate_extracted_update
+from utils.recovery import CRITICAL_FILES, validate_files
 from utils.update_install import remove_directory_recursive
 from utils.utils import (
     check_release_compatibility,
@@ -766,7 +766,16 @@ class UpdateManager(ManagerBase):
 
                     self.logger.debug("Validating extracted update contains all critical files")
                     notify("unpacking", "Validating update package...", None)
-                    all_present, missing_files = validate_extracted_update(update_install.PENDING_STAGING_DIR)
+
+                    # Check if this is a script-only release
+                    if manifest.get("script_only_release", False):
+                        # Script-only releases only need manifest.json
+                        # Pre-install script will be validated separately
+                        all_present: bool = True
+                        missing_files: List[str] = []
+                    else:
+                        # Normal validation for full releases
+                        all_present, missing_files = validate_files(update_install.PENDING_STAGING_DIR, CRITICAL_FILES)
 
                     if not all_present:
                         self.logger.error("Update package is incomplete")

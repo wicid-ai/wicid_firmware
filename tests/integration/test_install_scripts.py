@@ -73,7 +73,7 @@ class TestInstallScriptExecution(TestCase):
         """Clean up test directories."""
         _rmtree(cls.TEST_DIR)
         # Clean up any test marker files
-        for path in ["/test_pre_install_marker", "/test_post_install_marker", "/install.log"]:
+        for path in ["/test_pre_install_marker", "/test_post_install_marker"]:
             try:  # noqa: SIM105
                 os.remove(path)
             except OSError:
@@ -98,7 +98,7 @@ class TestInstallScriptExecution(TestCase):
 
     def test_pre_install_script_can_create_files(self) -> None:
         """Pre-install script can create files on filesystem."""
-        from utils.update_install import execute_install_script
+        from utils.update_install import _execute_install_script
 
         script_content = """
 def main(log_message, pending_root_dir, pending_update_dir):
@@ -109,7 +109,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 """
         script_path = self._create_test_script("pre_install", script_content)
 
-        success, msg = execute_install_script(
+        success, msg = _execute_install_script(
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
@@ -134,7 +134,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 
     def test_post_install_script_can_modify_files(self) -> None:
         """Post-install script can modify existing files."""
-        from utils.update_install import execute_install_script
+        from utils.update_install import _execute_install_script
 
         # Create an initial file
         with open("/test_post_install_marker", "w") as f:
@@ -149,7 +149,7 @@ def main(log_message, version):
 """
         script_path = self._create_test_script("post_install", script_content)
 
-        success, msg = execute_install_script(
+        success, msg = _execute_install_script(
             script_path=script_path,
             script_type="post_install",
             version="1.0.0",
@@ -172,7 +172,7 @@ def main(log_message, version):
 
     def test_pre_install_can_access_pending_update_files(self) -> None:
         """Pre-install script can read files from pending_update/root/."""
-        from utils.update_install import execute_install_script
+        from utils.update_install import _execute_install_script
 
         # Create a file in pending_update/root/
         with open(f"{self.TEST_ROOT}/test_file.txt", "w") as f:
@@ -192,7 +192,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 """
         script_path = self._create_test_script("pre_install", script_content)
 
-        success, msg = execute_install_script(
+        success, msg = _execute_install_script(
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
@@ -215,7 +215,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 
     def test_script_failure_does_not_crash_system(self) -> None:
         """Script that raises exception returns failure but doesn't crash."""
-        from utils.update_install import execute_install_script
+        from utils.update_install import _execute_install_script
 
         script_content = """
 def main(log_message, pending_root_dir, pending_update_dir):
@@ -225,7 +225,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
         script_path = self._create_test_script("pre_install", script_content)
 
         # This should return failure, not raise
-        success, msg = execute_install_script(
+        success, msg = _execute_install_script(
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
@@ -236,9 +236,10 @@ def main(log_message, pending_root_dir, pending_update_dir):
         self.assertFalse(success)
         self.assertIn("error", msg.lower())
 
-    def test_install_log_created_on_execution(self) -> None:
-        """Install log is created when script executes."""
-        from utils.update_install import INSTALL_LOG_FILE, execute_install_script
+    def test_script_logs_to_boot_log(self) -> None:
+        """Script execution logs to boot log file."""
+        from core.boot_support import BOOT_LOG_FILE
+        from utils.update_install import _execute_install_script
 
         script_content = """
 def main(log_message, pending_root_dir, pending_update_dir):
@@ -247,7 +248,7 @@ def main(log_message, pending_root_dir, pending_update_dir):
 """
         script_path = self._create_test_script("pre_install", script_content)
 
-        execute_install_script(
+        _execute_install_script(
             script_path=script_path,
             script_type="pre_install",
             version="1.0.0",
@@ -255,11 +256,11 @@ def main(log_message, pending_root_dir, pending_update_dir):
             pending_update_dir=self.TEST_DIR,
         )
 
-        # Verify install log was created
+        # Verify boot log contains script's log message
         try:
-            with open(INSTALL_LOG_FILE) as f:
+            with open(BOOT_LOG_FILE) as f:
                 content = f.read()
-            self.assertIn("pre_install", content.lower())
+            self.assertIn("test log message", content.lower())
         except OSError:
             # Log file may not be writable in all test environments
             pass

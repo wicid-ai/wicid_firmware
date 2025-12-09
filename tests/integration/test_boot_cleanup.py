@@ -166,7 +166,7 @@ class TestBootCleanup(TestCase):
 
     def test_cleanup_pending_update_with_artifacts(self) -> None:
         """Test cleanup_pending_update removes all artifacts."""
-        from utils.update_install import cleanup_pending_update
+        from utils.update_install import _cleanup_pending_update
 
         # Create a mock pending_update structure
         pending_dir = "/pending_update"
@@ -182,7 +182,7 @@ class TestBootCleanup(TestCase):
         # Verify it exists
         self.assertTrue(self._dir_exists(pending_dir), "Pending update should exist")
 
-        cleanup_pending_update()
+        _cleanup_pending_update()
 
         self.assertFalse(self._dir_exists(pending_dir), "Pending update should be completely removed")
 

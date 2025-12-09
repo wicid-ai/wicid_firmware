@@ -2,29 +2,14 @@
 Recovery utilities for WICID firmware.
 
 Handles backup and restoration of critical system files to prevent device bricking
-during firmware updates. This module is separate from UpdateManager to isolate
-recovery concerns and make the recovery logic reusable.
-
-Usage:
-    # Before installing an update, create a backup
-    from utils.recovery import create_recovery_backup
-    success, message = create_recovery_backup()
-
-    # After installation, validate critical files are present
-    from utils.recovery import validate_critical_files
-    all_present, missing = validate_critical_files()
-
-    # If boot detects missing files, restore from backup
-    from utils.recovery import restore_from_recovery
-    success, message = restore_from_recovery()
+during firmware updates, and self-healing from catastrophic failures.
 """
 
-import json
 import os
 import traceback
 
 from core.app_typing import List
-from core.logging_helper import logger
+from core.logging_helper import WicidLogger, logger
 from utils.utils import remove_directory_recursive, suppress
 
 RECOVERY_DIR = "/recovery"
@@ -32,8 +17,7 @@ RECOVERY_INTEGRITY_FILE = "/recovery/.integrity"
 
 # CRITICAL_FILES: Complete set for boot + OTA self-healing capability.
 # Missing any of these prevents the device from downloading/installing updates.
-# This is the MINIMAL set required for boot + OTA recovery (20 files).
-# boot.py maintains its own _BOOT_CRITICAL subset for emergency recovery.
+# This is the MINIMAL set required for boot + OTA recovery.
 CRITICAL_FILES = {
     # === BOOT CHAIN (device won't start without these) ===
     "/boot.py",  # CircuitPython requires source .py file
@@ -49,6 +33,7 @@ CRITICAL_FILES = {
     "/managers/system_manager.mpy",  # Triggers periodic update checks
     "/managers/update_manager.mpy",  # Downloads and stages updates
     "/utils/recovery.mpy",  # Validates critical files
+    "/utils/update_install.mpy",  # Processes pending updates
     "/managers/connection_manager.mpy",  # WiFi + HTTP
     "/controllers/wifi_radio_controller.mpy",  # WiFi hardware
     "/utils/zipfile_lite.mpy",  # Extracts ZIP files
@@ -60,6 +45,33 @@ CRITICAL_FILES = {
     "/settings.toml",  # WiFi credentials, API URLs
     "/manifest.json",  # Current version info
 }
+
+
+def check_and_restore_from_recovery(log_file: str | None = None) -> bool:
+    """
+    Check for missing critical files and restore from recovery if needed.
+
+    This runs early in boot to catch catastrophic failures from interrupted
+    updates or corrupted filesystems. Recovery utilities are guaranteed to be
+    available since they're CRITICAL imports (boot.py ensures it via emergency recovery).
+
+    Args:
+        log_file: Optional file path to write logs to (in addition to stdout)
+
+    Returns:
+        bool: True if recovery was needed and performed, False otherwise
+    """
+    log = logger("wicid.recovery", log_file=log_file)
+    log.debug("Checking for missing critical files")
+    # Check if all critical files are present
+    all_present, _ = validate_files("")
+
+    if all_present:
+        return False
+
+    # Delegate to _restore_from_recovery which handles all logging and error reporting
+    success, _ = _restore_from_recovery(log)
+    return success
 
 
 def create_recovery_backup() -> tuple[bool, str]:
@@ -86,64 +98,22 @@ def create_recovery_backup() -> tuple[bool, str]:
         except OSError:
             pass  # Directory already exists (shouldn't happen after clear)
 
-        backed_up_count = 0
-        failed_files = []
-
-        for file_path in _critical_files_list():
-            try:
-                # Determine if it's a file or directory
-                is_dir = False
-                try:
-                    os.listdir(file_path)
-                    is_dir = True
-                except (OSError, NotImplementedError):
-                    pass
-
-                if is_dir:
-                    # Skip directories (we only backup files)
-                    continue
-
-                # Read source file
-                with open(file_path, "rb") as src:
-                    content = src.read()
-
-                # Construct recovery path with directory structure
-                recovery_path = RECOVERY_DIR + file_path
-                recovery_dir = "/".join(recovery_path.split("/")[:-1])
-
-                # Create parent directories in recovery if needed
-                if recovery_dir and recovery_dir != RECOVERY_DIR:
-                    parts = recovery_dir.split("/")
-                    current_path = ""
-                    for part in parts:
-                        if not part:
-                            continue
-                        current_path += "/" + part
-                        with suppress(OSError):
-                            os.mkdir(current_path)  # Directory already exists
-
-                # Write to recovery location
-                with open(recovery_path, "wb") as dst:
-                    dst.write(content)
-
-                backed_up_count += 1
-
-            except Exception as e:
-                failed_files.append(f"{file_path}: {e}")
+        # Copy critical files to recovery
+        backed_up_count, failed_files = _copy_critical_files("", RECOVERY_DIR)
 
         # Sync filesystem
         os.sync()
 
         if failed_files:
             message = f"Partial backup: {backed_up_count} files backed up, {len(failed_files)} failed"
-            log.warning(message)
+            log.error(message)
             for failure in failed_files:
-                log.warning(f"  - {failure}")
+                log.error(f"  - {failure}")
             return (False, message)
         else:
             message = f"Recovery backup complete: {backed_up_count} critical files backed up"
             log.info(message)
-            valid, integrity_msg = validate_backup_integrity()
+            valid, integrity_msg = _validate_backup_integrity()
             if not valid:
                 log.warning(f"Integrity check after backup failed: {integrity_msg}")
             else:
@@ -157,197 +127,32 @@ def create_recovery_backup() -> tuple[bool, str]:
         return (False, message)
 
 
-def recovery_exists() -> bool:
+def validate_files(base_dir: str, files: set[str] | None = None) -> tuple[bool, List[str]]:
     """
-    Check if recovery backup directory exists and contains files.
-
-    Returns:
-        bool: True if recovery backup exists with files
-    """
-    try:
-        files = os.listdir(RECOVERY_DIR)
-        return len(files) > 0
-    except OSError:
-        return False
-
-
-def restore_from_recovery() -> tuple[bool, str]:
-    """
-    Restore critical files from recovery backup to root.
-
-    Called when boot detects missing critical files. This is a last-resort
-    recovery mechanism to prevent device bricking.
-
-    Returns:
-        tuple: (bool, str) - (success, message)
-    """
-    log = logger("wicid.recovery")
-    try:
-        if not recovery_exists():
-            return (False, "No recovery backup found")
-
-        log.critical("=" * 50)
-        log.critical("CRITICAL: Restoring from recovery backup")
-        log.critical("=" * 50)
-
-        restored_count = 0
-        failed_files = []
-
-        for file_path in _critical_files_list():
-            recovery_path = RECOVERY_DIR + file_path
-
-            try:
-                # Check if recovery file exists
-                try:
-                    os.stat(recovery_path)
-                except OSError:
-                    # File not in recovery, skip
-                    continue
-
-                # Check if it's a directory
-                is_dir = False
-                try:
-                    os.listdir(recovery_path)
-                    is_dir = True
-                except (OSError, NotImplementedError):
-                    pass
-
-                if is_dir:
-                    continue
-
-                # Read recovery file
-                with open(recovery_path, "rb") as src:
-                    content = src.read()
-
-                # Create parent directories if needed
-                file_dir = "/".join(file_path.split("/")[:-1])
-                if file_dir and file_dir != "/":
-                    parts = file_dir.split("/")
-                    current_path = ""
-                    for part in parts:
-                        if not part:
-                            continue
-                        current_path += "/" + part
-                        with suppress(OSError):
-                            os.mkdir(current_path)
-
-                # Write to root location
-                with open(file_path, "wb") as dst:
-                    dst.write(content)
-
-                restored_count += 1
-                log.info(f"Restored: {file_path}")
-
-            except Exception as e:
-                failed_files.append(f"{file_path}: {e}")
-
-        # Sync filesystem
-        os.sync()
-
-        log.info("=" * 50)
-
-        if failed_files:
-            message = f"Partial recovery: {restored_count} files restored, {len(failed_files)} failed"
-            log.warning(message)
-            for failure in failed_files:
-                log.warning(f"  - {failure}")
-            return (False, message)
-        else:
-            message = f"Recovery complete: {restored_count} critical files restored"
-            log.info(message)
-            return (True, message)
-
-    except Exception as e:
-        message = f"Recovery restoration failed: {e}"
-        log.error(message)
-        traceback.print_exception(e)
-        return (False, message)
-
-
-def validate_backup_integrity() -> tuple[bool, str]:
-    """
-    Validate that recovery backup is intact and not corrupted.
-
-    Checks that the recovery directory exists and contains expected files.
-    Future enhancement: verify file hashes against stored integrity data.
-
-    Returns:
-        tuple: (bool, str) - (valid, message)
-    """
-    log = logger("wicid.recovery")
-    try:
-        if not recovery_exists():
-            return (False, "No recovery backup found")
-
-        # Count files in recovery
-        file_count = 0
-        for file_path in CRITICAL_FILES:
-            recovery_path = RECOVERY_DIR + file_path
-            try:
-                os.stat(recovery_path)
-                file_count += 1
-            except OSError:
-                pass
-
-        if file_count == 0:
-            return (False, "Recovery backup is empty")
-
-        # Check integrity file if it exists
-        try:
-            os.stat(RECOVERY_INTEGRITY_FILE)
-            log.debug("Integrity file found")
-        except OSError:
-            log.debug("No integrity file (legacy backup)")
-
-        return (True, f"Recovery backup valid: {file_count} files")
-
-    except Exception as e:
-        return (False, f"Backup validation failed: {e}")
-
-
-def validate_critical_files() -> tuple[bool, List[str]]:
-    """
-    Validate that all critical system files are present after installation.
-
-    This function is called after moving files during update installation to ensure
-    the device will boot and function correctly. Missing critical files will brick
-    the device or prevent future updates.
-
-    Returns:
-        tuple: (bool, list) - (all_present, missing_files)
-            - all_present: True if all critical files exist
-            - missing_files: List of missing file paths (empty if all present)
-    """
-    return _validate_files_in_directory("", CRITICAL_FILES)
-
-
-def validate_extracted_update(extracted_dir: str) -> tuple[bool, List[str]]:
-    """
-    Validate that extracted update contains all required files.
-
-    For script-only releases, only validates manifest.json exists.
-    For full releases, validates all critical files are present.
-
-    Called after extraction but before installation to ensure the update
-    package is complete and won't brick the device.
+    Validate that all specified files exist in a directory.
 
     Args:
-        extracted_dir: Directory containing extracted update files
+        base_dir: Base directory path (empty string for root, "/recovery" for recovery, etc.)
+        files: Set of file paths to validate. Defaults to CRITICAL_FILES if None.
 
     Returns:
-        tuple: (bool, list) - (all_present, missing_files)
+        tuple: (all_present, missing_files)
+            - all_present: True if all files exist
+            - missing_files: List of missing file paths (empty if all present)
     """
-    # Check if this is a script-only release
-    manifest_path = extracted_dir + "/manifest.json"
-    with suppress(OSError, ValueError), open(manifest_path) as f:
-        manifest = json.load(f)
-        if manifest.get("script_only_release", False):
-            # Script-only releases only need manifest.json
-            # Pre-install script will be validated separately
-            return (True, [])
+    if files is None:
+        files = CRITICAL_FILES
 
-    # Normal validation for full releases
-    return _validate_files_in_directory(extracted_dir, CRITICAL_FILES)
+    missing_files = []
+
+    for file_path in files:
+        full_path = base_dir + file_path if base_dir else file_path
+        try:
+            os.stat(full_path)
+        except OSError:
+            missing_files.append(file_path)
+
+    return (len(missing_files) == 0, missing_files)
 
 
 def _clear_recovery_directory() -> None:
@@ -362,29 +167,190 @@ def _clear_recovery_directory() -> None:
     os.sync()
 
 
-def _critical_files_list() -> List[str]:
-    """Return CRITICAL_FILES as a list for iteration."""
-    return list(CRITICAL_FILES)
-
-
-def _validate_files_in_directory(base_dir: str, files: set[str]) -> tuple[bool, List[str]]:
+def _copy_critical_files(src_base: str, dst_base: str) -> tuple[int, List[str]]:
     """
-    Validate that all specified files exist in a directory.
+    Copy all critical files from src_base to dst_base.
+
+    Handles directory creation, skipping directories, and error handling.
+    Used by both create_recovery_backup() and _restore_from_recovery().
 
     Args:
-        base_dir: Base directory path (empty string for root)
-        files: Set of file paths to validate
+        src_base: Source base directory (empty string for root, "/recovery" for recovery)
+        dst_base: Destination base directory (empty string for root, "/recovery" for recovery)
 
     Returns:
-        tuple: (bool, list) - (all_present, missing_files)
+        tuple: (success_count, list of failure_messages)
     """
-    missing_files = []
+    copied_count = 0
+    failed_files = []
 
-    for file_path in files:
-        full_path = base_dir + file_path if base_dir else file_path
+    for file_path in CRITICAL_FILES:
+        src_path = src_base + file_path if src_base else file_path
+        dst_path = dst_base + file_path if dst_base else file_path
+
         try:
-            os.stat(full_path)
-        except OSError:
-            missing_files.append(file_path)
+            # Check if source file exists
+            try:
+                os.stat(src_path)
+            except OSError:
+                # File not in source, skip
+                continue
 
-    return (len(missing_files) == 0, missing_files)
+            # Skip directories (try listdir - if it works, it's a directory)
+            try:
+                os.listdir(src_path)
+                continue
+            except (OSError, NotImplementedError):
+                pass  # Not a directory, continue
+
+            # Read source file
+            with open(src_path, "rb") as src:
+                content = src.read()
+
+            # Ensure parent directories exist in destination
+            file_dir = "/".join(dst_path.split("/")[:-1])
+            if file_dir and file_dir != "/":
+                parts = file_dir.split("/")
+                current_path = ""
+                for part in parts:
+                    if not part:
+                        continue
+                    current_path += "/" + part
+                    with suppress(OSError):
+                        os.mkdir(current_path)
+
+            # Write to destination
+            with open(dst_path, "wb") as dst:
+                dst.write(content)
+
+            copied_count += 1
+
+        except Exception as e:
+            failed_files.append(f"{file_path}: {e}")
+
+    return (copied_count, failed_files)
+
+
+def _recovery_exists() -> bool:
+    """
+    Check if recovery backup directory exists and contains files.
+
+    Returns:
+        bool: True if recovery backup exists with files
+    """
+    try:
+        files = os.listdir(RECOVERY_DIR)
+        return len(files) > 0
+    except OSError:
+        return False
+
+
+def _restore_from_recovery(log: WicidLogger) -> tuple[bool, str]:
+    """
+    Restore critical files from recovery backup to root.
+
+    Handles all logging and error reporting for recovery operations.
+    Called by check_and_restore_from_recovery() when files are missing.
+
+    Args:
+        log: WicidLogger instance for logging
+
+    Returns:
+        tuple: (bool, str) - (success, message)
+    """
+    log.debug("Restoring from recovery backup")
+
+    # Check if recovery backup exists
+    if not _recovery_exists():
+        log.error("=" * 50)
+        log.error("No recovery backup available")
+        log.error("=" * 50)
+        log.error("This may occur if there has been no OTA update since the initial installation, ")
+        log.error("or if a more significant error has occurred.")
+        log.error("Manual intervention may be required.")
+        return (False, "No recovery backup found")
+
+    log.debug("Recovery backup exists. Identifying missing critical files in root directory.")
+    # Check which files are missing
+    all_present, missing_files = validate_files("")
+
+    if not all_present:
+        log.critical("=" * 50)
+        log.critical("CRITICAL: Missing critical files detected")
+        log.critical("=" * 50)
+        log.critical(f"Missing {len(missing_files)} critical files:")
+        for missing in missing_files[:10]:  # Show first 10
+            log.critical(f"  - {missing}")
+        if len(missing_files) > 10:
+            log.critical(f"  ... and {len(missing_files) - 10} more")
+
+        try:
+            log.critical("=" * 50)
+            log.critical("CRITICAL: Restoring from recovery backup")
+            log.critical("=" * 50)
+
+            # Copy critical files from recovery to root
+            restored_count, failed_files = _copy_critical_files(RECOVERY_DIR, "")
+
+            # Sync filesystem
+            os.sync()
+
+            log.critical("=" * 50)
+
+            if failed_files:
+                message = f"Partial recovery: {restored_count} files restored, {len(failed_files)} failed"
+                log.critical(message)
+                for failure in failed_files:
+                    log.critical(f"  - {failure}")
+                log.critical("Manual intervention required")
+                return (False, message)
+            else:
+                message = f"Recovery complete: {restored_count} critical files restored"
+                log.critical(f"✓ {message}")
+                log.critical("Device recovered successfully")
+                log.critical("Continuing with normal boot")
+                return (True, message)
+
+        except Exception as e:
+            message = f"Recovery restoration failed: {e}"
+            log.critical(message)
+            log.critical("Manual intervention required")
+            traceback.print_exception(e)
+            return (False, message)
+    else:
+        log.debug("All critical files present in root directory. No recovery needed.")
+        return (True, "All critical files present in root directory. No recovery needed.")
+
+
+def _validate_backup_integrity() -> tuple[bool, str]:
+    """
+    Validate that recovery backup is intact and not corrupted.
+
+    Checks that the recovery directory exists and contains expected files.
+    Future enhancement: verify file hashes against stored integrity data.
+
+    Returns:
+        tuple: (bool, str) - (valid, message)
+    """
+    log = logger("wicid.recovery")
+    try:
+        if not _recovery_exists():
+            return (False, "No recovery backup found")
+
+        # Validate using unified validate_files function
+        all_present, missing = validate_files(RECOVERY_DIR, CRITICAL_FILES)
+
+        if not all_present:
+            return (False, f"Recovery backup incomplete: {len(missing)} files missing")
+
+        # Check integrity file if it exists
+        try:
+            os.stat(RECOVERY_INTEGRITY_FILE)
+            log.debug("Integrity file found")
+        except OSError:
+            log.debug("No integrity file (legacy backup)")
+
+        return (True, f"Recovery backup valid: {len(CRITICAL_FILES)} files")
+
+    except Exception as e:
+        return (False, f"Backup validation failed: {e}")

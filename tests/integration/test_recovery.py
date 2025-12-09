@@ -115,9 +115,9 @@ class TestRecoveryBackup(TestCase):
 
     def test_backup_exists(self) -> None:
         """Recovery backup directory exists after creation."""
-        from utils.recovery import recovery_exists
+        from utils.recovery import _recovery_exists
 
-        self.assertTrue(recovery_exists(), "Recovery backup should exist")
+        self.assertTrue(_recovery_exists(), "Recovery backup should exist")
 
     def test_backup_contains_critical_files(self) -> None:
         """Recovery backup contains all CRITICAL_FILES with non-zero size."""
@@ -133,20 +133,20 @@ class TestRecoveryBackup(TestCase):
 
     def test_backup_integrity_passes(self) -> None:
         """Backup integrity validation passes after fresh backup."""
-        from utils.recovery import validate_backup_integrity
+        from utils.recovery import _validate_backup_integrity
 
-        valid, message = validate_backup_integrity()
+        valid, message = _validate_backup_integrity()
         self.assertTrue(valid, f"Integrity check failed: {message}")
 
 
 class TestRecoveryValidation(TestCase):
     """Test critical file validation."""
 
-    def test_validate_critical_files_passes_on_healthy_system(self) -> None:
+    def test_validate_files_passes_on_healthy_system(self) -> None:
         """All critical files should be present on a healthy system."""
-        from utils.recovery import validate_critical_files
+        from utils.recovery import validate_files
 
-        all_present, missing = validate_critical_files()
+        all_present, missing = validate_files("")
         self.assertTrue(all_present, f"Missing critical files: {missing}")
 
 
@@ -182,22 +182,21 @@ class TestCriticalFilesPresence(TestCase):
         self.assertEqual(empty_files, [], f"Empty critical files: {empty_files}")
 
 
-class TestScriptOnlyReleaseValidation(TestCase):
+class TestValidateFilesIntegration(TestCase):
     """
-    Test script-only release validation logic runs correctly in CircuitPython.
+    Test validate_files function in real CircuitPython environment.
 
     This integration test verifies the actual CircuitPython behavior that unit tests
     cannot catch, specifically:
-    - CircuitPython's json module raises ValueError (not JSONDecodeError)
-    - The suppress() context manager works correctly with ValueError
     - File operations work as expected in the real environment
+    - Path handling works correctly with different base directories
     """
 
-    TEST_DIR = "/test_script_only"
+    TEST_DIR = "/test_validate_files"
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Create test directory for mock extracted updates."""
+        """Create test directory for validation tests."""
         try:  # noqa: SIM105
             os.mkdir(cls.TEST_DIR)
         except OSError:
@@ -213,87 +212,14 @@ class TestScriptOnlyReleaseValidation(TestCase):
         except (OSError, AttributeError):
             pass
 
-    def tearDown(self) -> None:
-        """Clean up test files after each test."""
-        # Remove manifest if it exists
-        try:  # noqa: SIM105
-            os.remove(f"{self.TEST_DIR}/manifest.json")
-        except OSError:
-            pass
-        os.sync()
+    def test_validate_files_fails_without_files(self) -> None:
+        """validate_files correctly detects missing files in empty directory."""
+        from utils.recovery import CRITICAL_FILES, validate_files
 
-    def test_script_only_release_validation_succeeds(self) -> None:
-        """Script-only release with valid manifest passes validation."""
-        import json
-
-        from utils.recovery import validate_extracted_update
-
-        # Create a script-only manifest
-        manifest = {"version": "1.0.0-s1", "script_only_release": True}
-        with open(f"{self.TEST_DIR}/manifest.json", "w") as f:
-            json.dump(manifest, f)
-        os.sync()
-
-        # Validate - should pass even without critical files
-        all_present, missing = validate_extracted_update(self.TEST_DIR)
-        self.assertTrue(all_present, "Script-only release should pass validation without critical files")
-        self.assertEqual(missing, [], "Should have no missing files for script-only release")
-
-    def test_normal_release_validation_fails_without_files(self) -> None:
-        """Normal release without critical files fails validation."""
-        import json
-
-        from utils.recovery import validate_extracted_update
-
-        # Create a normal release manifest
-        manifest = {"version": "1.0.0", "script_only_release": False}
-        with open(f"{self.TEST_DIR}/manifest.json", "w") as f:
-            json.dump(manifest, f)
-        os.sync()
-
-        # Validate - should fail because critical files are missing
-        all_present, missing = validate_extracted_update(self.TEST_DIR)
-        self.assertFalse(all_present, "Normal release should fail without critical files")
+        # Validate empty directory - should fail
+        all_present, missing = validate_files(self.TEST_DIR, CRITICAL_FILES)
+        self.assertFalse(all_present, "Empty directory should fail validation")
         self.assertTrue(len(missing) > 0, "Should report missing critical files")
-
-    def test_malformed_json_falls_back_to_normal_validation(self) -> None:
-        """Malformed JSON in manifest falls back to normal validation."""
-        from utils.recovery import validate_extracted_update
-
-        # Create malformed JSON - this will raise ValueError in CircuitPython
-        with open(f"{self.TEST_DIR}/manifest.json", "w") as f:
-            f.write("{invalid json content")
-        os.sync()
-
-        # Validate - should fall back to normal validation and fail
-        all_present, missing = validate_extracted_update(self.TEST_DIR)
-        self.assertFalse(all_present, "Malformed JSON should fall back to normal validation")
-        self.assertTrue(len(missing) > 0, "Should report missing critical files")
-
-    def test_missing_manifest_falls_back_to_normal_validation(self) -> None:
-        """Missing manifest.json falls back to normal validation."""
-        from utils.recovery import validate_extracted_update
-
-        # No manifest file created
-        # Validate - should fall back to normal validation and fail
-        all_present, missing = validate_extracted_update(self.TEST_DIR)
-        self.assertFalse(all_present, "Missing manifest should fall back to normal validation")
-        self.assertTrue(len(missing) > 0, "Should report missing critical files")
-
-    def test_circuitpython_json_raises_valueerror(self) -> None:
-        """Verify CircuitPython's json module raises ValueError for invalid JSON."""
-        import json
-
-        # This test documents the actual CircuitPython behavior
-        malformed = "{invalid json"
-        try:
-            json.loads(malformed)
-            self.fail("Should have raised ValueError for malformed JSON")
-        except ValueError:
-            pass  # Expected behavior in CircuitPython
-        except AttributeError:
-            # json.JSONDecodeError doesn't exist - this is what we're testing for
-            self.fail("json.JSONDecodeError should not exist in CircuitPython")
 
 
 class TestEmergencyRecoveryMechanism(TestCase):

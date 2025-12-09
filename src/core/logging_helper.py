@@ -5,6 +5,10 @@ Provides a straightforward logging solution optimized for CircuitPython.
 Clean, explicit, and easy to extend without fighting library limitations.
 """
 
+import os
+import sys
+import traceback
+
 # Global log level
 _log_level = 20  # INFO
 
@@ -63,6 +67,35 @@ class WicidLogger:
             mod = parts[0]
             self.module = mod[0].upper() + mod[1:] if mod else "Unknown"
 
+    def critical(self, msg: str, exc_info: bool = False) -> None:
+        """Log critical message."""
+        self._log(CRITICAL, msg, exc_info=exc_info)
+
+    def debug(self, msg: str, exc_info: bool = False) -> None:
+        """Log a debug message."""
+        self._log(DEBUG, msg, exc_info=exc_info)
+
+    def error(self, msg: str, exc_info: bool = False) -> None:
+        """Log error message."""
+        self._log(ERROR, msg, exc_info=exc_info)
+
+    def info(self, msg: str, exc_info: bool = False) -> None:
+        """Log info message."""
+        self._log(INFO, msg, exc_info=exc_info)
+
+    def testing(self, msg: str) -> None:
+        """
+        Log test message at TESTING level.
+
+        When global log level is set to TESTING, only testing() messages
+        will be displayed, suppressing all other log output (INFO, WARNING, etc.).
+        """
+        self._log(TESTING, msg)
+
+    def warning(self, msg: str, exc_info: bool = False) -> None:
+        """Log warning message."""
+        self._log(WARNING, msg, exc_info=exc_info)
+
     def _log(self, level: int, msg: str, exc_info: bool = False) -> None:
         """Internal logging method."""
         global _log_level, _LOGGED_FILE_ERROR
@@ -82,7 +115,8 @@ class WicidLogger:
                 try:
                     with open(self._log_file, "a") as f:
                         f.write(formatted_msg + "\n")
-                        _LOGGED_FILE_ERROR = False  # Reset on success
+                    os.sync()  # Ensure file write is persisted to filesystem
+                    _LOGGED_FILE_ERROR = False  # Reset on success
                 except OSError as e:
                     # Only print filesystem errors once to avoid spam
                     if not _LOGGED_FILE_ERROR:
@@ -96,9 +130,6 @@ class WicidLogger:
             # Only print traceback if the log level would be displayed
             if exc_info:
                 try:
-                    import sys
-                    import traceback
-
                     exc_type, exc_value, exc_tb = sys.exc_info()
                     if exc_type is not None:
                         traceback.print_exception(exc_type, exc_value, exc_tb)
@@ -106,35 +137,34 @@ class WicidLogger:
                 except Exception:
                     pass
 
-    def debug(self, msg: str, exc_info: bool = False) -> None:
-        """Log a debug message."""
-        """Log debug message."""
-        self._log(DEBUG, msg, exc_info=exc_info)
 
-    def info(self, msg: str, exc_info: bool = False) -> None:
-        """Log info message."""
-        self._log(INFO, msg, exc_info=exc_info)
+def configure_logging(log_level_str: str = "INFO") -> None:
+    """
+    Configure global logging level.
 
-    def warning(self, msg: str, exc_info: bool = False) -> None:
-        """Log warning message."""
-        self._log(WARNING, msg, exc_info=exc_info)
+    Call this once at application startup to set the log level
+    for all loggers created via logger().
 
-    def error(self, msg: str, exc_info: bool = False) -> None:
-        """Log error message."""
-        self._log(ERROR, msg, exc_info=exc_info)
+    Args:
+        log_level_str: Log level as string (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+                      Defaults to INFO if invalid.
 
-    def critical(self, msg: str, exc_info: bool = False) -> None:
-        """Log critical message."""
-        self._log(CRITICAL, msg, exc_info=exc_info)
+    Example:
+        configure_logging("DEBUG")
+        logger('wicid').debug("This will be visible")
+    """
+    global _log_level
 
-    def testing(self, msg: str) -> None:
-        """
-        Log test message at TESTING level.
+    levels = {
+        "DEBUG": DEBUG,
+        "INFO": INFO,
+        "WARNING": WARNING,
+        "ERROR": ERROR,
+        "CRITICAL": CRITICAL,
+        "TESTING": TESTING,
+    }
 
-        When global log level is set to TESTING, only testing() messages
-        will be displayed, suppressing all other log output (INFO, WARNING, etc.).
-        """
-        self._log(TESTING, msg)
+    _log_level = levels.get(log_level_str.upper(), INFO)
 
 
 def logger(name: str = "wicid", log_file: str | None = None) -> WicidLogger:
@@ -153,36 +183,3 @@ def logger(name: str = "wicid", log_file: str | None = None) -> WicidLogger:
         logger("wicid.boot", log_file="/boot_log.txt").info("Boot message")
     """
     return WicidLogger(name, log_file=log_file)
-
-
-def configure_logging(log_level_str: str = "INFO") -> WicidLogger:
-    """
-    Configure global logging level.
-
-    Call this once at application startup to set the log level
-    for all loggers created via logger().
-
-    Args:
-        log_level_str: Log level as string (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-                      Defaults to INFO if invalid.
-
-    Returns:
-        WicidLogger: Root logger instance (for compatibility)
-
-    Example:
-        configure_logging("DEBUG")
-        logger('wicid').debug("This will be visible")
-    """
-    global _log_level
-
-    levels = {
-        "DEBUG": DEBUG,
-        "INFO": INFO,
-        "WARNING": WARNING,
-        "ERROR": ERROR,
-        "CRITICAL": CRITICAL,
-        "TESTING": TESTING,
-    }
-
-    _log_level = levels.get(log_level_str.upper(), INFO)
-    return logger("wicid")
