@@ -1,7 +1,7 @@
 # WICID System Configuration
 # These settings are deployed with each firmware update
 
-VERSION = "0.6.0-rc1"
+VERSION = "0.6.0-rc2"
 SYSTEM_UPDATE_MANIFEST_URL = "https://www.wicid.ai/releases.json"
 SYSTEM_UPDATE_CHECK_INTERVAL = 4  # hours
 PERIODIC_REBOOT_INTERVAL = 24  # hours (0 to disable)
