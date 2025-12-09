@@ -287,10 +287,11 @@ def check_release_compatibility(
     1. Machine type compatibility
     2. OS version compatibility (semantic versioning)
     3. Version is newer than current
-    4. Not previously marked as incompatible (with retry support)
+    4. Minimum prior version requirement (if specified)
+    5. Not previously marked as incompatible (with retry support)
 
     Args:
-        release_data: Dict with target_machine_types, target_operating_systems, version
+        release_data: Dict with target_machine_types, target_operating_systems, version, optional minimum_prior_version
         current_version: Current installed version string
         device_machine: Optional machine type (defaults to get_machine_type() if None)
         device_os: Optional OS version string (defaults to get_os_version_string() if None)
@@ -317,6 +318,14 @@ def check_release_compatibility(
     # Check version is newer
     if compare_versions(release_data["version"], current_version) <= 0:
         return (False, f"Version not newer: {release_data['version']} <= {current_version}")
+
+    # Check minimum prior version requirement (if specified)
+    minimum_prior_version = release_data.get("minimum_prior_version")
+    if minimum_prior_version is not None and compare_versions(current_version, minimum_prior_version) < 0:
+        return (
+            False,
+            f"Minimum prior version not met: requires {minimum_prior_version}, current is {current_version}",
+        )
 
     # Check if previously marked incompatible (with retry logic)
     is_blocked, reason, attempts = is_release_incompatible(release_data["version"])

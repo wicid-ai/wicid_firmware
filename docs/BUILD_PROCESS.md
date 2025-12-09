@@ -193,7 +193,7 @@ Run the build tool:
 
 ### Build Prompts
 
-The tool prompts for 5 pieces of information:
+The tool prompts for 6 pieces of information:
 
 **1. Target Machine Types**
 
@@ -234,6 +234,16 @@ Free-form description of changes. Appears in:
 - GitHub Release description
 - Device update notifications (future)
 - releases.json manifest
+
+**6. Minimum Prior Version**
+
+Optional version requirement that devices must meet to be eligible for this update. This enables ordered upgrade paths, ensuring devices upgrade through specific versions in sequence.
+
+- Leave empty for no restriction (any version can upgrade directly)
+- Defaults to the previous release's minimum prior version, or the previous release's version if no MPV was set
+- Example: Setting MPV to `0.6.0` means devices must be running at least version 0.6.0 to upgrade to this release
+
+This is particularly useful for IoT devices that may be offline for extended periods. By requiring devices to upgrade through intermediate versions, you can minimize backward-compatibility burden - each release only needs to be compatible with one prior release.
 
 ### What the Tool Does
 
@@ -374,7 +384,8 @@ Simplified manifest for compatibility verification:
 ```json
 {
   "schema_version": "1.0.0",
-  "version": "0.2.0",
+  "version": "0.7.0",
+  "minimum_prior_version": "0.6.0",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
@@ -390,11 +401,11 @@ Simplified manifest for compatibility verification:
 
 No file lists, removal patterns, or install scripts - the full reset strategy doesn't need them.
 
-**Note**: The manifest in the ZIP contains metadata about the release. It does not include the SHA-256 checksum (that's in releases.json).
+**Note**: The manifest in the ZIP contains metadata about the release. It does not include the SHA-256 checksum (that's in releases.json). The `minimum_prior_version` field is optional - if omitted, any version can upgrade to this release.
 
 ## releases.json Structure
 
-Multi-platform master manifest with SHA-256 checksums:
+Multi-platform master manifest with SHA-256 checksums and archive of historical releases:
 
 ```json
 {
@@ -405,16 +416,35 @@ Multi-platform master manifest with SHA-256 checksums:
       "target_machine_types": ["Adafruit Feather ESP32S3..."],
       "target_operating_systems": ["circuitpython_9_3", "circuitpython_10_1"],
       "production": {
-        "version": "0.2.0",
-        "release_notes": "Added OTA updates with checksum verification",
-        "zip_url": "https://www.wicid.ai/releases/v0.2.0",
+        "version": "0.7.0",
+        "minimum_prior_version": "0.6.0",
+        "release_notes": "Added new feature",
+        "zip_url": "https://www.wicid.ai/releases/v0.7.0",
         "sha256": "a1b2c3d4e5f6...full 64-char hex string",
-        "release_date": "2025-10-15T12:00:00Z"
+        "release_date": "2025-10-16T12:00:00Z"
       },
       "development": {
-        "version": "0.2.1",
+        "version": "0.8.0-b1",
+        "minimum_prior_version": "0.7.0",
         ...
-      }
+      },
+      "archive": [
+        {
+          "version": "0.6.0",
+          "release_type": "production",
+          "minimum_prior_version": "0.5.0",
+          "release_notes": "Previous release",
+          "zip_url": "https://www.wicid.ai/releases/v0.6.0",
+          "sha256": "...",
+          "release_date": "2025-10-15T12:00:00Z"
+        },
+        {
+          "version": "0.5.0",
+          "release_type": "production",
+          "minimum_prior_version": null,
+          ...
+        }
+      ]
     }
   ]
 }
@@ -422,9 +452,39 @@ Multi-platform master manifest with SHA-256 checksums:
 
 The build tool maintains this automatically - you don't edit it manually.
 
+**Key features:**
+- `production` and `development` contain the current releases for each channel
+- `archive` contains historical releases, sorted newest-to-oldest
+- When a new release is created, the previous release of that type is automatically moved to `archive`
+- `minimum_prior_version` (optional) specifies the minimum version a device must be running to upgrade
+- Old clients ignore the `archive` key, maintaining backward compatibility
+
 **Critical**: The `sha256` field contains the SHA-256 checksum of the ZIP file, calculated during the build process. Devices verify this checksum after download to ensure integrity and prevent installation of corrupted or tampered updates.
 
 **Build Process**: `releases.json` is now a generated artifact (not checked into git). The builder calculates the checksum from the actual ZIP file and includes it in releases.json. GitHub Actions syncs this generated file to wicid_web for deployment.
+
+### Minimum Prior Version (MPV)
+
+The `minimum_prior_version` field enables ordered upgrade paths, ensuring devices upgrade through specific versions in sequence. This is particularly valuable for IoT devices that may be offline for extended periods.
+
+**How it works:**
+
+1. When a device checks for updates, it first checks the current `production` or `development` release
+2. If the device's current version meets the `minimum_prior_version` requirement (or no MPV is set), it can upgrade directly
+3. If the device's version is too old, it searches the `archive` for the newest eligible release
+4. The device upgrades to that intermediate version, then on the next check can upgrade to the current release
+
+**Example upgrade chain:**
+
+- Device at version `0.3.0`
+- Current production: `0.7.0` (requires `0.6.0`)
+- Archive contains:
+  - `0.6.0` (requires `0.5.0`) - device not eligible
+  - `0.5.0` (requires `0.4.0`) - device not eligible
+  - `0.4.0` (no requirement) - device eligible!
+- Device upgrades to `0.4.0`, then on next check upgrades to `0.5.0`, and so on
+
+This ensures each release only needs backward compatibility with one prior release, dramatically reducing maintenance burden.
 
 ## Installation on Device
 

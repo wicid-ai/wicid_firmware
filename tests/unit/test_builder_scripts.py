@@ -14,8 +14,15 @@ from unittest.mock import patch
 sys.path.insert(0, ".")
 
 # Import the functions we're testing
-from builder import create_manifest, discover_install_scripts, is_script_only_release, parse_version
+from builder import (
+    create_manifest,
+    discover_install_scripts,
+    is_script_only_release,
+    parse_version,
+    update_releases_json,
+)
 
+from core.app_typing import Any, cast
 from tests.unit import TestCase
 
 
@@ -273,6 +280,44 @@ class TestCreateManifestWithScripts(TestCase):
 
         self.assertNotIn("script_only_release", manifest)
 
+    def test_manifest_with_minimum_prior_version(self) -> None:
+        """Manifest includes minimum_prior_version when provided."""
+        manifest = create_manifest(
+            version="2.0.0",
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_1"],
+            release_type="production",
+            release_notes="Test release",
+            minimum_prior_version="1.5.0",
+        )
+
+        self.assertEqual(manifest["minimum_prior_version"], "1.5.0")
+
+    def test_manifest_without_minimum_prior_version(self) -> None:
+        """Manifest does not include minimum_prior_version when not provided."""
+        manifest = create_manifest(
+            version="1.0.0",
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_1"],
+            release_type="production",
+            release_notes="Normal release",
+        )
+
+        self.assertNotIn("minimum_prior_version", manifest)
+
+    def test_manifest_with_none_minimum_prior_version(self) -> None:
+        """Manifest does not include minimum_prior_version when explicitly None."""
+        manifest = create_manifest(
+            version="1.0.0",
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_1"],
+            release_type="production",
+            release_notes="Normal release",
+            minimum_prior_version=None,
+        )
+
+        self.assertNotIn("minimum_prior_version", manifest)
+
 
 class TestIsScriptOnlyRelease(TestCase):
     """Tests for is_script_only_release function."""
@@ -334,3 +379,395 @@ class TestParseVersionWithScriptSuffix(TestCase):
             version_tuple, has_prerelease = result
             self.assertEqual(version_tuple, (1, 2, 3))
             self.assertTrue(has_prerelease)
+
+
+class TestUpdateReleasesJson(TestCase):
+    """Tests for update_releases_json with archive handling."""
+
+    def test_first_release_creates_empty_archive(self) -> None:
+        """First release for a platform creates empty archive."""
+        releases_data = {"schema_version": "1.0.0", "last_updated": "", "releases": []}
+        manifest = {
+            "version": "1.0.0",
+            "release_notes": "First release",
+            "release_date": "2025-01-01T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="1.0.0",
+            sha256_checksum="abc123",
+        )
+
+        self.assertEqual(len(releases_data["releases"]), 1)
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        self.assertIn("production", release_entry)
+        self.assertIn("archive", release_entry)
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        self.assertEqual(archive, [])
+
+    def test_new_release_moves_previous_to_archive(self) -> None:
+        """New release moves previous production/development to archive."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "1.0.0",
+                        "release_notes": "Old release",
+                        "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                        "sha256": "old123",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "archive": [],
+                }
+            ],
+        }
+        manifest = {
+            "version": "2.0.0",
+            "release_notes": "New release",
+            "release_date": "2025-01-02T00:00:00Z",
+            "minimum_prior_version": "1.0.0",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="2.0.0",
+            sha256_checksum="new456",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        # New release is in production
+        self.assertEqual(cast(dict[str, Any], release_entry["production"])["version"], "2.0.0")
+        self.assertEqual(cast(dict[str, Any], release_entry["production"])["minimum_prior_version"], "1.0.0")
+        # Old release is in archive
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        self.assertEqual(len(archive), 1)
+        archived = archive[0]
+        self.assertEqual(archived["version"], "1.0.0")
+        self.assertEqual(archived["release_type"], "production")
+
+    def test_archive_maintains_sort_order_newest_first(self) -> None:
+        """Archive maintains newest-to-oldest sort order."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "3.0.0",
+                        "release_notes": "Current",
+                        "zip_url": "https://www.wicid.ai/releases/v3.0.0",
+                        "sha256": "current",
+                        "release_date": "2025-01-03T00:00:00Z",
+                    },
+                    "archive": [
+                        {
+                            "version": "2.0.0",
+                            "release_type": "production",
+                            "release_notes": "Archive 2",
+                            "zip_url": "https://www.wicid.ai/releases/v2.0.0",
+                            "sha256": "arch2",
+                            "release_date": "2025-01-02T00:00:00Z",
+                        },
+                        {
+                            "version": "1.0.0",
+                            "release_type": "production",
+                            "release_notes": "Archive 1",
+                            "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                            "sha256": "arch1",
+                            "release_date": "2025-01-01T00:00:00Z",
+                        },
+                    ],
+                }
+            ],
+        }
+        manifest = {
+            "version": "4.0.0",
+            "release_notes": "Newest",
+            "release_date": "2025-01-04T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="4.0.0",
+            sha256_checksum="newest",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        # Archive should have 3.0.0, 2.0.0, 1.0.0 in that order (newest first)
+        self.assertEqual(len(archive), 3)
+        self.assertEqual(archive[0]["version"], "3.0.0")
+        self.assertEqual(archive[1]["version"], "2.0.0")
+        self.assertEqual(archive[2]["version"], "1.0.0")
+
+    def test_development_release_archives_previous_development(self) -> None:
+        """Development release archives previous development, not production."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "1.0.0",
+                        "release_notes": "Prod",
+                        "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                        "sha256": "prod",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "development": {
+                        "version": "1.1.0-b1",
+                        "release_notes": "Old dev",
+                        "zip_url": "https://www.wicid.ai/releases/v1.1.0-b1",
+                        "sha256": "olddev",
+                        "release_date": "2025-01-02T00:00:00Z",
+                    },
+                    "archive": [],
+                }
+            ],
+        }
+        manifest = {
+            "version": "1.2.0-b1",
+            "release_notes": "New dev",
+            "release_date": "2025-01-03T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="development",
+            version="1.2.0-b1",
+            sha256_checksum="newdev",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        # Production should remain unchanged
+        self.assertEqual(cast(dict[str, Any], release_entry["production"])["version"], "1.0.0")
+        # New development release
+        self.assertEqual(cast(dict[str, Any], release_entry["development"])["version"], "1.2.0-b1")
+        # Archive should have old development
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        self.assertEqual(len(archive), 1)
+        self.assertEqual(archive[0]["version"], "1.1.0-b1")
+        self.assertEqual(archive[0]["release_type"], "development")
+
+    def test_minimum_prior_version_included_in_release(self) -> None:
+        """minimum_prior_version from manifest is included in release entry."""
+        releases_data = {"schema_version": "1.0.0", "last_updated": "", "releases": []}
+        manifest = {
+            "version": "2.0.0",
+            "release_notes": "Test",
+            "release_date": "2025-01-01T00:00:00Z",
+            "minimum_prior_version": "1.5.0",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="2.0.0",
+            sha256_checksum="abc123",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        self.assertEqual(cast(dict[str, Any], release_entry["production"])["minimum_prior_version"], "1.5.0")
+
+    def test_archived_release_includes_minimum_prior_version(self) -> None:
+        """Archived release preserves minimum_prior_version if it had one."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "2.0.0",
+                        "minimum_prior_version": "1.5.0",
+                        "release_notes": "Old",
+                        "zip_url": "https://www.wicid.ai/releases/v2.0.0",
+                        "sha256": "old",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "archive": [],
+                }
+            ],
+        }
+        manifest = {
+            "version": "3.0.0",
+            "release_notes": "New",
+            "release_date": "2025-01-02T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="3.0.0",
+            sha256_checksum="new",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        archived = archive[0]
+        self.assertEqual(archived["minimum_prior_version"], "1.5.0")
+
+    def test_release_not_archived_if_current_in_other_slot(self) -> None:
+        """Release is not archived if it's current in the other release type slot."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "1.0.0",
+                        "release_notes": "Same version",
+                        "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                        "sha256": "prod",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "development": {
+                        "version": "1.0.0",
+                        "release_notes": "Same version",
+                        "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                        "sha256": "dev",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "archive": [],
+                }
+            ],
+        }
+        manifest = {
+            "version": "2.0.0",
+            "release_notes": "New production",
+            "release_date": "2025-01-02T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="2.0.0",
+            sha256_checksum="newprod",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        # Production updated
+        self.assertEqual(cast(dict[str, Any], release_entry["production"])["version"], "2.0.0")
+        # Development still has 1.0.0
+        self.assertEqual(cast(dict[str, Any], release_entry["development"])["version"], "1.0.0")
+        # Archive should be empty (1.0.0 is still current in development)
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        self.assertEqual(len(archive), 0)
+
+    def test_archive_cleaned_of_current_releases(self) -> None:
+        """Archive is cleaned to remove releases that are now current."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "2.0.0",
+                        "release_notes": "Current prod",
+                        "zip_url": "https://www.wicid.ai/releases/v2.0.0",
+                        "sha256": "prod",
+                        "release_date": "2025-01-02T00:00:00Z",
+                    },
+                    "development": {
+                        "version": "1.5.0",
+                        "release_notes": "Current dev",
+                        "zip_url": "https://www.wicid.ai/releases/v1.5.0",
+                        "sha256": "dev",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "archive": [
+                        {
+                            "version": "2.0.0",  # Matches current production - should be removed
+                            "release_type": "production",
+                            "release_notes": "Old prod",
+                            "zip_url": "https://www.wicid.ai/releases/v2.0.0",
+                            "sha256": "oldprod",
+                            "release_date": "2025-01-01T00:00:00Z",
+                        },
+                        {
+                            "version": "1.5.0",  # Matches current development - should be removed
+                            "release_type": "development",
+                            "release_notes": "Old dev",
+                            "zip_url": "https://www.wicid.ai/releases/v1.5.0",
+                            "sha256": "olddev",
+                            "release_date": "2025-01-01T00:00:00Z",
+                        },
+                        {
+                            "version": "1.0.0",  # Not current - should remain
+                            "release_type": "production",
+                            "release_notes": "Old",
+                            "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                            "sha256": "old",
+                            "release_date": "2025-01-01T00:00:00Z",
+                        },
+                    ],
+                }
+            ],
+        }
+        manifest = {
+            "version": "3.0.0",
+            "release_notes": "New production",
+            "release_date": "2025-01-03T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="production",
+            version="3.0.0",
+            sha256_checksum="newprod",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        archive = cast(list[dict[str, Any]], release_entry["archive"])
+        # After updating production to 3.0.0:
+        # - 2.0.0 (old production) is archived (not current in development)
+        # - 1.0.0 remains in archive (not current)
+        # - 1.5.0 is removed from archive (current in development)
+        # - Duplicate 2.0.0 entries are deduplicated
+        versions_in_archive = [archived["version"] for archived in archive]
+        self.assertIn("2.0.0", versions_in_archive)
+        self.assertIn("1.0.0", versions_in_archive)
+        self.assertNotIn("1.5.0", versions_in_archive)
+        # Verify no duplicates
+        self.assertEqual(len(versions_in_archive), len(set(versions_in_archive)))

@@ -600,6 +600,28 @@ def interactive_build() -> bool:
     notes_input = input(f"   [{default_notes if default_notes else 'None'}]: ").strip()
     release_notes = notes_input if notes_input else default_notes
 
+    # 6. Minimum Prior Version
+    print("\n6. Minimum Prior Version:")
+    print("   This release requires devices to be at least this version.")
+    print("   Leave empty for no restriction (any version can upgrade).")
+    if prev_manifest:
+        # Default to previous release's MPV, or previous version if no MPV
+        default_mpv = prev_manifest.get("minimum_prior_version")
+        if not default_mpv and "version" in prev_manifest:
+            default_mpv = extract_base_version(prev_manifest["version"])
+        if default_mpv:
+            print(f"   Last release: {default_mpv}")
+    else:
+        default_mpv = None
+
+    mpv_input = input(f"   [{default_mpv if default_mpv else 'none'}]: ").strip()
+    minimum_prior_version = mpv_input if mpv_input else (default_mpv if default_mpv else None)
+
+    # Validate MPV format if provided
+    if minimum_prior_version and not parse_version(minimum_prior_version):
+        print_error("Invalid minimum prior version format. Use format: X.Y.Z (e.g., 1.2.3)")
+        return False
+
     # Build the release
     print_header("Building Release")
 
@@ -625,6 +647,7 @@ def interactive_build() -> bool:
             release_notes=release_notes,
             install_scripts=install_scripts,
             script_only=script_only,
+            minimum_prior_version=minimum_prior_version,
         )
 
         # Save manifest to src/
@@ -766,8 +789,25 @@ def create_manifest(
     release_notes: str,
     install_scripts: dict[str, Any] | None = None,
     script_only: bool = False,
+    minimum_prior_version: str | None = None,
 ) -> dict[str, Any]:
-    """Create manifest.json structure for full reset strategy."""
+    """Create manifest.json structure for full reset strategy.
+
+    Args:
+        version: Semantic version string for this release (e.g., "1.2.3" or "1.2.3-b1").
+        target_machines: List of supported machine type identifiers.
+        target_oses: List of supported OS version identifiers.
+        release_type: "production" or "development".
+        release_notes: Human-readable release notes.
+        install_scripts: Optional flags and paths discovered by discover_install_scripts().
+        script_only: If True, mark script_only_release and omit full firmware files.
+        minimum_prior_version: Optional semantic version string requiring devices
+            be at least this version to upgrade. If None, field is omitted and any
+            prior version may upgrade directly.
+
+    Returns:
+        dict: Manifest content to be written to src/manifest.json
+    """
     manifest: dict[str, Any] = {
         "schema_version": "1.0.0",
         "version": version,
@@ -777,6 +817,10 @@ def create_manifest(
         "release_notes": release_notes,
         "release_date": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Add minimum prior version if provided
+    if minimum_prior_version is not None:
+        manifest["minimum_prior_version"] = minimum_prior_version
 
     # Add install script flags if provided
     if install_scripts:
@@ -799,7 +843,25 @@ def update_releases_json(
     version: str,
     sha256_checksum: str,
 ) -> None:
-    """Update releases.json with new multi-platform structure."""
+    """Update releases.json with multi-platform structure, archive handling, and MPV.
+
+    This function:
+    - Creates/updates the entry matching target_machines and target_oses.
+    - Moves the previous release of the given release_type to the archive (unless
+      that version is still current in the other release type).
+    - Includes minimum_prior_version in the current release entry when present in
+      the provided manifest.
+    - Cleans and de-duplicates the archive, keeping the newest by release_date.
+
+    Args:
+        releases_data: Parsed releases.json structure to mutate.
+        manifest: The release manifest that was generated for the ZIP.
+        target_machines: Target machine types for this platform group.
+        target_oses: Target operating system identifiers for this platform group.
+        release_type: "production" or "development".
+        version: Version string used for generating zip_url.
+        sha256_checksum: SHA-256 of the built ZIP file.
+    """
     # Find existing release entry matching these machine types and OSes
     release_entry = None
     for entry in releases_data["releases"]:
@@ -815,16 +877,67 @@ def update_releases_json(
         release_entry = {"target_machine_types": target_machines, "target_operating_systems": target_oses}
         releases_data["releases"].append(release_entry)
 
-    # Update the release type section
-    zip_url = f"https://www.wicid.ai/releases/v{version}"
+    # Initialize archive if it doesn't exist
+    if "archive" not in release_entry:
+        release_entry["archive"] = []
 
-    release_entry[release_type] = {
+    # Move previous release of this type to archive if it exists and is not current in other slot
+    if release_type in release_entry:
+        previous_release = release_entry[release_type].copy()
+        previous_version = previous_release["version"]
+
+        # Check if this version is current in the other release type slot
+        other_type = "development" if release_type == "production" else "production"
+        is_current_in_other = (
+            other_type in release_entry and release_entry[other_type].get("version") == previous_version
+        )
+
+        # Only archive if not current in the other slot
+        if not is_current_in_other:
+            # Add release_type to archived release
+            previous_release["release_type"] = release_type
+            # Insert at beginning (newest first)
+            release_entry["archive"].insert(0, previous_release)
+
+    # Create new release entry
+    zip_url = f"https://www.wicid.ai/releases/v{version}"
+    new_release = {
         "version": manifest["version"],
         "release_notes": manifest["release_notes"],
         "zip_url": zip_url,
         "sha256": sha256_checksum,
         "release_date": manifest["release_date"],
     }
+
+    # Add minimum_prior_version if present in manifest
+    if "minimum_prior_version" in manifest:
+        new_release["minimum_prior_version"] = manifest["minimum_prior_version"]
+
+    release_entry[release_type] = new_release
+
+    # Clean archive: remove any releases that are now current in production or development
+    # Also deduplicate by version (keep newest by release_date)
+    current_versions = set()
+    for rt in ["production", "development"]:
+        if rt in release_entry and "version" in release_entry[rt]:
+            current_versions.add(release_entry[rt]["version"])
+
+    # Remove current releases and deduplicate by version
+    seen_versions: dict[str, dict[str, Any]] = {}
+    for archived in release_entry["archive"]:
+        version = archived.get("version")
+        if version and version not in current_versions:
+            # Keep the newest version by release_date if duplicate
+            if version not in seen_versions:
+                seen_versions[version] = archived
+            else:
+                existing_date = seen_versions[version].get("release_date", "")
+                new_date = archived.get("release_date", "")
+                if new_date > existing_date:
+                    seen_versions[version] = archived
+
+    # Sort by release_date descending (newest first) and convert back to list
+    release_entry["archive"] = sorted(seen_versions.values(), key=lambda x: x.get("release_date", ""), reverse=True)
 
     # Sort releases by most recent date
     def get_latest_date(entry: dict[str, Any]) -> str:

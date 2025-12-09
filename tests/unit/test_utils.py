@@ -261,6 +261,112 @@ class TestCheckReleaseCompatibility(TestCase):
         assert error is not None
         self.assertIn("Incompatible OS", error)
 
+    def test_no_minimum_prior_version_always_eligible(self) -> None:
+        """Release without minimum_prior_version is always eligible if other checks pass."""
+        release = {
+            "version": "2.0.0",
+            "target_machine_types": ["test_machine"],
+            "target_operating_systems": ["circuitpython_10_0"],
+        }
+        is_compat, error = check_release_compatibility(
+            release,
+            current_version="0.1.0",
+            device_machine="test_machine",
+            device_os="circuitpython_10_1_0",
+        )
+        self.assertTrue(is_compat)
+        self.assertIsNone(error)
+
+    def test_minimum_prior_version_met_is_eligible(self) -> None:
+        """Release with minimum_prior_version is eligible when current >= MPV."""
+        release = {
+            "version": "2.0.0",
+            "target_machine_types": ["test_machine"],
+            "target_operating_systems": ["circuitpython_10_0"],
+            "minimum_prior_version": "1.5.0",
+        }
+        is_compat, error = check_release_compatibility(
+            release,
+            current_version="1.5.0",
+            device_machine="test_machine",
+            device_os="circuitpython_10_1_0",
+        )
+        self.assertTrue(is_compat)
+        self.assertIsNone(error)
+
+    def test_minimum_prior_version_exceeded_is_eligible(self) -> None:
+        """Release with minimum_prior_version is eligible when current > MPV."""
+        release = {
+            "version": "2.0.0",
+            "target_machine_types": ["test_machine"],
+            "target_operating_systems": ["circuitpython_10_0"],
+            "minimum_prior_version": "1.5.0",
+        }
+        is_compat, error = check_release_compatibility(
+            release,
+            current_version="1.6.0",
+            device_machine="test_machine",
+            device_os="circuitpython_10_1_0",
+        )
+        self.assertTrue(is_compat)
+        self.assertIsNone(error)
+
+    def test_minimum_prior_version_not_met_is_ineligible(self) -> None:
+        """Release with minimum_prior_version is not eligible when current < MPV."""
+        release = {
+            "version": "2.0.0",
+            "target_machine_types": ["test_machine"],
+            "target_operating_systems": ["circuitpython_10_0"],
+            "minimum_prior_version": "1.5.0",
+        }
+        is_compat, error = check_release_compatibility(
+            release,
+            current_version="1.4.0",
+            device_machine="test_machine",
+            device_os="circuitpython_10_1_0",
+        )
+        self.assertFalse(is_compat)
+        self.assertIsNotNone(error)
+        assert error is not None
+        self.assertIn("minimum prior version", error.lower())
+
+    def test_minimum_prior_version_none_treated_as_no_restriction(self) -> None:
+        """Release with minimum_prior_version=None is treated as no restriction."""
+        release = {
+            "version": "2.0.0",
+            "target_machine_types": ["test_machine"],
+            "target_operating_systems": ["circuitpython_10_0"],
+            "minimum_prior_version": None,
+        }
+        is_compat, error = check_release_compatibility(
+            release,
+            current_version="0.1.0",
+            device_machine="test_machine",
+            device_os="circuitpython_10_1_0",
+        )
+        self.assertTrue(is_compat)
+        self.assertIsNone(error)
+
+    def test_minimum_prior_version_check_after_other_checks(self) -> None:
+        """MPV check happens after machine/OS/version checks."""
+        # First check: machine type fails
+        release = {
+            "version": "2.0.0",
+            "target_machine_types": ["other_machine"],
+            "target_operating_systems": ["circuitpython_10_0"],
+            "minimum_prior_version": "1.5.0",
+        }
+        is_compat, error = check_release_compatibility(
+            release,
+            current_version="0.1.0",  # Would fail MPV, but machine check fails first
+            device_machine="test_machine",
+            device_os="circuitpython_10_1_0",
+        )
+        self.assertFalse(is_compat)
+        self.assertIsNotNone(error)
+        assert error is not None
+        self.assertIn("Incompatible hardware", error)
+
 
 class TestMarkIncompatibleRelease(TestCase):
     """Test incompatible release marking."""

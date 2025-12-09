@@ -313,6 +313,66 @@ class UpdateManager(ManagerBase):
         except OSError:
             return "production"
 
+    def _search_archive_for_eligible_release(
+        self,
+        archive: list[dict[str, Any]],
+        release_entry: dict[str, Any],
+        allowed_release_types: list[str],
+        current_version: str,
+    ) -> dict[str, Any] | None:
+        """
+        Search archive for newest eligible release matching allowed release types.
+
+        Args:
+            archive: List of archived release dicts
+            release_entry: Release entry containing target_machine_types and target_operating_systems
+            allowed_release_types: Release types to consider (e.g., ["production", "development"])
+            current_version: Current device version
+
+        Returns:
+            dict or None: Update info dict for newest eligible archive release, or None
+        """
+        eligible_releases = []
+
+        for archived_release in archive:
+            # Must match allowed release types
+            if archived_release.get("release_type") not in allowed_release_types:
+                continue
+
+            # Prepare release data for compatibility check
+            release_data = {
+                "target_machine_types": release_entry.get("target_machine_types", []),
+                "target_operating_systems": release_entry.get("target_operating_systems", []),
+                "version": archived_release["version"],
+                "minimum_prior_version": archived_release.get("minimum_prior_version"),
+            }
+
+            # Check compatibility
+            is_compatible, error_msg = check_release_compatibility(release_data, current_version)
+            if is_compatible:
+                eligible_releases.append(archived_release)
+            else:
+                self.logger.debug(f"Skipping archive {archived_release['version']}: {error_msg}")
+
+        if not eligible_releases:
+            return None
+
+        # Find newest eligible release (archive is sorted newest-to-oldest, first match is newest)
+        newest = eligible_releases[0]
+        for release in eligible_releases[1:]:
+            if compare_versions(release["version"], newest["version"]) > 0:
+                newest = release
+
+        self.logger.info(f"Update available from archive: {current_version} -> {newest['version']}")
+        return {
+            "version": newest["version"],
+            "zip_url": newest.get("zip_url"),
+            "sha256": newest.get("sha256"),
+            "release_notes": newest.get("release_notes", ""),
+            "target_machine_types": release_entry.get("target_machine_types", []),
+            "target_operating_systems": release_entry.get("target_operating_systems", []),
+        }
+
     def check_for_updates(self) -> dict[str, Any] | None:
         """
         Check if a newer compatible version is available for this device.
@@ -390,6 +450,7 @@ class UpdateManager(ManagerBase):
                         "target_machine_types": release_entry.get("target_machine_types", []),
                         "target_operating_systems": release_entry.get("target_operating_systems", []),
                         "version": release_info["version"],
+                        "minimum_prior_version": release_info.get("minimum_prior_version"),
                     }
 
                     # Use DRY compatibility check
@@ -409,6 +470,14 @@ class UpdateManager(ManagerBase):
                         return update_info
                     else:
                         self.logger.debug(f"Skipping production {release_info['version']}: {error_msg}")
+                        # Production not eligible, search archive
+                        archive = release_entry.get("archive", [])
+                        archive_result = self._search_archive_for_eligible_release(
+                            archive, release_entry, ["production"], current_version
+                        )
+                        if archive_result:
+                            self._cached_update_info = archive_result
+                            return archive_result
 
                 else:  # channel == "development"
                     # Development mode: check both production and development, pick best compatible
@@ -421,6 +490,7 @@ class UpdateManager(ManagerBase):
                             "target_machine_types": release_entry.get("target_machine_types", []),
                             "target_operating_systems": release_entry.get("target_operating_systems", []),
                             "version": prod_info["version"],
+                            "minimum_prior_version": prod_info.get("minimum_prior_version"),
                         }
                         is_compatible, error_msg = check_release_compatibility(prod_release_data, current_version)
                         if is_compatible:
@@ -435,6 +505,7 @@ class UpdateManager(ManagerBase):
                             "target_machine_types": release_entry.get("target_machine_types", []),
                             "target_operating_systems": release_entry.get("target_operating_systems", []),
                             "version": dev_info["version"],
+                            "minimum_prior_version": dev_info.get("minimum_prior_version"),
                         }
                         is_compatible, error_msg = check_release_compatibility(dev_release_data, current_version)
                         if is_compatible:
@@ -444,7 +515,15 @@ class UpdateManager(ManagerBase):
 
                     # Select best compatible release
                     if len(compatible_releases) == 0:
-                        continue  # Neither is compatible, skip this entry
+                        # Neither production nor development is compatible, search archive
+                        archive = release_entry.get("archive", [])
+                        archive_result = self._search_archive_for_eligible_release(
+                            archive, release_entry, ["production", "development"], current_version
+                        )
+                        if archive_result:
+                            self._cached_update_info = archive_result
+                            return archive_result
+                        continue  # No archive match either, skip this entry
                     elif len(compatible_releases) == 1:
                         # Only one compatible, use it
                         selected_channel, selected_info = compatible_releases[0]
