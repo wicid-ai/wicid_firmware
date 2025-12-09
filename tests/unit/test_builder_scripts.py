@@ -771,3 +771,50 @@ class TestUpdateReleasesJson(TestCase):
         self.assertNotIn("1.5.0", versions_in_archive)
         # Verify no duplicates
         self.assertEqual(len(versions_in_archive), len(set(versions_in_archive)))
+
+    def test_release_entry_key_order(self) -> None:
+        """Release entry keys are ordered: production, development, archive."""
+        releases_data = {
+            "schema_version": "1.0.0",
+            "last_updated": "",
+            "releases": [
+                {
+                    "target_machine_types": ["Test Machine"],
+                    "target_operating_systems": ["circuitpython_10_0"],
+                    "production": {
+                        "version": "1.0.0",
+                        "release_notes": "Prod",
+                        "zip_url": "https://www.wicid.ai/releases/v1.0.0",
+                        "sha256": "prod",
+                        "release_date": "2025-01-01T00:00:00Z",
+                    },
+                    "archive": [],
+                }
+            ],
+        }
+        manifest = {
+            "version": "1.1.0-rc1",
+            "release_notes": "Dev release",
+            "release_date": "2025-01-02T00:00:00Z",
+        }
+
+        update_releases_json(
+            releases_data,
+            manifest,
+            target_machines=["Test Machine"],
+            target_oses=["circuitpython_10_0"],
+            release_type="development",
+            version="1.1.0-rc1",
+            sha256_checksum="dev",
+        )
+
+        release_entry = cast(dict[str, Any], releases_data["releases"][0])
+        keys = list(release_entry.keys())
+        expected_prefix = [
+            "target_machine_types",
+            "target_operating_systems",
+            "production",
+            "development",
+            "archive",
+        ]
+        self.assertEqual(keys[: len(expected_prefix)], expected_prefix)

@@ -939,6 +939,24 @@ def update_releases_json(
     # Sort by release_date descending (newest first) and convert back to list
     release_entry["archive"] = sorted(seen_versions.values(), key=lambda x: x.get("release_date", ""), reverse=True)
 
+    # Normalize key order for consistent JSON output
+    desired_order = [
+        "target_machine_types",
+        "target_operating_systems",
+        "production",
+        "development",
+        "archive",
+    ]
+    ordered_entry: dict[str, Any] = {}
+    for key in desired_order:
+        if key in release_entry:
+            ordered_entry[key] = release_entry[key]
+    for key, value in release_entry.items():
+        if key not in ordered_entry:
+            ordered_entry[key] = value
+    release_entry.clear()
+    release_entry.update(ordered_entry)
+
     # Sort releases by most recent date
     def get_latest_date(entry: dict[str, Any]) -> str:
         dates = []
