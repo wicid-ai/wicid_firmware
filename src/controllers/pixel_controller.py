@@ -227,7 +227,7 @@ class PixelController:
         Internal method for all update-related operations.
         Blue/green flashing (slow) for better visibility during long operations.
         """
-        self._start_flashing([(0, 0, 255), (0, 255, 0)], frame_duration=12)
+        self._start_flashing([(0, 0, 255), (0, 255, 0)], frame_duration=8)
 
     def indicate_downloading(self) -> None:
         """
@@ -257,9 +257,9 @@ class PixelController:
         """
         self._start_pulsing(
             color=(255, 255, 255),
-            min_b=0.1,
-            max_b=0.7,
-            start_brightness=0.4,
+            min_b=0.05,
+            max_b=0.8,
+            start_brightness=0.5,
         )
 
     def indicate_safe_mode(self) -> None:
@@ -307,8 +307,8 @@ class PixelController:
 
     def _render_pulse_frame(self) -> None:
         """Render one frame of pulsing animation (frame-based, called at 25Hz)."""
-        # Update brightness every frame (0.02 step at 25Hz = 0.5 brightness change per second)
-        self._brightness += 0.02 * self._direction
+        # Update brightness every frame (0.04 step at 25Hz = 1.0 brightness change per second)
+        self._brightness += 0.04 * self._direction
         if self._brightness >= self._max_b:
             self._brightness = self._max_b
             self._direction = -1
