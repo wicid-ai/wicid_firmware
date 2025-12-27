@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0.0",
-  "version": "0.6.0-rc2",
+  "version": "0.6.0",
   "target_machine_types": [
     "Adafruit Feather ESP32S3 4MB Flash 2MB PSRAM with ESP32S3"
   ],
   "target_operating_systems": [
     "circuitpython_10_0"
   ],
-  "release_type": "development",
+  "release_type": "production",
   "release_notes": "Introduces scheduling framework for task management, and many other architectural improvements.",
-  "release_date": "2025-12-09T22:12:41.636929+00:00",
+  "release_date": "2025-12-27T19:18:09.785109+00:00",
   "minimum_prior_version": "0.5.2",
   "has_pre_install_script": false,
   "has_post_install_script": false
