@@ -96,7 +96,7 @@ Code complexity is the enemy of maintainability, especially in embedded systems 
 
 - **PEP 257**: Docstrings **MUST** adhere to PEP 257.
 
-## 3. Naming Conventions
+## 4. Naming Conventions
 
 We use naming to communicate the role of a component, consistent with `docs/ARCHITECTURE.md`.
 
@@ -112,7 +112,7 @@ We use naming to communicate the role of a component, consistent with `docs/ARCH
 - **Constants**:
   - `UPPER_SNAKE_CASE` for module-level constants (e.g., `REBOOT_INTERVAL = 24`).
 
-## 4. Type Hinting
+## 5. Type Hinting
 
 Static typing is critical for maintaining a large embedded project. `Mypy` is used to enforce this.
 
@@ -134,7 +134,7 @@ Static typing is critical for maintaining a large embedded project. `Mypy` is us
 
 - **CircuitPython Libraries**: Many CircuitPython libraries lack type stubs (`.pyi` files). `Mypy` is configured with `ignore_missing_imports = true` to prevent errors from these libraries. You do not need to add `# type: ignore` for imports like `import board` or `import neopixel`.
 
-## 5. Docstrings and Comments
+## 6. Docstrings and Comments
 
 - **Docstring Format**: Use Google-style docstrings for all public modules, classes, and functions.
 
@@ -153,7 +153,7 @@ Static typing is critical for maintaining a large embedded project. `Mypy` is us
 
 - **Comment Quality**: Follow the rules in `CODE_REVIEW_GUIDELINES.md`. Comments must explain the "why," not the "what."
 
-## 6. Imports
+## 7. Imports
 
 Our linter (`ruff`) automatically formats imports according to PEP 8 and `isort` standards.
 

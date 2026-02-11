@@ -20,4 +20,6 @@ You must align all code generation and architectural decisions with the project 
 | **Code Quality** | `docs/CODE_REVIEW_GUIDELINES.md` | Review checklist (complexity, cooperation, coupling). |
 | **Build & Deploy** | `docs/BUILD_PROCESS.md` | Release process, zip creation, safe mode triggers. |
 | **Testing** | `tests/README.md` | Testing strategy, usage of mocks vs hardware. |
-| **Project Overview** | `README.md` | Setup, installation, and project goals. |
+| **User Guide** | `docs/USER_GUIDE.md` | Device setup, usage, troubleshooting. |
+| **Developer Setup** | `docs/DEVELOPER_SETUP.md` | Environment setup, filesystem modes, configuration. |
+| **Project Overview** | `README.md` | Features, quick start, and project goals. |

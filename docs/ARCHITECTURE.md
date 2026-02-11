@@ -101,8 +101,6 @@ with InputManager.instance() as mgr:
 - Safe reinitialization when dependencies change (common in tests)
 - Consistent pattern across all managers makes the codebase easier to understand
 
-## Error Handling Strategy
-
 ## Module Boundaries and Dependencies
 
 To maintain encapsulation and a clear, predictable structure, the firmware enforces strict rules about how components can interact.
@@ -127,6 +125,8 @@ The `Scheduler` is the sole owner of the `asyncio` event loop.
 For general rules on how to respect module boundaries in code (e.g., handling of `_private` members), see the Public vs. Private APIs section in the Style Guide.
 
 
+## Error Handling Strategy
+
 ### Error Classification
 
 **Recoverable Errors**: Handled internally by managers, return status codes for callers to handle appropriately. Examples include network unavailability, bad credentials, API errors.
@@ -136,6 +136,8 @@ For general rules on how to respect module boundaries in code (e.g., handling of
 ### Manager Responsibility
 
 Each manager makes best effort to gracefully recover from all errors. Recoverable errors never propagate beyond the manager handling them. Only when recovery is impossible and the condition is fatal should an exception be raised.
+
+For concrete error handling patterns, see the [Patterns Cookbook](PATTERNS_COOKBOOK.md#error-handling). For review criteria, see the [Code Review Guidelines](CODE_REVIEW_GUIDELINES.md).
 
 ## System Recovery
 

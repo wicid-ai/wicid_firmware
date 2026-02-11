@@ -353,7 +353,7 @@ Tags matching `v*` pattern (e.g., `v0.2.0`, `v1.0.0-beta.1`)
 
 ### Authentication
 
-Requires `WICID_WEB_TOKEN` secret with write access to wicid_web repository.
+Requires `WICID_WEB_RELEASES_TOKEN` GitHub Actions secret with write access to wicid_web repository.
 
 ## Package Structure
 
@@ -818,7 +818,7 @@ git push origin :refs/tags/v0.2.0
 ### GitHub Actions fails
 
 Check workflow logs for:
-- Missing `WICID_WEB_TOKEN` secret
+- Missing `WICID_WEB_RELEASES_TOKEN` secret
 - Compilation errors
 - Network issues
 
